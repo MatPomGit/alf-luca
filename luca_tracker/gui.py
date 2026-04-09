@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -19,6 +20,7 @@ from .config_model import (
 from .tracking import COLOR_PRESETS, SimpleMultiTracker, detect_spots, ensure_odd, parse_roi
 from .types import Detection
 from .video_export import color_for_id, draw_polyline_history
+from .io_paths import ensure_output_dir
 
 GUI_MODES = ["calibration", "processing", "compare"]
 GUI_SELECTION_MODES = ["largest", "stablest", "longest"]
@@ -73,9 +75,12 @@ def _cfg_value(cfg: Dict[str, object], key: str, default):
 def discover_video_files(video_dir: str = "video", preferred_video: Optional[str] = None) -> List[Path]:
     exts = {".mp4", ".avi", ".mov", ".mkv", ".m4v"}
     files: List[Path] = []
-    video_path = Path(video_dir)
-    if video_path.exists() and video_path.is_dir():
-        files.extend(sorted(p for p in video_path.iterdir() if p.is_file() and p.suffix.lower() in exts))
+    # Szukamy plików najpierw w globalnym katalogu analizy `/output`, a potem w lokalnym `video/`.
+    for base in [ensure_output_dir(), Path(video_dir)]:
+        if base.exists() and base.is_dir():
+            for p in sorted(base.iterdir()):
+                if p.is_file() and p.suffix.lower() in exts and p not in files:
+                    files.append(p)
     if preferred_video:
         pref = Path(preferred_video)
         if pref.exists() and pref.is_file() and pref not in files:
@@ -180,6 +185,11 @@ def _clip_slider(value: float, min_value: float, max_value: float) -> float:
 
 
 def run_gui(args):
+    # Ustawienia providerów Kivy ograniczają ostrzeżenia o deprecjacji pygame oraz mtdev.
+    os.environ.setdefault("KIVY_TEXT", "sdl2,pil")
+    os.environ.setdefault("KIVY_IMAGE", "sdl2,pil")
+    os.environ.setdefault("KIVY_WINDOW", "sdl2")
+    os.environ.setdefault("KIVY_NO_MTDEV", "1")
     try:
         from kivy.app import App
         from kivy.clock import Clock
@@ -208,8 +218,7 @@ def run_gui(args):
     if not video_files:
         raise FileNotFoundError("Nie znaleziono plików wideo. Dodaj plik do folderu 'video/' lub podaj --video.")
 
-    output_dir = Path("output")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = ensure_output_dir()
     camera_matrix = None
     dist_coeffs = None
     if args.calib_file:
@@ -428,7 +437,8 @@ def run_gui(args):
                 Window.maximize()
 
             root = BoxLayout(orientation="vertical", spacing=8, padding=8)
-            self.image_widget = Image(allow_stretch=True, keep_ratio=True)
+            # `fit_mode=\"contain\"` zastępuje usunięte właściwości `allow_stretch` i `keep_ratio`.
+            self.image_widget = Image(fit_mode="contain")
             root.add_widget(self.image_widget)
 
             controls = BoxLayout(orientation="vertical", spacing=6, size_hint_y=None)

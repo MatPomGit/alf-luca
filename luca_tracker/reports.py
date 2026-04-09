@@ -202,6 +202,8 @@ def load_tracking_csv(csv_path: str) -> List[TrackPoint]:
 
 
 def compare_csv(reference_csv: str, candidate_csv: str, output_csv: str, report_pdf: Optional[str] = None):
+    # Informacja etapowa: pokazujemy jakie pliki biorą udział w porównaniu.
+    print(f"[OK] Etap compare: reference={reference_csv} | candidate={candidate_csv}")
     ref = load_tracking_csv(reference_csv)
     cand = load_tracking_csv(candidate_csv)
 
