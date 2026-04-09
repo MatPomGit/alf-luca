@@ -62,7 +62,7 @@ def _cfg_value(cfg: Dict[str, object], key: str, default):
 
 
 def discover_video_files(video_dir: str = "/output", preferred_video: Optional[str] = None) -> List[Path]:
-    exts = {".mp4", ".avi", ".mov", ".mkv", ".m4v"}
+    exts = {".mp4", ".avi", ".mov", ".mkv", ".m4v", ".webm"}
     files: List[Path] = []
     video_path = Path(video_dir)
     if video_path.exists() and video_path.is_dir():
@@ -211,7 +211,9 @@ def run_gui(args):
     camera_matrix = None
     dist_coeffs = None
     if args.calib_file:
-        data = np.load(args.calib_file)
+        # Relatywne ścieżki kalibracji traktujemy jako położone w /output.
+        calib_file = Path(args.calib_file) if Path(args.calib_file).is_absolute() else Path("/output") / args.calib_file
+        data = np.load(str(calib_file))
         camera_matrix = data.get("camera_matrix")
         dist_coeffs = data.get("dist_coeffs")
 
@@ -263,7 +265,7 @@ def run_gui(args):
             if not self.analysis_rows:
                 return
             video_name = self.video_files[video_idx].stem
-            out_file = self.output_dir / f"{video_name}_gui_analysis.csv"
+            out_file = self.output_dir / f"{video_name}_measurement_gui_analysis.csv"
             with out_file.open("w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(
                     f,

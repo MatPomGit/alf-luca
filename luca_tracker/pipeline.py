@@ -55,16 +55,13 @@ def _ensure_output_dir() -> Path:
 
 
 def _resolve_input_path(path: Optional[str]) -> Optional[str]:
-    """Rozwiązuje ścieżkę wejściową, preferując katalog /output."""
+    """Rozwiązuje ścieżkę wejściową, wymuszając /output dla ścieżek relatywnych."""
     if not path:
         return path
     p = Path(path)
     if p.is_absolute():
         return str(p)
-    output_candidate = OUTPUT_DIR / p
-    if output_candidate.exists():
-        return str(output_candidate)
-    return str(p)
+    return str(OUTPUT_DIR / p)
 
 
 def _resolve_output_path(path: Optional[str]) -> Optional[str]:
@@ -219,11 +216,11 @@ def _resolve_config(args_or_config) -> PipelineConfig:
         multi_track=getattr(args_or_config, "multi_track", False),
         selection_mode=getattr(args_or_config, "selection_mode", "stablest"),
         output_csv=_resolve_output_path(output_csv),
-        trajectory_png=_resolve_output_path(trajectory_png or _default_measurement_name(video_input, "trajectory.png")),
-        report_csv=_resolve_output_path(report_csv or _default_measurement_name(video_input, "metrics.csv")),
-        report_pdf=_resolve_output_path(report_pdf or _default_measurement_name(video_input, "report.pdf")),
-        all_tracks_csv=_resolve_output_path(all_tracks_csv or _default_measurement_name(video_input, "all_tracks.csv")),
-        annotated_video=_resolve_output_path(annotated_video or _default_measurement_name(video_input, "annotated.mp4")),
+        trajectory_png=_resolve_output_path(trajectory_png),
+        report_csv=_resolve_output_path(report_csv),
+        report_pdf=_resolve_output_path(report_pdf),
+        all_tracks_csv=_resolve_output_path(all_tracks_csv),
+        annotated_video=_resolve_output_path(annotated_video),
         draw_all_tracks=getattr(args_or_config, "draw_all_tracks", False),
         use_kalman=getattr(args_or_config, "use_kalman", False),
         detector=DetectorConfig(
@@ -449,7 +446,7 @@ def _build_parser() -> argparse.ArgumentParser:
     """Tworzy lekki parser standalone dla modułu pipeline."""
     parser = argparse.ArgumentParser(description="Standalone tracking pipeline runner.")
     parser.add_argument("--video", required=True)
-    parser.add_argument("--output_csv", default="tracking_results.csv")
+    parser.add_argument("--output_csv", default=None)
     parser.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
     parser.add_argument("--threshold", type=int, default=200)
     parser.add_argument("--blur", type=int, default=11)

@@ -87,10 +87,10 @@ def build_parser():
     p_track.add_argument("--kalman_measurement_noise", type=float, default=1e-1, help="Szum pomiaru dla filtru Kalmana")
 
     p_cmp = subparsers.add_parser("compare", help="Porównanie dwóch CSV")
-    p_cmp.add_argument("--reference", required=True, help="Referencyjny CSV")
-    p_cmp.add_argument("--candidate", required=True, help="Porównywany CSV")
-    p_cmp.add_argument("--output_csv", required=True, help="Wyjściowy CSV różnic")
-    p_cmp.add_argument("--report_pdf", help="Opcjonalny raport PDF")
+    p_cmp.add_argument("--reference", required=True, help="Referencyjny CSV (domyślnie z /output dla ścieżki relatywnej)")
+    p_cmp.add_argument("--candidate", required=True, help="Porównywany CSV (domyślnie z /output dla ścieżki relatywnej)")
+    p_cmp.add_argument("--output_csv", required=True, help="Wyjściowy CSV różnic (zapisywany do /output dla ścieżki relatywnej)")
+    p_cmp.add_argument("--report_pdf", help="Opcjonalny raport PDF (zapisywany do /output dla ścieżki relatywnej)")
 
     p_gui = subparsers.add_parser("gui", help="GUI do strojenia parametrów i podglądu w czasie rzeczywistym")
     p_gui.add_argument("--video", help="Opcjonalny plik wejściowy wideo (domyślnie ładowane są pliki z katalogu /output)")

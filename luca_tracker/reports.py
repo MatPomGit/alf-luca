@@ -14,14 +14,11 @@ OUTPUT_DIR = Path("/output")
 
 
 def _resolve_input_path(path: str) -> str:
-    """Rozwiązuje wejściową ścieżkę CSV z preferencją katalogu /output."""
+    """Rozwiązuje wejściową ścieżkę CSV, wymuszając /output dla ścieżek relatywnych."""
     p = Path(path)
     if p.is_absolute():
         return str(p)
-    candidate = OUTPUT_DIR / p
-    if candidate.exists():
-        return str(candidate)
-    return str(p)
+    return str(OUTPUT_DIR / p)
 
 
 def _resolve_output_path(path: str) -> str:
@@ -34,6 +31,7 @@ def _resolve_output_path(path: str) -> str:
     out = OUTPUT_DIR / p
     out.parent.mkdir(parents=True, exist_ok=True)
     return str(out)
+
 
 def compute_track_metrics(points: Sequence[TrackPoint]) -> Dict[str, float]:
     detected = [p for p in points if p.detected and p.x is not None and p.y is not None]
