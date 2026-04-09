@@ -2,9 +2,9 @@ from __future__ import annotations
 import argparse
 import glob
 import os
-import time
 import sys
-from typing import List, Optional, Sequence
+import time
+from typing import Any, List, Optional
 
 from .io_paths import (
     build_measurement_stem,
@@ -51,7 +51,6 @@ def _load_gui_metadata() -> tuple[List[str], List[str], str]:
 
 def build_parser():
     # Metadane GUI ładujemy leniwie, aby parser CLI działał nawet bez OpenCV/Kivy.
-    print("CLI Buduję parser")
     gui_colors, gui_selection_modes, mp4_tool_path = _load_gui_metadata()
     parser = argparse.ArgumentParser(
         description="Śledzenie jasnej lub kolorowej plamki światła w video (np. MP4/MKV/AVI/MOV/WEBM). Obsługuje także opcjonalne wygładzanie filtrem Kalmana."
@@ -126,23 +125,6 @@ def build_parser():
     return parser
 
 
-def normalize_legacy_argv(argv: Sequence[str]) -> List[str]:
-    # Normalizujemy stary interfejs `--mode`, aby zachować zgodność wsteczną.
-    args = list(argv)
-    commands = {"calibrate", "track", "compare", "gui"}
-    if not args:
-        return ["gui"]
-    if args[0] in commands:
-        return args
-    if "--mode" in args:
-        mode_idx = args.index("--mode")
-        if mode_idx + 1 < len(args):
-            mode = args[mode_idx + 1]
-            if mode in commands:
-                return [mode, *args[:mode_idx], *args[mode_idx + 2 :]]
-    return args
-
-
 def pick_default_gui_video() -> Optional[str]:
     # Szukamy domyślnego pliku wideo według listy najczęściej używanych rozszerzeń.
     for pattern in DEFAULT_GUI_VIDEO_GLOB_PATTERNS:
@@ -152,11 +134,49 @@ def pick_default_gui_video() -> Optional[str]:
     return None
 
 
+def _resolve_track_outputs(track_target: Any, base_name: str) -> None:
+    """Normalizuje ścieżki artefaktów trackingu do katalogu `/output`."""
+    output_csv_value = with_default(getattr(track_target, "output_csv", None), f"{base_name}_track.csv")
+    if output_csv_value == "tracking_results.csv":
+        output_csv_value = f"{base_name}_tracking_results.csv"
+    track_target.output_csv = resolve_output_path(output_csv_value)
+    track_target.trajectory_png = resolve_output_path(with_default(getattr(track_target, "trajectory_png", None), f"{base_name}_trajectory.png"))
+    track_target.report_csv = resolve_output_path(with_default(getattr(track_target, "report_csv", None), f"{base_name}_report.csv"))
+    track_target.report_pdf = resolve_output_path(with_default(getattr(track_target, "report_pdf", None), f"{base_name}_report.pdf"))
+    if getattr(track_target, "all_tracks_csv", None):
+        track_target.all_tracks_csv = resolve_output_path(track_target.all_tracks_csv)
+    if getattr(track_target, "annotated_video", None):
+        track_target.annotated_video = resolve_output_path(track_target.annotated_video)
+
+
+def _run_track_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """Uruchamia tryb `track` dla konfiguracji plikowej lub argumentów CLI."""
+    from .config_model import load_run_config, run_config_to_pipeline_config
+    from .tracking import track_video
+
+    ensure_output_dir()
+    if args.config:
+        run_config = load_run_config(args.config)
+        run_config.input.video = resolve_analysis_input(run_config.input.video)
+        base = build_measurement_stem(run_config.input.video)
+        _resolve_track_outputs(run_config.eval, base)
+        track_video(run_config_to_pipeline_config(run_config))
+        return
+
+    if not args.video:
+        parser.error("Dla trybu track wymagany jest --video lub --config.")
+    args.video = resolve_analysis_input(args.video)
+    if args.calib_file:
+        args.calib_file = resolve_analysis_input(args.calib_file)
+    base = build_measurement_stem(args.video)
+    _resolve_track_outputs(args, base)
+    track_video(args)
+
+
 def main():
     # Parser i argumenty CLI są przetwarzane bez importu ciężkich modułów.
     parser = build_parser()
-    argv = normalize_legacy_argv(sys.argv[1:])
-    args = parser.parse_args(argv)
+    args = parser.parse_args(sys.argv[1:])
 
     if args.command == "gui" and not getattr(args, "video", None):
         args.video = pick_default_gui_video()
@@ -171,47 +191,7 @@ def main():
 
         calibrate_camera(args.calib_dir, args.rows, args.cols, args.square_size, args.output_file)
     elif args.command == "track":
-        from .config_model import load_run_config, run_config_to_pipeline_config
-        from .tracking import track_video
-
-        ensure_output_dir()
-        if args.config:
-            run_config = load_run_config(args.config)
-            run_config.input.video = resolve_analysis_input(run_config.input.video)
-            base = build_measurement_stem(run_config.input.video)
-            output_csv_cfg = with_default(run_config.eval.output_csv, f"{base}_track.csv")
-            if output_csv_cfg == "tracking_results.csv":
-                output_csv_cfg = f"{base}_tracking_results.csv"
-            run_config.eval.output_csv = resolve_output_path(output_csv_cfg)
-            run_config.eval.trajectory_png = resolve_output_path(
-                with_default(run_config.eval.trajectory_png, f"{base}_trajectory.png")
-            )
-            run_config.eval.report_csv = resolve_output_path(with_default(run_config.eval.report_csv, f"{base}_report.csv"))
-            run_config.eval.report_pdf = resolve_output_path(with_default(run_config.eval.report_pdf, f"{base}_report.pdf"))
-            if run_config.eval.all_tracks_csv:
-                run_config.eval.all_tracks_csv = resolve_output_path(run_config.eval.all_tracks_csv)
-            if run_config.eval.annotated_video:
-                run_config.eval.annotated_video = resolve_output_path(run_config.eval.annotated_video)
-            track_video(run_config_to_pipeline_config(run_config))
-        else:
-            if not args.video:
-                parser.error("Dla trybu track wymagany jest --video lub --config.")
-            args.video = resolve_analysis_input(args.video)
-            base = build_measurement_stem(args.video)
-            output_csv_value = args.output_csv
-            if output_csv_value == "tracking_results.csv":
-                output_csv_value = f"{base}_tracking_results.csv"
-            args.output_csv = resolve_output_path(output_csv_value)
-            args.trajectory_png = resolve_output_path(args.trajectory_png or f"{base}_trajectory.png")
-            args.report_csv = resolve_output_path(args.report_csv or f"{base}_report.csv")
-            args.report_pdf = resolve_output_path(args.report_pdf or f"{base}_report.pdf")
-            if args.all_tracks_csv:
-                args.all_tracks_csv = resolve_output_path(args.all_tracks_csv)
-            if args.annotated_video:
-                args.annotated_video = resolve_output_path(args.annotated_video)
-            if args.calib_file:
-                args.calib_file = resolve_analysis_input(args.calib_file)
-            track_video(args)
+        _run_track_command(args, parser)
     elif args.command == "compare":
         from .reports import compare_csv
 

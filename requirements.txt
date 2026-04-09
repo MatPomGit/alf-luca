@@ -1,7 +1,18 @@
-# Zależności runtime dla narzędzi CLI/GUI i pipeline'u analizy wideo.
-# Wersje są ustawione jako minimalne, aby ułatwić aktualizacje w środowiskach R&D.
+# Zależności runtime dla całego repozytorium.
+# Lista jest utrzymywana jako minimalny, ale kompletny zestaw bibliotek używanych
+# bezpośrednio w kodzie Python (CLI, GUI, pipeline, narzędzia i konfiguracja).
 
+# Numeryka i przetwarzanie tablic (pipeline, detektory, kalibracja).
 numpy>=1.24
+
+# OpenCV do analizy wideo/obrazu, kalibracji kamery oraz podglądu GUI.
 opencv-python>=4.8
+
+# Raporty i wykresy (PNG/PDF) w trackerze oraz narzędziach data.py.
 matplotlib>=3.7
+
+# GUI aplikacji do strojenia parametrów detekcji i trackingu.
 kivy>=2.2
+
+# Obsługa plików konfiguracyjnych YAML w config_model.py.
+PyYAML>=6.0
