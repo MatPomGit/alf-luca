@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from collections import deque
 from dataclasses import asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Type
+from typing import Deque, Dict, List, Optional, Tuple, Type
 
 import cv2
 import numpy as np
@@ -73,6 +74,8 @@ class BrightnessDetector(BaseDetector):
             "use_clahe": False,
             "erode_iter": 2,
             "dilate_iter": 4,
+            "opening_kernel": 0,
+            "closing_kernel": 0,
         }
 
     def detect_mask(self, roi_frame: np.ndarray) -> np.ndarray:
@@ -82,6 +85,15 @@ class BrightnessDetector(BaseDetector):
         if threshold_mode not in {"fixed", "otsu", "adaptive"}:
             raise ValueError(f"Nieobsługiwany threshold_mode: {threshold_mode}")
         gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (blur, blur), 0)
+        _, mask = cv2.threshold(blurred, self.config.threshold, 255, cv2.THRESH_BINARY)
+        return _apply_morphology(
+            mask,
+            erode_iter=self.config.erode_iter,
+            dilate_iter=self.config.dilate_iter,
+            opening_kernel=self.config.opening_kernel,
+            closing_kernel=self.config.closing_kernel,
+        )
         # Opcjonalna normalizacja lokalnego kontrastu (CLAHE) poprawia separację plamki
         # przy nierównomiernym oświetleniu sceny.
         if bool(getattr(self.config, "use_clahe", False)):
@@ -120,6 +132,8 @@ class ColorDetector(BaseDetector):
             "hsv_upper": None,
             "erode_iter": 2,
             "dilate_iter": 4,
+            "opening_kernel": 0,
+            "closing_kernel": 0,
         }
 
     def detect_mask(self, roi_frame: np.ndarray) -> np.ndarray:
@@ -142,16 +156,84 @@ class ColorDetector(BaseDetector):
         if blur > 1:
             mask = cv2.GaussianBlur(mask, (blur, blur), 0)
             _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-        return _apply_morphology(mask, erode_iter=self.config.erode_iter, dilate_iter=self.config.dilate_iter)
+        return _apply_morphology(
+            mask,
+            erode_iter=self.config.erode_iter,
+            dilate_iter=self.config.dilate_iter,
+            opening_kernel=self.config.opening_kernel,
+            closing_kernel=self.config.closing_kernel,
+        )
 
 
-def _apply_morphology(mask: np.ndarray, erode_iter: int, dilate_iter: int) -> np.ndarray:
+def _build_kernel(kernel_size: int) -> Optional[np.ndarray]:
+    """Buduje kwadratowe jądro morfologiczne; `<=1` oznacza brak operacji."""
+    if kernel_size <= 1:
+        return None
+    size = max(1, int(kernel_size))
+    return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
+
+
+def _apply_morphology(
+    mask: np.ndarray,
+    erode_iter: int,
+    dilate_iter: int,
+    opening_kernel: int = 0,
+    closing_kernel: int = 0,
+) -> np.ndarray:
     """Nakłada wspólne operacje morfologiczne na maskę niezależnie od metody detekcji."""
     if erode_iter > 0:
         mask = cv2.erode(mask, None, iterations=erode_iter)
     if dilate_iter > 0:
         mask = cv2.dilate(mask, None, iterations=dilate_iter)
+    opening = _build_kernel(opening_kernel)
+    if opening is not None:
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, opening)
+    closing = _build_kernel(closing_kernel)
+    if closing is not None:
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, closing)
     return mask
+
+
+class TemporalMaskFilter:
+    """Prosty bufor masek binarnych stabilizujący detekcję między klatkami."""
+
+    def __init__(self, window_size: int = 3, mode: str = "majority") -> None:
+        if window_size <= 0:
+            raise ValueError("Temporal window musi być dodatnie.")
+        if mode not in {"majority", "and"}:
+            raise ValueError("Temporal mode musi być jednym z: majority/and.")
+        self.window_size = int(window_size)
+        self.mode = mode
+        self._buffer: Deque[np.ndarray] = deque(maxlen=self.window_size)
+
+    def reset(self) -> None:
+        """Czyści historię masek; używamy np. przy zmianie źródła wideo/ROI."""
+        self._buffer.clear()
+
+    def apply(self, mask: np.ndarray) -> np.ndarray:
+        """Zwraca maskę przefiltrowaną po czasie.
+
+        Kompromis techniczny:
+        - mniejszy szum migotania pojedynczych pikseli/artefaktów,
+        - ale większe opóźnienie reakcji (do ~N klatek dla okna N).
+        """
+        self._buffer.append(mask.copy())
+        stack = np.stack(list(self._buffer), axis=0)
+        if self.mode == "and":
+            fused = np.min(stack, axis=0)
+        else:
+            min_votes = (len(self._buffer) // 2) + 1
+            votes = np.count_nonzero(stack > 0, axis=0)
+            fused = np.where(votes >= min_votes, 255, 0).astype(np.uint8)
+        return fused.astype(np.uint8)
+
+
+def _embed_mask_in_frame(mask_roi: np.ndarray, frame_shape: Tuple[int, int, int], roi_box: Tuple[int, int, int, int]) -> np.ndarray:
+    """Wkleja maskę ROI do pełnego kadru i zeruje piksele poza ROI."""
+    x0, y0, w, h = roi_box
+    full_mask = np.zeros(frame_shape[:2], dtype=np.uint8)
+    full_mask[y0 : y0 + h, x0 : x0 + w] = mask_roi
+    return full_mask
 
 
 def _resolve_detector_class(track_mode: str) -> Type[BaseDetector]:
@@ -219,6 +301,8 @@ def build_mask(
     use_clahe: bool = False,
     erode_iter: int = 2,
     dilate_iter: int = 4,
+    opening_kernel: int = 0,
+    closing_kernel: int = 0,
     color_name: str = "red",
     hsv_lower: Optional[str] = None,
     hsv_upper: Optional[str] = None,
@@ -239,6 +323,8 @@ def build_mask(
         use_clahe=use_clahe,
         erode_iter=erode_iter,
         dilate_iter=dilate_iter,
+        opening_kernel=opening_kernel,
+        closing_kernel=closing_kernel,
         color_name=color_name,
         hsv_lower=hsv_lower,
         hsv_upper=hsv_upper,
@@ -264,6 +350,9 @@ def detect_spots(
     hsv_lower: Optional[str],
     hsv_upper: Optional[str],
     roi: Optional[str],
+    opening_kernel: int = 0,
+    closing_kernel: int = 0,
+    temporal_filter: Optional[TemporalMaskFilter] = None,
 ) -> Tuple[List[Detection], np.ndarray, Tuple[int, int, int, int]]:
     """Wykrywa plamki na klatce i zwraca detekcje, maskę oraz użyte ROI."""
     x0, y0, w, h = parse_roi(roi, frame.shape)
@@ -279,13 +368,19 @@ def detect_spots(
         use_clahe=use_clahe,
         erode_iter=erode_iter,
         dilate_iter=dilate_iter,
+        opening_kernel=opening_kernel,
+        closing_kernel=closing_kernel,
         color_name=color_name,
         hsv_lower=hsv_lower,
         hsv_upper=hsv_upper,
     )
-    mask = detector_cls(detector_config).detect_mask(roi_frame)
+    mask_roi = detector_cls(detector_config).detect_mask(roi_frame)
+    if temporal_filter is not None:
+        # Filtr temporalny działa wyłącznie na wycinku ROI, żeby nie "przenosić" szumu spoza obszaru zainteresowania.
+        mask_roi = temporal_filter.apply(mask_roi)
+    mask = _embed_mask_in_frame(mask_roi, frame.shape, (x0, y0, w, h))
 
-    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(mask_roi.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     detections: List[Detection] = []
     for contour in contours:
         det = contour_to_detection(contour, offset_x=x0, offset_y=y0)
@@ -305,7 +400,11 @@ def detect_spots(
     return detections, mask, (x0, y0, w, h)
 
 
-def detect_spots_with_config(frame: np.ndarray, config: DetectorConfig):
+def detect_spots_with_config(
+    frame: np.ndarray,
+    config: DetectorConfig,
+    temporal_filter: Optional[TemporalMaskFilter] = None,
+):
     """Uruchamia detekcję na podstawie obiektu konfiguracyjnego."""
     return detect_spots(
         frame=frame,
@@ -318,6 +417,8 @@ def detect_spots_with_config(frame: np.ndarray, config: DetectorConfig):
         use_clahe=config.use_clahe,
         erode_iter=config.erode_iter,
         dilate_iter=config.dilate_iter,
+        opening_kernel=config.opening_kernel,
+        closing_kernel=config.closing_kernel,
         min_area=config.min_area,
         max_area=config.max_area,
         max_spots=config.max_spots,
@@ -325,6 +426,7 @@ def detect_spots_with_config(frame: np.ndarray, config: DetectorConfig):
         hsv_lower=config.hsv_lower,
         hsv_upper=config.hsv_upper,
         roi=config.roi,
+        temporal_filter=temporal_filter if config.temporal_stabilization else None,
     )
 
 
@@ -345,11 +447,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_area", type=float, default=0.0)
     parser.add_argument("--erode_iter", type=int, default=2)
     parser.add_argument("--dilate_iter", type=int, default=4)
+    parser.add_argument("--opening_kernel", type=int, default=0, help="Rozmiar jądra opening (0/1 = wyłączone)")
+    parser.add_argument("--closing_kernel", type=int, default=0, help="Rozmiar jądra closing (0/1 = wyłączone)")
     parser.add_argument("--max_spots", type=int, default=10)
     parser.add_argument("--color_name", default="red")
     parser.add_argument("--hsv_lower")
     parser.add_argument("--hsv_upper")
     parser.add_argument("--roi")
+    parser.add_argument("--temporal_stabilization", action="store_true", help="Włącza filtr temporalny maski")
+    parser.add_argument("--temporal_window", type=int, default=3, help="Rozmiar bufora temporalnego (liczba klatek)")
+    parser.add_argument("--temporal_mode", choices=["majority", "and"], default="majority")
     parser.add_argument("--mask_out", help="Optional path to save generated mask image.")
     parser.add_argument("--json_out", help="Optional path to save detections as JSON.")
     return parser
