@@ -18,6 +18,7 @@ from .config_model import (
     TrackerConfig as RunTrackerConfig,
     save_run_config,
 )
+from .reports import RUN_METADATA_FIELDS, build_run_metadata, save_run_metadata
 from .tracking import COLOR_PRESETS, SimpleMultiTracker, detect_spots, ensure_odd, parse_roi
 from .types import Detection
 from .video_export import color_for_id, draw_polyline_history
@@ -337,6 +338,27 @@ def run_gui(args):
                 return
             video_name = self.video_files[video_idx].stem
             out_file = self.output_dir / f"{video_name}_gui_analysis.csv"
+            # Zestaw metadanych jest zgodny z trybem `track`, aby uprościć analizę porównawczą.
+            run_metadata = build_run_metadata(
+                video_file=str(self.video_files[video_idx]),
+                detector_name=self.track_mode,
+                smoother_name="none",
+                config_payload={
+                    "mode": self.mode,
+                    "track_mode": self.track_mode,
+                    "threshold": self.threshold,
+                    "blur": self.blur,
+                    "min_area": self.min_area,
+                    "max_area": self.max_area,
+                    "erode_iter": self.erode_iter,
+                    "dilate_iter": self.dilate_iter,
+                    "multi_track": self.multi_track,
+                    "max_spots": self.max_spots,
+                    "selection_mode": self.selection_mode,
+                    "color_name": self.color_name,
+                    "roi": args.roi,
+                },
+            )
             with out_file.open("w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(
                     f,
@@ -354,10 +376,18 @@ def run_gui(args):
                         "min_area",
                         "max_area",
                         "color_name",
-                    ],
+                    ]
+                    + list(RUN_METADATA_FIELDS),
                 )
                 writer.writeheader()
-                writer.writerows(self.analysis_rows)
+                for row in self.analysis_rows:
+                    writer.writerow(
+                        {
+                            **row,
+                            **{field: run_metadata.get(field, "") for field in RUN_METADATA_FIELDS},
+                        }
+                    )
+            save_run_metadata(run_metadata, str(out_file))
             print(f"[GUI] Zapisano analizę: {out_file}")
 
         def _switch_video(self, idx: int):

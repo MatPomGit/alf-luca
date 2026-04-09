@@ -25,6 +25,16 @@ class SeriesData:
     y: List[float]
 
 
+RUN_METADATA_FIELDS = (
+    "run_id",
+    "video_file",
+    "detector_name",
+    "smoother_name",
+    "config_hash",
+    "app_version",
+)
+
+
 def parse_float(value: str | None) -> float | None:
     if value is None:
         return None
@@ -96,6 +106,41 @@ def extract_series(data: MeasurementFile, x_col: str, y_col: str) -> SeriesData:
     return SeriesData(x=xs, y=ys)
 
 
+def extract_run_metadata(data: MeasurementFile) -> Dict[str, str]:
+    """Pobiera metadane uruchomienia z pierwszego rekordu CSV."""
+    first = data.rows[0] if data.rows else {}
+    return {name: (first.get(name) or "").strip() for name in RUN_METADATA_FIELDS}
+
+
+def format_series_label(data: MeasurementFile) -> str:
+    """Buduje czytelną etykietę serii z kluczowymi metadanymi uruchomienia."""
+    meta = extract_run_metadata(data)
+    details = []
+    if meta.get("detector_name"):
+        details.append(f"det={meta['detector_name']}")
+    if meta.get("smoother_name"):
+        details.append(f"smooth={meta['smoother_name']}")
+    if meta.get("run_id"):
+        details.append(f"run={meta['run_id'][:8]}")
+    return f"{data.path.name} ({', '.join(details)})" if details else data.path.name
+
+
+def summarize_metadata_groups(files: Sequence[MeasurementFile]) -> str:
+    """Tworzy skrót grupowania runów widoczny w tytułach wykresów."""
+    grouped: Dict[str, int] = {}
+    for item in files:
+        meta = extract_run_metadata(item)
+        key = f"{meta.get('detector_name', '')}|{meta.get('smoother_name', '')}"
+        grouped[key] = grouped.get(key, 0) + 1
+    chunks = []
+    for key, count in sorted(grouped.items()):
+        detector, smoother = key.split("|", 1)
+        detector_name = detector or "unknown-detector"
+        smoother_name = smoother or "unknown-smoother"
+        chunks.append(f"{detector_name}/{smoother_name}: {count}")
+    return " | ".join(chunks)
+
+
 def common_columns(files: Sequence[MeasurementFile]) -> List[str]:
     common = set(files[0].rows[0].keys())
     for measurement in files[1:]:
@@ -135,9 +180,9 @@ def save_single_plot(files: Sequence[MeasurementFile], x_col: str, y_col: str, o
     fig, ax = plt.subplots(figsize=(11, 6))
     for measurement in files:
         series = extract_series(measurement, x_col=x_col, y_col=y_col)
-        ax.plot(series.x, series.y, label=measurement.path.name, linewidth=1.5)
+        ax.plot(series.x, series.y, label=format_series_label(measurement), linewidth=1.5)
 
-    ax.set_title(f"Porównanie pomiarów: {y_col}")
+    ax.set_title(f"Porównanie pomiarów: {y_col}\n{summarize_metadata_groups(files)}")
     ax.set_xlabel(x_col)
     ax.set_ylabel(y_col)
     ax.grid(True, alpha=0.3)
@@ -165,9 +210,10 @@ def save_difference_plot(
     diff = [cand_series.y[i] - base_series.y[i] for i in range(size)]
 
     fig, ax = plt.subplots(figsize=(11, 4.5))
-    ax.plot(x_vals, diff, label=f"{candidate.path.name} - {base.path.name}", linewidth=1.5)
+    ax.plot(x_vals, diff, label=f"{format_series_label(candidate)} - {format_series_label(base)}", linewidth=1.5)
     ax.axhline(0.0, color="black", linestyle="--", linewidth=1)
-    ax.set_title(f"Różnica przebiegów: {y_col}")
+    group_desc = summarize_metadata_groups([base, candidate])
+    ax.set_title(f"Różnica przebiegów: {y_col}\n{group_desc}")
     ax.set_xlabel(x_col)
     ax.set_ylabel("różnica")
     ax.grid(True, alpha=0.3)
