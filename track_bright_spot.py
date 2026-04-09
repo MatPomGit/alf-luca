@@ -37,6 +37,11 @@ import numpy as np
 import yaml
 
 try:
+    import yaml
+except Exception:  # pragma: no cover
+    yaml = None
+
+try:
     import matplotlib.pyplot as plt
 except Exception:  # pragma: no cover
     plt = None
@@ -472,6 +477,7 @@ def calibrate_camera(
     pattern_cols: int,
     square_size: float,
     output_file: str,
+    output_format: str = "auto",
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     objp = np.zeros((pattern_rows * pattern_cols, 3), np.float32)
     objp[:, :2] = np.mgrid[0:pattern_cols, 0:pattern_rows].T.reshape(-1, 2)
@@ -518,9 +524,59 @@ def calibrate_camera(
         print("[ERROR] cv2.calibrateCamera zwróciło błąd.")
         return None
 
-    np.savez(output_file, camera_matrix=camera_matrix, dist_coeffs=dist_coeffs)
+    out_ext = os.path.splitext(output_file)[1].lower()
+    resolved_output_format = output_format.lower()
+    if resolved_output_format == "auto":
+        if out_ext == ".npz":
+            resolved_output_format = "npz"
+        elif out_ext in {".yaml", ".yml"}:
+            resolved_output_format = "yaml"
+        else:
+            print(
+                f"[ERROR] Nieobsługiwane rozszerzenie pliku wyjściowego: {out_ext or '(brak)'}."
+                " Użyj .npz/.yaml/.yml albo jawnie ustaw --output_format."
+            )
+            return None
+
+    if resolved_output_format == "npz":
+        np.savez(output_file, camera_matrix=camera_matrix, dist_coeffs=dist_coeffs)
+    elif resolved_output_format == "yaml":
+        if yaml is None:
+            print("[ERROR] Brak biblioteki PyYAML. Zainstaluj 'pyyaml', aby zapisać kalibrację do YAML.")
+            return None
+        payload = {
+            "camera_matrix": camera_matrix.tolist(),
+            "dist_coeffs": dist_coeffs.tolist(),
+        }
+        with open(output_file, "w", encoding="utf-8") as f:
+            yaml.safe_dump(payload, f, sort_keys=False)
+    else:
+        print(f"[ERROR] Nieobsługiwany format wyjściowy: {output_format}")
+        return None
+
     print(f"[INFO] Zapisano kalibrację do: {output_file}")
     return camera_matrix, dist_coeffs
+
+
+def _ensure_calibration_array(
+    value: object,
+    field_name: str,
+    expected_shape: Optional[Tuple[int, ...]] = None,
+) -> np.ndarray:
+    try:
+        arr = np.asarray(value, dtype=np.float64)
+    except Exception as exc:
+        raise ValueError(f"Pole '{field_name}' ma nieprawidłowy format - oczekiwano tablicy liczb.") from exc
+
+    if arr.size == 0:
+        raise ValueError(f"Pole '{field_name}' jest puste.")
+    if expected_shape is not None and arr.shape != expected_shape:
+        raise ValueError(
+            f"Pole '{field_name}' ma nieprawidłowy rozmiar {arr.shape}, oczekiwano {expected_shape}."
+        )
+    if not np.isfinite(arr).all():
+        raise ValueError(f"Pole '{field_name}' zawiera wartości nienumeryczne lub nieskończone.")
+    return arr
 
 
 def load_calibration(calib_file: Optional[str]) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
@@ -528,8 +584,39 @@ def load_calibration(calib_file: Optional[str]) -> Tuple[Optional[np.ndarray], O
         return None, None
     if not os.path.exists(calib_file):
         raise FileNotFoundError(f"Nie znaleziono pliku kalibracji: {calib_file}")
-    data = np.load(calib_file)
-    return data["camera_matrix"], data["dist_coeffs"]
+
+    ext = os.path.splitext(calib_file)[1].lower()
+    if ext == ".npz":
+        data = np.load(calib_file)
+        if "camera_matrix" not in data or "dist_coeffs" not in data:
+            raise ValueError(
+                "Niepoprawny plik .npz z kalibracją - wymagane klucze: 'camera_matrix' i 'dist_coeffs'."
+            )
+        camera_matrix = _ensure_calibration_array(data["camera_matrix"], "camera_matrix", expected_shape=(3, 3))
+        dist_coeffs = _ensure_calibration_array(data["dist_coeffs"], "dist_coeffs")
+        return camera_matrix, dist_coeffs
+
+    if ext in {".yaml", ".yml"}:
+        if yaml is None:
+            raise ValueError("Nie można wczytać YAML - brak biblioteki PyYAML. Zainstaluj pakiet 'pyyaml'.")
+
+        with open(calib_file, "r", encoding="utf-8") as f:
+            payload = yaml.safe_load(f)
+
+        if not isinstance(payload, dict):
+            raise ValueError("Niepoprawny YAML kalibracji - oczekiwano mapy z polami 'camera_matrix' i 'dist_coeffs'.")
+
+        missing_fields = [name for name in ("camera_matrix", "dist_coeffs") if name not in payload]
+        if missing_fields:
+            raise ValueError(f"Niepoprawny YAML kalibracji - brak wymaganych pól: {', '.join(missing_fields)}.")
+
+        camera_matrix = _ensure_calibration_array(payload["camera_matrix"], "camera_matrix", expected_shape=(3, 3))
+        dist_coeffs = _ensure_calibration_array(payload["dist_coeffs"], "dist_coeffs")
+        return camera_matrix, dist_coeffs
+
+    raise ValueError(
+        f"Nieobsługiwany format pliku kalibracji: {calib_file}. Wspierane rozszerzenia: .npz, .yaml, .yml."
+    )
 
 
 def ensure_odd(value: int) -> int:
@@ -1164,13 +1251,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_cal.add_argument("--rows", type=int, default=6, help="Liczba wewnętrznych narożników w wierszu")
     p_cal.add_argument("--cols", type=int, default=9, help="Liczba wewnętrznych narożników w kolumnie")
     p_cal.add_argument("--square_size", type=float, default=1.0, help="Rozmiar pola szachownicy")
-    p_cal.add_argument("--output_file", default="camera_calib.npz", help="Plik wyjściowy z kalibracją")
+    p_cal.add_argument("--output_file", default="camera_calib.npz", help="Plik wyjściowy z kalibracją (.npz/.yaml/.yml)")
+    p_cal.add_argument(
+        "--output_format",
+        choices=["auto", "npz", "yaml"],
+        default="auto",
+        help="Format zapisu kalibracji: auto (po rozszerzeniu), npz lub yaml",
+    )
 
     p_track = subparsers.add_parser("track", help="Śledzenie plamki")
     p_track.add_argument("--video", required=True, help="Plik MP4")
+    p_track.add_argument(
+        "--calib_file",
+        default="config/camera_calibration.yaml",
+        help="Plik kalibracji kamery (.npz/.yaml/.yml)",
+    )
+    p_track.add_argument("--track_mode", choices=["brightest", "color"], default="brightest", help="Tryb śledzenia")
     p_track.add_argument("--config", default="config/settings.yaml", help="Plik YAML z ustawieniami")
-    p_track.add_argument("--calib_file", help="Plik .npz z kalibracją kamery")
-    p_track.add_argument("--track_mode", choices=["brightest", "color"], help="Tryb śledzenia")
     p_track.add_argument("--color_name", choices=sorted(PRESET_HSV_RANGES.keys()), help="Preset koloru dla track_mode=color")
     p_track.add_argument("--hsv_lower", type=parse_hsv_triplet, help="Dolny próg HSV, np. 0,80,80")
     p_track.add_argument("--hsv_upper", type=parse_hsv_triplet, help="Górny próg HSV, np. 10,255,255")
@@ -1202,7 +1299,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "calibrate":
-        calibrate_camera(args.calib_dir, args.rows, args.cols, args.square_size, args.output_file)
+        calibrate_camera(args.calib_dir, args.rows, args.cols, args.square_size, args.output_file, args.output_format)
         return
 
     if args.command == "track":
