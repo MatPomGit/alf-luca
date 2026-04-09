@@ -5,8 +5,24 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
-from .tracking import parse_roi
 from .types import TrackPoint
+
+
+def parse_roi(roi_text: Optional[str], frame_shape: Tuple[int, int, int]) -> Tuple[int, int, int, int]:
+    """Parse ROI string in x,y,w,h format and clamp values to frame bounds."""
+    if not roi_text:
+        h, w = frame_shape[:2]
+        return 0, 0, w, h
+    parts = [int(v) for v in roi_text.split(",")]
+    if len(parts) != 4:
+        raise ValueError("ROI musi mieć format x,y,w,h")
+    x, y, w, h = parts
+    H, W = frame_shape[:2]
+    x = max(0, min(x, W - 1))
+    y = max(0, min(y, H - 1))
+    w = max(1, min(w, W - x))
+    h = max(1, min(h, H - y))
+    return x, y, w, h
 
 
 def color_for_id(track_id: int) -> Tuple[int, int, int]:
