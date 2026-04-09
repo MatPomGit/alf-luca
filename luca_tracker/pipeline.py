@@ -64,6 +64,22 @@ def _resolve_input_path(path: Optional[str]) -> Optional[str]:
     return str(OUTPUT_DIR / p)
 
 
+def _resolve_input_path_with_fallback(path: Optional[str]) -> Optional[str]:
+    """Rozwiązuje ścieżkę wejściową z zachowaniem zgodności dla plików relatywnych.
+
+    Dla ścieżek relatywnych preferujemy istniejący plik w bieżącym katalogu roboczym.
+    Jeśli taki plik nie istnieje, używamy wariantu z katalogu /output.
+    """
+    if not path:
+        return path
+    p = Path(path)
+    if p.is_absolute():
+        return str(p)
+    if p.exists():
+        return str(p)
+    return str(OUTPUT_DIR / p)
+
+
 def _resolve_output_path(path: Optional[str]) -> Optional[str]:
     """Mapuje ścieżki wynikowe do /output (z zachowaniem ścieżek absolutnych)."""
     if path is None:
@@ -198,7 +214,26 @@ def calibrate_camera(calib_dir: str, rows: int, cols: int, square_size: float, o
 def _resolve_config(args_or_config) -> PipelineConfig:
     """Mapuje obiekt CLI args lub PipelineConfig na spójny model konfiguracji."""
     if isinstance(args_or_config, PipelineConfig):
-        return args_or_config
+        output_csv = args_or_config.output_csv or "tracking_results.csv"
+        return PipelineConfig(
+            video=_resolve_input_path(args_or_config.video) or args_or_config.video,
+            calib_file=_resolve_input_path_with_fallback(args_or_config.calib_file),
+            display=args_or_config.display,
+            interactive=args_or_config.interactive,
+            multi_track=args_or_config.multi_track,
+            selection_mode=args_or_config.selection_mode,
+            output_csv=_resolve_output_path(output_csv),
+            trajectory_png=_resolve_output_path(args_or_config.trajectory_png),
+            report_csv=_resolve_output_path(args_or_config.report_csv),
+            report_pdf=_resolve_output_path(args_or_config.report_pdf),
+            all_tracks_csv=_resolve_output_path(args_or_config.all_tracks_csv),
+            annotated_video=_resolve_output_path(args_or_config.annotated_video),
+            draw_all_tracks=args_or_config.draw_all_tracks,
+            use_kalman=args_or_config.use_kalman,
+            detector=args_or_config.detector,
+            tracker=args_or_config.tracker,
+            kalman=args_or_config.kalman,
+        )
 
     video_input = _resolve_input_path(args_or_config.video)
     output_csv = getattr(args_or_config, "output_csv", None) or _default_measurement_name(video_input, "main_track.csv")
@@ -210,7 +245,7 @@ def _resolve_config(args_or_config) -> PipelineConfig:
 
     return PipelineConfig(
         video=video_input,
-        calib_file=_resolve_input_path(getattr(args_or_config, "calib_file", None)),
+        calib_file=_resolve_input_path_with_fallback(getattr(args_or_config, "calib_file", None)),
         display=getattr(args_or_config, "display", False),
         interactive=getattr(args_or_config, "interactive", False),
         multi_track=getattr(args_or_config, "multi_track", False),
