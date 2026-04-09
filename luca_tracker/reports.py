@@ -3,13 +3,69 @@ from __future__ import annotations
 import csv
 import math
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Literal, Optional, Sequence, Union
 
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 
 from .types import TrackPoint
 DEFAULT_EXPORT_PATH="(output/)"
+
+MetricProfile = Literal["basic", "extended", "research"]
+MetricValue = Union[float, str]
+
+PROFILE_METRICS = {
+    "basic": (
+        "frames_total",
+        "detections_total",
+        "detection_ratio",
+        "missed_frames",
+        "path_length",
+        "mean_step",
+        "max_step",
+    ),
+    "extended": (
+        "frames_total",
+        "detections_total",
+        "detection_ratio",
+        "missed_frames",
+        "gap_count",
+        "max_gap",
+        "mean_gap",
+        "path_length",
+        "mean_step",
+        "max_step",
+        "jitter_rms",
+        "mean_area",
+        "max_area",
+        "mean_radius",
+        "max_radius",
+        "mean_circularity",
+    ),
+    "research": (
+        "frames_total",
+        "detections_total",
+        "detection_ratio",
+        "missed_frames",
+        "gap_count",
+        "max_gap",
+        "mean_gap",
+        "path_length",
+        "mean_step",
+        "max_step",
+        "jitter_rms",
+        "trajectory_smoothness",
+        "mean_area",
+        "max_area",
+        "mean_radius",
+        "max_radius",
+        "mean_circularity",
+        "mae_px",
+        "rmse_px",
+        "p95_error_px",
+    ),
+}
 
 def compute_track_metrics(points: Sequence[TrackPoint]) -> Dict[str, float]:
     detected = [p for p in points if p.detected and p.x is not None and p.y is not None]
@@ -96,69 +152,212 @@ def generate_trajectory_png(points: Sequence[TrackPoint], png_path: str, title: 
     plt.close()
 
 
-def metrics_from_points(points: Sequence[TrackPoint]) -> Dict[str, float]:
-    metrics = compute_track_metrics(points)
-    misses = 0
-    gap_lengths = []
+def metrics_from_points(
+    points: Sequence[TrackPoint],
+    reference_points: Optional[Sequence[TrackPoint]] = None,
+    metric_profile: str = "basic",
+) -> Dict[str, MetricValue]:
+    """Zachowuje kompatybilność wsteczną i deleguje liczenie metryk do wariantu profilowanego."""
+    return metrics_from_points_with_profile(
+        points=points,
+        reference_points=reference_points,
+        metric_profile=metric_profile,
+    )
+
+
+def _normalize_profile(metric_profile: str) -> MetricProfile:
+    """Normalizuje nazwę profilu metryk i zapewnia bezpieczny fallback."""
+    profile_key = (metric_profile or "basic").strip().lower()
+    return profile_key if profile_key in PROFILE_METRICS else "basic"
+
+
+def _ordered_points(points: Sequence[TrackPoint]) -> List[TrackPoint]:
+    """Zwraca punkty posortowane po frame_index, aby ograniczyć wpływ niespójnej kolejności wejścia."""
+    return sorted(points, key=lambda p: p.frame_index)
+
+
+def _compute_gap_lengths(ordered_points: Sequence[TrackPoint]) -> List[int]:
+    """Liczy długości przerw (brak detekcji lub brakujący indeks klatki) w jednostkach klatek."""
+    if not ordered_points:
+        return []
+
+    gap_lengths: List[int] = []
     current_gap = 0
-    for p in points:
-        if not p.detected:
-            misses += 1
+    previous_frame: Optional[int] = None
+
+    for point in ordered_points:
+        if previous_frame is not None and point.frame_index > previous_frame + 1:
+            current_gap += point.frame_index - previous_frame - 1
+
+        has_detection = bool(point.detected and point.x is not None and point.y is not None)
+        if not has_detection:
             current_gap += 1
-        else:
-            if current_gap > 0:
-                gap_lengths.append(current_gap)
-                current_gap = 0
+        elif current_gap > 0:
+            gap_lengths.append(current_gap)
+            current_gap = 0
+
+        previous_frame = point.frame_index
+
     if current_gap > 0:
         gap_lengths.append(current_gap)
+    return gap_lengths
 
-    detected = [p for p in points if p.detected]
+
+def _compute_jitter_rms(ordered_detected: Sequence[TrackPoint]) -> float:
+    """Liczy RMS odchyleń kroku od średniego kroku (im mniej, tym stabilniejszy ruch)."""
+    if len(ordered_detected) < 2:
+        return 0.0
+
+    steps = np.array(
+        [
+            math.hypot((b.x or 0.0) - (a.x or 0.0), (b.y or 0.0) - (a.y or 0.0))
+            for a, b in zip(ordered_detected[:-1], ordered_detected[1:])
+        ],
+        dtype=np.float64,
+    )
+    if steps.size == 0:
+        return 0.0
+
+    centered = steps - np.mean(steps)
+    return float(np.sqrt(np.mean(centered**2)))
+
+
+def _compute_trajectory_smoothness(ordered_detected: Sequence[TrackPoint]) -> float:
+    """Liczy gładkość trajektorii na podstawie RMS drugiej różnicy położenia."""
+    if len(ordered_detected) < 3:
+        return 0.0
+
+    coords = np.array([(p.x, p.y) for p in ordered_detected if p.x is not None and p.y is not None], dtype=np.float64)
+    if coords.shape[0] < 3:
+        return 0.0
+
+    second_diff = np.diff(coords, n=2, axis=0)
+    magnitudes = np.linalg.norm(second_diff, axis=1)
+    return float(np.sqrt(np.mean(magnitudes**2))) if magnitudes.size else 0.0
+
+
+def _compute_reference_errors(
+    ordered_points: Sequence[TrackPoint],
+    reference_points: Optional[Sequence[TrackPoint]],
+) -> Dict[str, float]:
+    """Opcjonalnie liczy błędy pozycji względem trajektorii referencyjnej."""
+    default = {"mae_px": 0.0, "rmse_px": 0.0, "p95_error_px": 0.0}
+    if not reference_points:
+        return default
+
+    ref_by_frame = {p.frame_index: p for p in reference_points}
+    frame_errors: List[float] = []
+
+    for point in ordered_points:
+        ref = ref_by_frame.get(point.frame_index)
+        if not ref:
+            continue
+        if (
+            not point.detected
+            or not ref.detected
+            or point.x is None
+            or point.y is None
+            or ref.x is None
+            or ref.y is None
+        ):
+            continue
+        frame_errors.append(math.hypot(point.x - ref.x, point.y - ref.y))
+
+    if not frame_errors:
+        return default
+
+    errors = np.array(frame_errors, dtype=np.float64)
+    return {
+        "mae_px": float(np.mean(np.abs(errors))),
+        "rmse_px": float(np.sqrt(np.mean(errors**2))),
+        "p95_error_px": float(np.percentile(errors, 95)),
+    }
+
+
+def metrics_from_points_with_profile(
+    points: Sequence[TrackPoint],
+    reference_points: Optional[Sequence[TrackPoint]] = None,
+    metric_profile: str = "basic",
+) -> Dict[str, MetricValue]:
+    """Generuje metryki zgodnie z profilem oraz opcjonalnie dodaje błędy względem referencji."""
+    ordered = _ordered_points(points)
+    metrics = compute_track_metrics(ordered)
+    gap_lengths = _compute_gap_lengths(ordered)
+    detected = [p for p in ordered if p.detected and p.x is not None and p.y is not None]
     radii = [p.radius for p in detected if p.radius is not None]
     areas = [p.area for p in detected if p.area is not None]
     circs = [p.circularity for p in detected if p.circularity is not None]
+    profile = _normalize_profile(metric_profile)
 
-    return {
-        "frames_total": float(len(points)),
+    frame_indices = [p.frame_index for p in ordered]
+    if frame_indices:
+        expected_span = max(frame_indices) - min(frame_indices) + 1
+        index_gaps = max(0, expected_span - len(ordered))
+    else:
+        index_gaps = 0
+
+    misses = len([p for p in ordered if not (p.detected and p.x is not None and p.y is not None)]) + index_gaps
+
+    all_metrics = {
+        "metric_profile": profile,
+        "frames_total": float(len(ordered)),
         "detections_total": float(len(detected)),
         "detection_ratio": metrics["detection_ratio"],
         "missed_frames": float(misses),
         "gap_count": float(len(gap_lengths)),
         "max_gap": float(max(gap_lengths) if gap_lengths else 0),
+        "mean_gap": float(sum(gap_lengths) / len(gap_lengths)) if gap_lengths else 0.0,
         "path_length": metrics["path_length"],
         "mean_step": metrics["mean_step"],
         "max_step": metrics["max_step"],
+        "jitter_rms": _compute_jitter_rms(detected),
+        "trajectory_smoothness": _compute_trajectory_smoothness(detected),
         "mean_area": float(sum(areas) / len(areas)) if areas else 0.0,
         "max_area": float(max(areas)) if areas else 0.0,
         "mean_radius": float(sum(radii) / len(radii)) if radii else 0.0,
         "max_radius": float(max(radii)) if radii else 0.0,
         "mean_circularity": float(sum(circs) / len(circs)) if circs else 0.0,
     }
+    all_metrics.update(_compute_reference_errors(ordered, reference_points))
+
+    allowed_keys = {"metric_profile", *PROFILE_METRICS[profile]}
+    return {key: value for key, value in all_metrics.items() if key in allowed_keys}
 
 
-def save_metrics_csv(metrics: Dict[str, float], csv_path: str):
+def save_metrics_csv(metrics: Dict[str, MetricValue], csv_path: str, metric_profile: Optional[str] = None):
+    """Zapisuje metryki do CSV i jawnie dodaje informację o aktywnym profilu."""
+    resolved_profile = _normalize_profile(str(metric_profile or metrics.get("metric_profile", "basic")))
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["metric", "value"])
+        writer.writerow(["metric_profile", resolved_profile])
         for k, v in metrics.items():
+            if k == "metric_profile":
+                continue
             writer.writerow([k, v])
 
 
 def save_track_report_pdf(
     pdf_path: str,
-    metrics: Dict[str, float],
+    metrics: Dict[str, MetricValue],
     title: str,
     trajectory_png: Optional[str] = None,
     extra_lines: Optional[List[str]] = None,
+    metric_profile: str = "basic",
 ):
+    resolved_profile = _normalize_profile(str(metric_profile or metrics.get("metric_profile", "basic")))
     with PdfPages(pdf_path) as pdf:
         fig = plt.figure(figsize=(8.27, 11.69))
         fig.clf()
         ax = fig.add_axes([0.08, 0.05, 0.84, 0.9])
         ax.axis("off")
 
-        lines = [title, "", "Metryki jakości śledzenia:", ""]
+        lines = [title, "", f"Profil metryk: {resolved_profile}", "", "Metryki jakości śledzenia:", ""]
         for k, v in metrics.items():
-            lines.append(f"{k}: {v:.6f}")
+            if isinstance(v, (int, float)):
+                lines.append(f"{k}: {float(v):.6f}")
+            else:
+                lines.append(f"{k}: {v}")
         if extra_lines:
             lines.extend(["", *extra_lines])
 
