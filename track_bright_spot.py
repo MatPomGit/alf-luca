@@ -1046,6 +1046,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_track.add_argument("--max_area", type=float, help="Maksymalna powierzchnia konturu")
     p_track.add_argument("--roi", type=parse_roi, help="Obszar zainteresowania x,y,w,h")
     p_track.add_argument("--output_csv", default="tracking_results.csv", help="Plik CSV z wynikami")
+    p_track.add_argument(
+        "--output_dir",
+        help="Katalog wyjściowy (szczególnie przy uruchamianiu wsadowym)",
+    )
+    p_track.add_argument(
+        "--output_pattern",
+        help="Wzorzec pliku wynikowego CSV, np. {stem}_tracking.csv",
+    )
     p_track.add_argument("--trajectory_png", help="Plik PNG z wykresem trajektorii")
     p_track.add_argument("--report_csv", help="Plik CSV z raportem jakości")
     p_track.add_argument("--report_pdf", help="Plik PDF z raportem jakości")
@@ -1061,6 +1069,70 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def resolve_batch_videos(video_arg: str) -> List[str]:
+    if os.path.isdir(video_arg):
+        return sorted(glob.glob(os.path.join(video_arg, "*.mp4")))
+    if glob.has_magic(video_arg):
+        return sorted(glob.glob(video_arg))
+    return [video_arg]
+
+
+def resolve_output_for_video(
+    stem: str,
+    output_dir: Optional[str],
+    pattern: Optional[str],
+    fallback: Optional[str],
+) -> Optional[str]:
+    if pattern:
+        filename = pattern.format(stem=stem)
+    elif fallback:
+        filename = fallback.format(stem=stem)
+    else:
+        return None
+
+    if output_dir:
+        return os.path.join(output_dir, os.path.basename(filename))
+    return filename
+
+
+def ensure_parent_dir(path: Optional[str]) -> None:
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+
+def run_track(args: argparse.Namespace) -> None:
+    videos = resolve_batch_videos(args.video)
+    if not videos:
+        raise FileNotFoundError(f"Nie znaleziono plików wideo dla: {args.video}")
+    if args.interactive and len(videos) > 1:
+        raise ValueError("Tryb interaktywny nie jest obsługiwany w uruchamianiu wsadowym.")
+
+    for video in videos:
+        stem = os.path.splitext(os.path.basename(video))[0]
+        output_csv = resolve_output_for_video(stem, args.output_dir, args.output_pattern, args.output_csv)
+        trajectory_png = resolve_output_for_video(stem, args.output_dir, None, args.trajectory_png)
+        report_csv = resolve_output_for_video(stem, args.output_dir, None, args.report_csv)
+        report_pdf = resolve_output_for_video(stem, args.output_dir, None, args.report_pdf)
+
+        args_local = argparse.Namespace(**vars(args))
+        args_local.video = video
+        args_local.output_csv = output_csv
+        args_local.trajectory_png = trajectory_png
+        args_local.report_csv = report_csv
+        args_local.report_pdf = report_pdf
+
+        ensure_parent_dir(args_local.output_csv)
+        ensure_parent_dir(args_local.trajectory_png)
+        ensure_parent_dir(args_local.report_csv)
+        ensure_parent_dir(args_local.report_pdf)
+
+        config = build_tracker_config(args_local)
+        track_spot(config)
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -1070,8 +1142,7 @@ def main() -> None:
         return
 
     if args.command == "track":
-        config = build_tracker_config(args)
-        track_spot(config)
+        run_track(args)
         return
 
     if args.command == "compare":
