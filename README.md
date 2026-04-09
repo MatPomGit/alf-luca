@@ -112,6 +112,19 @@ python tools/video_tool.py \
   --remove-audio
 ```
 
+### 7. Porównanie wielu plików pomiarowych i wykresy
+
+```bash
+python tools/data.py \
+  output/tracking_results.csv \
+  output/inny_pomiar.csv \
+  --x-col frame \
+  --y-cols x y speed \
+  --output-dir output/compare_plots
+```
+
+Skrypt zapisuje wykresy porównawcze i różnicowe (`*.png`) dla wybranych kolumn.
+
 ## Wyniki i artefakty
 
 Programy mogą generować m.in.:
