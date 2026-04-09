@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-track_spot.py
+track_luca.py
 
 Rozszerzona wersja programu do:
 - kalibracji kamery,
