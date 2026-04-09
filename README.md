@@ -54,7 +54,7 @@ python track_luca.py calibrate \
 
 ```bash
 python track_luca.py track \
-  --video film.mp4 \
+  --video luca_regal.mp4 \
   --track_mode brightness \
   --output_csv tracking_results.csv \
   --trajectory_png trajectory.png \
@@ -80,18 +80,42 @@ python track_luca.py
 
 Wtedy program domyślnie przełączy się na tryb `gui` i spróbuje użyć pierwszego pliku `*.mp4`, `*.mkv`, `*.avi`, `*.mov`, `*.m4v` lub `*.webm` (najpierw z katalogu `video/`, potem z bieżącego katalogu).
 Domyślne wartości suwaków GUI są ładowane z pliku `config/gui_display.yaml`.
+
 Możesz też wskazać inny plik:
 
 ```bash
-python track_luca.py gui --video film.mp4 --gui_config config/gui_display.yaml
+python track_luca.py gui --video luca_regal.mp4 --gui_config config/gui_display.yaml
 ```
 
 GUI automatycznie wykrywa pliki wideo z folderu `video/` i pozwala przełączać je listą rozwijaną.
 Wyniki analizy z GUI są zapisywane do folderu `output/` jako pliki `*_gui_analysis.csv`.
 Wstępnie wybrany indeks pliku możesz ustawić przez `video_index` w `config/gui_display.yaml`.
-Przyciski `Auto params`, `Analyze`, `Pause`, `Multi track` i `Use calib` sterują przebiegiem analizy.
-Wybór `Speed` pozwala przyśpieszyć odtwarzanie: `x1.25`, `x1.5`, `x2`, `x3`, `x5`, `x10`, `x20`.
 Interfejs GUI (Kivy) pokazuje też panele statusu i podgląd przetworzonego obrazu, aby ułatwić pracę operatora.
+
+### Nowe funkcjonalności GUI
+
+- Okno aplikacji jest maksymalizowane przy starcie (jeśli wspiera to backend Kivy), a układ panelu dostosowuje się do zmiany rozmiaru okna.
+- Dodano więcej przycisków akcji:
+  - `Prev video` / `Next video` — szybkie przełączanie nagrania,
+  - `Restart video` — restart od początku bieżącego materiału.
+- Dodano pełny zestaw sterowania nagrywaniem/analityką:
+  - `START` — start przetwarzania,
+  - `PAUSE` — wstrzymanie,
+  - `RESUME` — wznowienie,
+  - `STOP` — zatrzymanie,
+  - `QUIT` — zamknięcie aplikacji GUI.
+- Działa nawigacja kółkiem myszy:
+  - kółko bez `SHIFT` przełącza aktywne pole,
+  - kółko z `SHIFT` zmienia wartość aktualnie wybranego pola.
+- Działa nawigacja klawiszami strzałek:
+  - `↑/↓` — wybór pól,
+  - `←/→` — zmiana wartości pola.
+- Dodatkowe skróty klawiszowe:
+  - `Space` — szybkie przełączanie START/PAUSE/RESUME,
+  - `S` — STOP,
+  - `M` — wypisanie komendy do narzędzia QA wideo.
+
+Wybór `Speed` pozwala przyśpieszyć odtwarzanie: `x1.25`, `x1.5`, `x2`, `x3`, `x5`, `x10`, `x20`.
 
 W GUI wyświetlany jest odnośnik do narzędzia QA wideo (`tools/video_tool.py`).
 Możesz też nacisnąć klawisz `m`, aby wypisać w konsoli gotową komendę uruchomienia narzędzia.
@@ -111,7 +135,7 @@ Możesz też nacisnąć klawisz `m`, aby wypisać w konsoli gotową komendę uru
 
 ```bash
 python tools/video_tool.py \
-  --input film.mp4 \
+  --input luca_regal.mp4 \
   --analyze-only \
   --report-json report_mp4.json
 ```
@@ -120,7 +144,7 @@ python tools/video_tool.py \
 
 ```bash
 python tools/video_tool.py \
-  --input film.mp4 \
+  --input luca_regal.mp4 \
   --output film_fixed.mp4 \
   --target-bitrate 2500k \
   --target-fps 30 \
@@ -132,7 +156,7 @@ python tools/video_tool.py \
 
 ```bash
 python tools/video_tool.py \
-  --input film.mp4 \
+  --input luca_regal.mp4 \
   --output film_no_audio.mp4 \
   --remove-audio
 ```

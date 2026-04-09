@@ -1,4 +1,4 @@
-from __future__ import annotations
+"""Warstwa kompatybilności dla starego API modułu tracking.
 
 import glob
 import logging
@@ -6,17 +6,18 @@ import math
 import os
 from typing import Dict, List, Optional, Sequence, Tuple
 
-import cv2
-import numpy as np
+from __future__ import annotations
 
-from .reports import (
-    compute_track_metrics,
-    generate_trajectory_png,
-    metrics_from_points,
-    save_all_tracks_csv,
-    save_metrics_csv,
-    save_track_csv,
-    save_track_report_pdf,
+from .detectors import (
+    COLOR_PRESETS,
+    DetectorConfig,
+    build_mask,
+    contour_to_detection,
+    detect_spots,
+    detect_spots_with_config,
+    ensure_odd,
+    parse_hsv_pair,
+    parse_roi,
 )
 from .types import Detection, TrackPoint
 from .video_export import export_annotated_video

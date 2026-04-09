@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import glob
 import sys
@@ -41,6 +40,7 @@ def _load_gui_metadata() -> tuple[List[str], List[str], str]:
 
 def build_parser():
     # Metadane GUI ładujemy leniwie, aby parser CLI działał nawet bez OpenCV/Kivy.
+    print("CLI Buduję parser")
     gui_colors, gui_selection_modes, mp4_tool_path = _load_gui_metadata()
     parser = argparse.ArgumentParser(
         description="Śledzenie jasnej lub kolorowej plamki światła w video (np. MP4/MKV/AVI/MOV/WEBM). Obsługuje także opcjonalne wygładzanie filtrem Kalmana."
@@ -55,7 +55,8 @@ def build_parser():
     p_cal.add_argument("--output_file", default="camera_calib.npz", help="Plik wynikowy .npz")
 
     p_track = subparsers.add_parser("track", help="Śledzenie plamki")
-    p_track.add_argument("--video", required=True, help="Plik wejściowy wideo (np. MP4/MKV/AVI/MOV/WEBM)")
+    p_track.add_argument("--config", help="Pełna konfiguracja uruchomienia z pliku JSON/YAML (.json/.yaml/.yml)")
+    p_track.add_argument("--video", help="Plik wejściowy wideo (np. MP4/MKV/AVI/MOV/WEBM)")
     p_track.add_argument("--calib_file", help="Plik kalibracji .npz")
     p_track.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
     p_track.add_argument("--threshold", type=int, default=200, help="Próg jasności")
@@ -157,9 +158,16 @@ def main():
 
         calibrate_camera(args.calib_dir, args.rows, args.cols, args.square_size, args.output_file)
     elif args.command == "track":
+        from .config_model import load_run_config, run_config_to_pipeline_config
         from .tracking import track_video
 
-        track_video(args)
+        if args.config:
+            run_config = load_run_config(args.config)
+            track_video(run_config_to_pipeline_config(run_config))
+        else:
+            if not args.video:
+                parser.error("Dla trybu track wymagany jest --video lub --config.")
+            track_video(args)
     elif args.command == "compare":
         from .reports import compare_csv
 
