@@ -29,7 +29,17 @@ GUI_SELECTION_MODES = ["largest", "stablest", "longest"]
 GUI_COLOR_NAMES = list(COLOR_PRESETS.keys())
 GUI_SPEED_FACTORS = [1.0, 1.25, 1.5, 2.0, 3.0, 5.0, 10.0, 20.0]
 MP4_QUALITY_TOOL_PATH = "tools/video_tool.py"
-GUI_SLIDER_STEP = {"Threshold": 1, "Blur": 2, "Min area": 10, "Max area": 50, "Erode": 1, "Dilate": 1, "Max spots": 1}
+GUI_SLIDER_STEP = {
+    "Threshold": 1,
+    "Blur": 2,
+    "Adaptive block": 2,
+    "Adaptive C": 0.5,
+    "Min area": 10,
+    "Max area": 50,
+    "Erode": 1,
+    "Dilate": 1,
+    "Max spots": 1,
+}
 
 
 class GUIEnvironmentError(RuntimeError):
@@ -342,6 +352,10 @@ def run_gui(args):
             self.track_mode = args.track_mode
             self.color_name = args.color_name
             self.threshold = int(np.clip(args.threshold, 0, 255))
+            self.threshold_mode = str(args.threshold_mode)
+            self.adaptive_block_size = ensure_odd(max(3, int(args.adaptive_block_size)))
+            self.adaptive_c = float(args.adaptive_c)
+            self.use_clahe = bool(args.use_clahe)
             self.blur = int(np.clip(args.blur, 1, 31))
             self.min_area = float(args.min_area)
             self.max_area = float(args.max_area)
@@ -388,6 +402,10 @@ def run_gui(args):
                     "mode": self.mode,
                     "track_mode": self.track_mode,
                     "threshold": self.threshold,
+                    "threshold_mode": self.threshold_mode,
+                    "adaptive_block_size": self.adaptive_block_size,
+                    "adaptive_c": self.adaptive_c,
+                    "use_clahe": self.use_clahe,
                     "blur": self.blur,
                     "min_area": self.min_area,
                     "max_area": self.max_area,
@@ -413,6 +431,10 @@ def run_gui(args):
                         "main_x",
                         "main_y",
                         "threshold",
+                        "threshold_mode",
+                        "adaptive_block_size",
+                        "adaptive_c",
+                        "use_clahe",
                         "blur",
                         "min_area",
                         "max_area",
@@ -660,7 +682,15 @@ def run_gui(args):
             self.track_spinner.bind(text=lambda _, val: setattr(self, "track_mode", val))
             row_top.add_widget(self.track_spinner)
 
-            self.color_spinner = Spinner(text=self.color_name, values=GUI_COLOR_NAMES, size_hint_x=0.15)
+            self.threshold_mode_spinner = Spinner(
+                text=self.threshold_mode,
+                values=["fixed", "otsu", "adaptive"],
+                size_hint_x=0.17,
+            )
+            self.threshold_mode_spinner.bind(text=lambda _, val: setattr(self, "threshold_mode", val))
+            row_top.add_widget(self.threshold_mode_spinner)
+
+            self.color_spinner = Spinner(text=self.color_name, values=GUI_COLOR_NAMES, size_hint_x=0.13)
             self.color_spinner.bind(text=lambda _, val: setattr(self, "color_name", val))
             row_top.add_widget(self.color_spinner)
 
@@ -674,6 +704,7 @@ def run_gui(args):
                     ("Video", self.video_spinner),
                     ("Mode", self.mode_spinner),
                     ("Track", self.track_spinner),
+                    ("Threshold mode", self.threshold_mode_spinner),
                     ("Color", self.color_spinner),
                     ("Speed", self.speed_spinner),
                 ]
@@ -682,6 +713,15 @@ def run_gui(args):
             slider_rows = [
                 ("Threshold", 0, 255, self.threshold, 1, lambda v: setattr(self, "threshold", int(v))),
                 ("Blur", 1, 31, self.blur, 2, lambda v: setattr(self, "blur", ensure_odd(int(v)))),
+                (
+                    "Adaptive block",
+                    3,
+                    99,
+                    self.adaptive_block_size,
+                    2,
+                    lambda v: setattr(self, "adaptive_block_size", ensure_odd(max(3, int(v)))),
+                ),
+                ("Adaptive C", -20, 20, self.adaptive_c, 0.5, lambda v: setattr(self, "adaptive_c", float(v))),
                 ("Min area", 0, 5000, self.min_area, 1, lambda v: setattr(self, "min_area", float(v))),
                 ("Max area", 0, 20000, self.max_area, 1, lambda v: setattr(self, "max_area", float(v))),
                 ("Erode", 0, 10, self.erode_iter, 1, lambda v: setattr(self, "erode_iter", int(v))),
@@ -711,6 +751,13 @@ def run_gui(args):
             self.btn_calib = ToggleButton(text="Use calib: ON" if self.use_calib else "Use calib: OFF", state="down" if self.use_calib else "normal")
             self.btn_calib.bind(state=self._toggle_calib)
             toggles.add_widget(self.btn_calib)
+
+            self.btn_clahe = ToggleButton(
+                text="CLAHE: ON" if self.use_clahe else "CLAHE: OFF",
+                state="down" if self.use_clahe else "normal",
+            )
+            self.btn_clahe.bind(state=self._toggle_clahe)
+            toggles.add_widget(self.btn_clahe)
             controls.add_widget(toggles)
             self.nav_targets.extend(
                 [
@@ -718,6 +765,7 @@ def run_gui(args):
                     ("Auto", self.btn_auto),
                     ("Multi", self.btn_multi),
                     ("Calib", self.btn_calib),
+                    ("CLAHE", self.btn_clahe),
                 ]
             )
 
@@ -840,6 +888,11 @@ def run_gui(args):
             if not enabled:
                 self.btn_calib.state = "normal"
 
+        def _toggle_clahe(self, _, state: str):
+            # Przełącznik CLAHE pozwala szybko sprawdzić wpływ lokalnego kontrastu na detekcję.
+            self.use_clahe = state == "down"
+            self.btn_clahe.text = f"CLAHE: {'ON' if self.use_clahe else 'OFF'}"
+
         def _restart_video(self):
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             self.frame_index = 0
@@ -868,6 +921,10 @@ def run_gui(args):
                     track_mode=self.track_mode,
                     blur=ensure_odd(max(1, int(self.blur))),
                     threshold=int(self.threshold),
+                    threshold_mode=self.threshold_mode,
+                    adaptive_block_size=int(self.adaptive_block_size),
+                    adaptive_c=float(self.adaptive_c),
+                    use_clahe=bool(self.use_clahe),
                     erode_iter=int(self.erode_iter),
                     dilate_iter=int(self.dilate_iter),
                     min_area=float(self.min_area),
@@ -944,6 +1001,10 @@ def run_gui(args):
         def _apply_auto_params(self, frame: np.ndarray):
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             self.threshold = int(np.clip(np.percentile(gray, 99.5), 60, 250))
+            self.threshold_mode = "fixed"
+            self.adaptive_block_size = 31
+            self.adaptive_c = 5.0
+            self.use_clahe = False
             self.blur = 9
             self.min_area = max(5.0, frame.shape[0] * frame.shape[1] * 0.00002)
             self.max_area = frame.shape[0] * frame.shape[1] * 0.25
@@ -956,9 +1017,12 @@ def run_gui(args):
 
             self.mode_spinner.text = self.mode
             self.track_spinner.text = self.track_mode
+            self.threshold_mode_spinner.text = self.threshold_mode
             self.color_spinner.text = self.color_name
             self.slider_refs["Threshold"].value = self.threshold
             self.slider_refs["Blur"].value = self.blur
+            self.slider_refs["Adaptive block"].value = self.adaptive_block_size
+            self.slider_refs["Adaptive C"].value = self.adaptive_c
             self.slider_refs["Min area"].value = _clip_slider(self.min_area, 0, 5000)
             self.slider_refs["Max area"].value = _clip_slider(self.max_area, 0, 20000)
             self.slider_refs["Erode"].value = self.erode_iter
@@ -997,6 +1061,10 @@ def run_gui(args):
                 track_mode=self.track_mode,
                 blur=ensure_odd(max(1, self.blur)),
                 threshold=self.threshold,
+                threshold_mode=self.threshold_mode,
+                adaptive_block_size=int(self.adaptive_block_size),
+                adaptive_c=float(self.adaptive_c),
+                use_clahe=bool(self.use_clahe),
                 erode_iter=self.erode_iter,
                 dilate_iter=self.dilate_iter,
                 min_area=float(self.min_area),
@@ -1058,6 +1126,10 @@ def run_gui(args):
                     track_mode="brightness",
                     blur=ensure_odd(max(1, self.blur)),
                     threshold=self.threshold,
+                    threshold_mode=self.threshold_mode,
+                    adaptive_block_size=int(self.adaptive_block_size),
+                    adaptive_c=float(self.adaptive_c),
+                    use_clahe=bool(self.use_clahe),
                     erode_iter=self.erode_iter,
                     dilate_iter=self.dilate_iter,
                     min_area=float(self.min_area),
@@ -1073,6 +1145,10 @@ def run_gui(args):
                     track_mode="color",
                     blur=ensure_odd(max(1, self.blur)),
                     threshold=self.threshold,
+                    threshold_mode=self.threshold_mode,
+                    adaptive_block_size=int(self.adaptive_block_size),
+                    adaptive_c=float(self.adaptive_c),
+                    use_clahe=bool(self.use_clahe),
                     erode_iter=self.erode_iter,
                     dilate_iter=self.dilate_iter,
                     min_area=float(self.min_area),
@@ -1091,10 +1167,10 @@ def run_gui(args):
                 preview,
                 [
                     f"Video: {self.video_files[self.current_video_idx].name}",
-                    f"Mode: {self.mode} | Track: {self.track_mode}",
+                    f"Mode: {self.mode} | Track: {self.track_mode} | Thresh: {self.threshold_mode}",
                     f"Detections: {len(detections)} | Frame: {self.frame_index}",
                     f"Single EKF: {'PRED' if predicted_only else 'MEAS'} | Max spots: {self.max_spots}",
-                    f"Auto params: {'ON' if self.auto_params else 'OFF'} | Speed: x{self.speed_factor:g}",
+                    f"CLAHE: {'ON' if self.use_clahe else 'OFF'} | Auto: {'ON' if self.auto_params else 'OFF'} | Speed: x{self.speed_factor:g}",
                 ],
                 origin=(10, 10),
                 bg_color=(18, 26, 36),
@@ -1113,6 +1189,10 @@ def run_gui(args):
                         "main_x": round(float(tracked_xy[0]), 3),
                         "main_y": round(float(tracked_xy[1]), 3),
                         "threshold": self.threshold,
+                        "threshold_mode": self.threshold_mode,
+                        "adaptive_block_size": self.adaptive_block_size,
+                        "adaptive_c": self.adaptive_c,
+                        "use_clahe": self.use_clahe,
                         "blur": self.blur,
                         "min_area": self.min_area,
                         "max_area": self.max_area,

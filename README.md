@@ -126,6 +126,14 @@ python track_luca.py track \
   --report_pdf report.pdf
 ```
 
+#### Dobór trybu progowania jasności (`--threshold_mode`)
+
+- `fixed` (domyślny): najlepszy, gdy scena ma stabilne oświetlenie, a jasność plamki mocno odcina się od tła.
+- `adaptive`: zalecany przy nierównym oświetleniu, cieniach lub zmianach ekspozycji między fragmentami kadru.
+- `otsu`: dobry punkt pośredni, gdy chcesz automatycznie dobrać globalny próg bez ręcznego strojenia.
+
+Przy trudnych warunkach oświetleniowych warto dodatkowo włączyć `--use_clahe`, aby poprawić lokalny kontrast przed progowaniem.
+
 ### 2a. Więcej gotowych przykładów śledzenia (kopiuj-wklej)
 
 #### Śledzenie z ROI i zakresem klatek
