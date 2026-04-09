@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import glob
 import os
+import sys
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -56,6 +58,46 @@ ANSI = {
     "cyan": "\033[96m",
     "magenta": "\033[95m",
 }
+
+
+class _ProgressBar:
+    """Prosty pasek postępu dla długich zadań uruchamianych w terminalu."""
+
+    def __init__(self, total: Optional[int], label: str, width: int = 30) -> None:
+        # Przechowujemy podstawowe metadane paska (może działać także bez znanej liczby kroków).
+        self.total = total if total and total > 0 else None
+        self.label = label
+        self.width = width
+        self.current = 0
+        self.start_time = time.time()
+        self._enabled = sys.stdout.isatty()
+        self._last_render_len = 0
+
+    def update(self, value: int) -> None:
+        """Aktualizuje postęp i renderuje pojedynczą linię stanu."""
+        self.current = max(0, value)
+        if not self._enabled:
+            return
+        if self.total:
+            ratio = min(1.0, self.current / self.total)
+            done = int(ratio * self.width)
+            bar = "#" * done + "-" * (self.width - done)
+            percent = int(ratio * 100)
+            line = f"{self.label}: [{bar}] {percent:3d}% ({self.current}/{self.total})"
+        else:
+            # Gdy liczba kroków nie jest znana, pokazujemy licznik i czas działania.
+            elapsed = time.time() - self.start_time
+            line = f"{self.label}: przetworzono {self.current} | czas {elapsed:0.1f}s"
+        padding = max(0, self._last_render_len - len(line))
+        sys.stdout.write("\r" + line + (" " * padding))
+        sys.stdout.flush()
+        self._last_render_len = len(line)
+
+    def close(self) -> None:
+        """Kończy pracę paska i przechodzi do nowej linii."""
+        if self._enabled:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
 
 
 def _log_stage(kind: str, message: str, color: str = "cyan") -> None:
@@ -132,21 +174,26 @@ def calibrate_camera(calib_dir: str, rows: int, cols: int, square_size: float, o
     if not images:
         raise FileNotFoundError(f"Brak obrazów kalibracyjnych w katalogu: {calib_dir}")
 
+    progress = _ProgressBar(total=len(images), label="Kalibracja")
     gray_shape = None
-    for fname in images:
+    for image_index, fname in enumerate(images, start=1):
         image = cv2.imread(fname)
         if image is None:
+            progress.update(image_index)
             continue
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         ok, corners = cv2.findChessboardCorners(gray, (cols, rows), None)
         if not ok:
             print(f"[INFO] Pominięto {fname} - nie znaleziono narożników.")
+            progress.update(image_index)
             continue
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
         corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
         objpoints.append(objp)
         imgpoints.append(corners2)
         gray_shape = gray.shape[::-1]
+        progress.update(image_index)
+    progress.close()
 
     if not objpoints:
         raise RuntimeError("Nie udało się znaleźć wzorca na żadnym obrazie.")
@@ -211,6 +258,11 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
     fps = fps if fps > 0 else 1.0
+    total_frames_raw = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    progress = _ProgressBar(
+        total=total_frames_raw if total_frames_raw > 0 else None,
+        label="Analiza",
+    )
 
     tracker = SimpleMultiTracker(
         max_distance=config.tracker.max_distance,
@@ -269,9 +321,11 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
                 break
 
         frame_index += 1
+        progress.update(frame_index)
 
     cap.release()
     cv2.destroyAllWindows()
+    progress.close()
 
     if config.multi_track:
         finished_tracks.update(tracker.close_all())
