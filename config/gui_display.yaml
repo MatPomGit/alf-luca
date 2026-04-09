@@ -1,0 +1,32 @@
+# Domyślna konfiguracja suwaków i działania okna `gui`.
+# Zmiana wartości w tym pliku zmienia ustawienia startowe GUI.
+
+# calibration | processing | compare
+mode: processing
+video_index: 0
+
+# brightness | color
+track_mode: brightness
+color_name: red
+
+threshold: 200
+blur: 11
+min_area: 10
+max_area: 0
+erode_iter: 2
+dilate_iter: 4
+
+multi_track: false
+max_spots: 10
+selection_mode: stablest
+
+# Stan GUI po uruchomieniu
+use_calib: true
+analyze: false
+pause: false
+auto_params: false
+speed_factor: 1.0
+
+# Opóźnienie odświeżania GUI (ms)
+wait_ms_running: 1
+wait_ms_paused: 20
