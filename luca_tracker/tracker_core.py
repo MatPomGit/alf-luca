@@ -210,6 +210,7 @@ def run_tracker_with_config(
 
 def _build_parser() -> argparse.ArgumentParser:
     """Tworzy parser CLI do samodzielnego uruchamiania rdzenia trackera."""
+    print("TRACKER_CORE: Tworzę parser CLI")
     parser = argparse.ArgumentParser(description="Standalone tracker core for detection sequences.")
     parser.add_argument("--input_json", required=True, help="JSON with detection lists per frame.")
     parser.add_argument("--fps", type=float, default=30.0)
@@ -222,6 +223,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _parse_detection_frame(frame_payload: List[Dict]) -> List[Detection]:
     """Konwertuje surowe dane JSON na listę obiektów Detection."""
+    # print("Konwertuje surowe dane JSON na listę obiektów Detection")
     detections: List[Detection] = []
     for raw in frame_payload:
         detections.append(Detection(**raw))
@@ -242,9 +244,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     result = run_tracker_with_config(frames, fps=args.fps, config=config)
 
+    """ poprzednia wersja
     summary = {
         "main_track_id": result["main_track_id"],
         "tracks_count": len(result["finished_tracks"]),
+    } """
+
+    summary = {
+    "main_track_id": result.get("main_track_id"),
+    "tracks_count": len(result.get("finished_tracks", [])),
     }
     if args.output_json:
         Path(args.output_json).write_text(json.dumps(summary, indent=2), encoding="utf-8")

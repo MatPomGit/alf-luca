@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import glob
 import sys
@@ -41,6 +40,7 @@ def _load_gui_metadata() -> tuple[List[str], List[str], str]:
 
 def build_parser():
     # Metadane GUI ładujemy leniwie, aby parser CLI działał nawet bez OpenCV/Kivy.
+    print("CLI Buduję parser")
     gui_colors, gui_selection_modes, mp4_tool_path = _load_gui_metadata()
     parser = argparse.ArgumentParser(
         description="Śledzenie jasnej lub kolorowej plamki światła w video (np. MP4/MKV/AVI/MOV/WEBM). Obsługuje także opcjonalne wygładzanie filtrem Kalmana."

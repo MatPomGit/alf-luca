@@ -7,7 +7,7 @@ cd "$SCRIPT_DIR"
 if command -v python3 >/dev/null 2>&1; then
 
 python track_luca.py track \
-  --video sledzenie_plamki.mkv \
+  --video video/sledzenie_plamki.mkv \
   --track_mode brightness \
   --output_csv tracking_results.csv \
   --trajectory_png trajectory.png \
@@ -16,7 +16,7 @@ python track_luca.py track \
 
 elif command -v python >/dev/null 2>&1; then
 python track_luca.py track \
-  --video sledzenie_plamki.mkv \
+  --video video/sledzenie_plamki.mkv \
   --track_mode brightness \
   --output_csv tracking_results.csv \
   --trajectory_png trajectory.png \

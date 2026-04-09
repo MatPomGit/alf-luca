@@ -80,6 +80,7 @@ python track_luca.py
 
 Wtedy program domyślnie przełączy się na tryb `gui` i spróbuje użyć pierwszego pliku `*.mp4`, `*.mkv`, `*.avi`, `*.mov`, `*.m4v` lub `*.webm` (najpierw z katalogu `video/`, potem z bieżącego katalogu).
 Domyślne wartości suwaków GUI są ładowane z pliku `config/gui_display.yaml`.
+
 Możesz też wskazać inny plik:
 
 ```bash
