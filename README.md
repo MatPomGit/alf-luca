@@ -20,6 +20,16 @@ Python 3.10+ oraz biblioteki:
 
 ```bash
 pip install opencv-python numpy matplotlib kivy
+python3 -m pip install --upgrade pip
+
+sudo apt-get update
+sudo apt-get install libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev libfreetype6-dev libportmidi-dev libjpeg-dev python3-setuptools python3-dev
+
+sudo dnf install SDL2-devel SDL2_image-devel SDL2_mixer-devel SDL2_ttf-devel portmidi-devel
+python3 -m pip install --upgrade pip
+
+pip install pygame
+pip install ffmpeg ffprobe
 ```
 
 Dla narzędzia QA wideo wymagane są dodatkowo binarki systemowe:
