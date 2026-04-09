@@ -141,7 +141,7 @@ def get_default_params_for_mode(track_mode: str) -> Dict[str, object]:
     return detector_cls.default_params()
 
 
-def contour_to_detection(contour, offset_x: int = 0, offset_y: int = 0) -> Optional[Detection]:
+def contour_to_detection(contour: np.ndarray, offset_x: int = 0, offset_y: int = 0) -> Optional[Detection]:
     """Przekształca pojedynczy kontur OpenCV do struktury Detection."""
     area = float(cv2.contourArea(contour))
     if area <= 0:
@@ -179,6 +179,36 @@ def contour_to_detection(contour, offset_x: int = 0, offset_y: int = 0) -> Optio
         ellipse_axes=ellipse_axes,
         ellipse_angle=ellipse_angle,
     )
+
+
+def build_mask(
+    frame: np.ndarray,
+    track_mode: str = "brightness",
+    blur: int = 11,
+    threshold: int = 200,
+    erode_iter: int = 2,
+    dilate_iter: int = 4,
+    color_name: str = "red",
+    hsv_lower: Optional[str] = None,
+    hsv_upper: Optional[str] = None,
+) -> np.ndarray:
+    """Buduje maskę binarną dla pełnej klatki.
+
+    Funkcja zachowuje zgodność wsteczną ze starszym API modułu `tracking`,
+    które oczekiwało eksportu `build_mask` z `luca_tracker.detectors`.
+    """
+    detector_cls = _resolve_detector_class(track_mode)
+    detector_config = DetectorConfig(
+        track_mode=track_mode,
+        blur=blur,
+        threshold=threshold,
+        erode_iter=erode_iter,
+        dilate_iter=dilate_iter,
+        color_name=color_name,
+        hsv_lower=hsv_lower,
+        hsv_upper=hsv_upper,
+    )
+    return detector_cls(detector_config).detect_mask(frame)
 
 
 def detect_spots(
