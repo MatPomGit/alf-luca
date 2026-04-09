@@ -381,6 +381,10 @@ def run_gui(args):
             if self.capture_state in {"running", "paused"}:
                 self._set_capture_state("stopped")
 
+        def _quit_app(self, *_):
+            # Kończy działanie aplikacji po kliknięciu przycisku QUIT.
+            self.stop()
+
         def _switch_video_by_delta(self, delta: int):
             target = (self.current_video_idx + delta) % len(self.video_files)
             self.video_spinner.text = self.video_files[target].name
@@ -546,6 +550,10 @@ def run_gui(args):
             self.btn_stop = Button(text="STOP")
             self.btn_stop.bind(on_press=self._stop_capture)
             row_capture.add_widget(self.btn_stop)
+
+            self.btn_quit = Button(text="QUIT")
+            self.btn_quit.bind(on_press=self._quit_app)
+            row_capture.add_widget(self.btn_quit)
             controls.add_widget(row_capture)
             self.nav_targets.extend(
                 [
@@ -553,6 +561,7 @@ def run_gui(args):
                     ("PAUSE", self.btn_pause),
                     ("RESUME", self.btn_resume),
                     ("STOP", self.btn_stop),
+                    ("QUIT", self.btn_quit),
                 ]
             )
 

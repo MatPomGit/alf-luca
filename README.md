@@ -101,7 +101,8 @@ Interfejs GUI (Kivy) pokazuje też panele statusu i podgląd przetworzonego obra
   - `START` — start przetwarzania,
   - `PAUSE` — wstrzymanie,
   - `RESUME` — wznowienie,
-  - `STOP` — zatrzymanie.
+  - `STOP` — zatrzymanie,
+  - `QUIT` — zamknięcie aplikacji GUI.
 - Działa nawigacja kółkiem myszy:
   - kółko bez `SHIFT` przełącza aktywne pole,
   - kółko z `SHIFT` zmienia wartość aktualnie wybranego pola.
