@@ -58,6 +58,10 @@ python track_luca.py track \
 python track_luca.py gui
 ```
 
+Na Windows możesz też uruchomić GUI przez dwuklik w plik `Uruchom_GUI.bat` (z katalogu repozytorium).
+Na Linux (Ubuntu/Fedora) użyj `Uruchom_GUI.sh` (najpierw nadaj uprawnienia: `chmod +x Uruchom_GUI.sh`),
+a następnie uruchom skrypt (np. dwuklik i opcja **Run**, zależnie od menedżera plików).
+
 Możesz też uruchomić samo:
 
 ```bash
