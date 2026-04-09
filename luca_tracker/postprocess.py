@@ -18,8 +18,8 @@ except Exception:
 class KalmanConfig:
     """Parametry wygładzania Kalmana w trybie modułowym i standalone."""
 
-    process_noise: float = 1e-2
-    measurement_noise: float = 1e-1
+    process_noise: float = 3e-2
+    measurement_noise: float = 5e-2
 
 
 def apply_kalman_to_points(points: Sequence[TrackPoint], process_noise: float, measurement_noise: float):
@@ -67,8 +67,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Standalone Kalman smoothing for XY CSV.")
     parser.add_argument("--input_csv", required=True, help="Input CSV with x,y columns.")
     parser.add_argument("--output_csv", required=True, help="Output CSV path.")
-    parser.add_argument("--process_noise", type=float, default=1e-2)
-    parser.add_argument("--measurement_noise", type=float, default=1e-1)
+    parser.add_argument("--process_noise", type=float, default=3e-2)
+    parser.add_argument("--measurement_noise", type=float, default=5e-2)
     return parser
 
 

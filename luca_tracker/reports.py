@@ -171,12 +171,14 @@ def save_track_csv(points: Sequence[TrackPoint], csv_path: str, run_metadata: Op
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "frame_index", "time_sec", "detected", "x", "y", "area",
+            "frame_index", "time_sec", "detected", "x", "y", "z",
+            "x_world", "y_world", "z_world", "area",
             "perimeter", "circularity", "radius", "track_id", "rank", "kalman_predicted"
         ] + list(RUN_METADATA_FIELDS))
         for p in points:
             writer.writerow(_row_with_metadata([
-                p.frame_index, p.time_sec, int(p.detected), p.x, p.y, p.area,
+                p.frame_index, p.time_sec, int(p.detected), p.x, p.y, p.z_world,
+                p.x_world, p.y_world, p.z_world, p.area,
                 p.perimeter, p.circularity, p.radius, p.track_id, p.rank, p.kalman_predicted
             ], run_metadata))
     if run_metadata:
@@ -187,13 +189,15 @@ def save_all_tracks_csv(track_histories: Dict[int, Dict], csv_path: str, run_met
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "track_id", "frame_index", "time_sec", "detected", "x", "y", "area",
+            "track_id", "frame_index", "time_sec", "detected", "x", "y", "z",
+            "x_world", "y_world", "z_world", "area",
             "perimeter", "circularity", "radius", "rank", "kalman_predicted"
         ] + list(RUN_METADATA_FIELDS))
         for tid, data in sorted(track_histories.items()):
             for p in data["points"]:
                 writer.writerow(_row_with_metadata([
-                    tid, p.frame_index, p.time_sec, int(p.detected), p.x, p.y,
+                    tid, p.frame_index, p.time_sec, int(p.detected), p.x, p.y, p.z_world,
+                    p.x_world, p.y_world, p.z_world,
                     p.area, p.perimeter, p.circularity, p.radius, p.rank, p.kalman_predicted
                 ], run_metadata))
     if run_metadata:

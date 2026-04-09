@@ -49,9 +49,18 @@ class PostprocessConfig:
     """Konfiguracja obróbki po śledzeniu (np. wygładzanie Kalmana)."""
 
     use_kalman: bool = False
-    kalman_process_noise: float = 1e-2
-    kalman_measurement_noise: float = 1e-1
+    kalman_process_noise: float = 3e-2
+    kalman_measurement_noise: float = 5e-2
     draw_all_tracks: bool = False
+
+
+@dataclass
+class PoseConfig:
+    """Konfiguracja rekonstrukcji punktów XYZ na podstawie PnP."""
+
+    pnp_object_points: Optional[str] = None
+    pnp_image_points: Optional[str] = None
+    pnp_world_plane_z: float = 0.0
 
 
 @dataclass
@@ -74,6 +83,7 @@ class RunConfig:
     detector: DetectorConfig = field(default_factory=DetectorConfig)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
+    pose: PoseConfig = field(default_factory=PoseConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -88,6 +98,7 @@ class RunConfig:
             detector=DetectorConfig(**data.get("detector", {})),
             tracker=TrackerConfig(**data.get("tracker", {})),
             postprocess=PostprocessConfig(**data.get("postprocess", {})),
+            pose=PoseConfig(**data.get("pose", {})),
             eval=EvalConfig(**data.get("eval", {})),
         )
 
@@ -167,6 +178,9 @@ def run_config_to_pipeline_config(config: RunConfig):
         annotated_video=config.eval.annotated_video,
         draw_all_tracks=config.postprocess.draw_all_tracks,
         use_kalman=config.postprocess.use_kalman,
+        pnp_object_points=config.pose.pnp_object_points,
+        pnp_image_points=config.pose.pnp_image_points,
+        pnp_world_plane_z=config.pose.pnp_world_plane_z,
         detector=PipelineDetectorConfig(**asdict(config.detector)),
         tracker=PipelineTrackerConfig(
             max_distance=config.tracker.max_distance,
@@ -201,6 +215,11 @@ def pipeline_config_to_run_config(config) -> RunConfig:
             kalman_process_noise=config.kalman.process_noise,
             kalman_measurement_noise=config.kalman.measurement_noise,
             draw_all_tracks=config.draw_all_tracks,
+        ),
+        pose=PoseConfig(
+            pnp_object_points=config.pnp_object_points,
+            pnp_image_points=config.pnp_image_points,
+            pnp_world_plane_z=config.pnp_world_plane_z,
         ),
         eval=EvalConfig(
             output_csv=config.output_csv,

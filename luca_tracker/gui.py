@@ -19,8 +19,8 @@ from .config_model import (
     save_run_config,
 )
 from .reports import RUN_METADATA_FIELDS, build_run_metadata, save_run_metadata
-from .tracking import COLOR_PRESETS, SimpleMultiTracker, detect_spots, ensure_odd, parse_roi
-from .types import Detection
+from .tracking import COLOR_PRESETS, SimpleMultiTracker, SingleObjectEKFTracker, detect_spots, ensure_odd, parse_roi
+from .types import Detection, TrackPoint
 from .video_export import color_for_id, draw_polyline_history
 from .io_paths import ensure_output_dir
 
@@ -191,6 +191,31 @@ def _draw_detection_layer(
     return canvas
 
 
+def _draw_single_track_marker(
+    image: np.ndarray,
+    xy: Optional[Tuple[float, float]],
+    predicted_only: bool,
+    label: str = "EKF",
+) -> None:
+    """Rysuje punkt śledzenia pojedynczego obiektu na wskazanym obrazie."""
+    if xy is None:
+        return
+    cx, cy = int(round(xy[0])), int(round(xy[1]))
+    color = (0, 180, 255) if predicted_only else (0, 255, 0)
+    cv2.circle(image, (cx, cy), 7, color, 2, cv2.LINE_AA)
+    cv2.drawMarker(image, (cx, cy), color, cv2.MARKER_CROSS, markerSize=14, thickness=2)
+    cv2.putText(
+        image,
+        f"{label}{' PRED' if predicted_only else ''}",
+        (cx + 8, cy - 10),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        color,
+        1,
+        cv2.LINE_AA,
+    )
+
+
 def _stack_h(images: Sequence[np.ndarray]) -> np.ndarray:
     h = min(img.shape[0] for img in images)
     resized = []
@@ -303,6 +328,14 @@ def run_gui(args):
             self.speed_accumulator = 0.0
             self.analysis_rows: List[Dict[str, object]] = []
             self.tracker = SimpleMultiTracker(max_distance=args.max_distance, max_missed=args.max_missed)
+            self.single_tracker = SingleObjectEKFTracker(
+                dt=1.0 / max(self.fps, 1e-6),
+                process_noise=1e-2,
+                measurement_noise=5.0,
+                gating_distance=max(20.0, float(args.max_distance) * 1.5),
+                max_prediction_frames=max(15, int(args.max_missed) * 3),
+            )
+            self.single_track_history: List[TrackPoint] = []
             self.texture: Optional[Texture] = None
 
             self.mode = GUI_MODES[1]
@@ -323,9 +356,17 @@ def run_gui(args):
             self.auto_params = bool(_cfg_value(gui_cfg, "auto_params", False))
             cfg_speed = float(_cfg_value(gui_cfg, "speed_factor", 1.0))
             self.speed_factor = cfg_speed if cfg_speed in GUI_SPEED_FACTORS else 1.0
+            # Konfigurowalny rozmiar czcionki GUI pozwala łatwo zwiększyć czytelność interfejsu.
+            cfg_font_size = float(_cfg_value(gui_cfg, "font_size", 28))
+            self.gui_font_size = float(np.clip(cfg_font_size, 12, 72))
+            self.row_height = max(44, int(self.gui_font_size * 2.1))
             self.capture_state = "idle"
             self.nav_targets: List[Tuple[str, object]] = []
             self.nav_index = 0
+            self.recording_enabled = False
+            self.recording_annotated_writer = None
+            self.recording_binary_writer = None
+            self.recording_base_path: Optional[Path] = None
 
         def _open_video(self, idx: int):
             cap = cv2.VideoCapture(str(self.video_files[idx]))
@@ -395,6 +436,10 @@ def run_gui(args):
                 return
             self._save_analysis_rows(self.current_video_idx)
             self.analysis_rows = []
+            if self.recording_enabled:
+                self.recording_enabled = False
+                self.btn_record.text = "Record video: OFF"
+                self._release_recording_writers()
             self.cap.release()
             self.cap = self._open_video(idx)
             self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 25.0
@@ -403,13 +448,21 @@ def run_gui(args):
             self.speed_accumulator = 0.0
             self.last_frame = None
             self.tracker = SimpleMultiTracker(max_distance=args.max_distance, max_missed=args.max_missed)
+            self.single_tracker = SingleObjectEKFTracker(
+                dt=1.0 / max(self.fps, 1e-6),
+                process_noise=1e-2,
+                measurement_noise=5.0,
+                gating_distance=max(20.0, float(args.max_distance) * 1.5),
+                max_prediction_frames=max(15, int(args.max_missed) * 3),
+            )
+            self.single_track_history = []
 
         def _make_slider(self, label: str, min_v: float, max_v: float, value: float, step: float, on_change):
             # Buduje jeden wiersz suwaka i zwraca referencję do kontrolki, aby obsłużyć nawigację klawiaturą/myszką.
-            row = BoxLayout(orientation="horizontal", size_hint_y=None, height=44, spacing=8)
-            lbl = Label(text=label, size_hint_x=0.36, halign="left", valign="middle")
+            row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
+            lbl = Label(text=label, size_hint_x=0.36, halign="left", valign="middle", font_size=self.gui_font_size)
             lbl.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
-            value_lbl = Label(text=str(value), size_hint_x=0.16)
+            value_lbl = Label(text=str(value), size_hint_x=0.16, font_size=self.gui_font_size)
             slider = Slider(min=min_v, max=max_v, value=value, step=step, size_hint_x=0.48)
 
             def _update(_, val):
@@ -488,6 +541,55 @@ def run_gui(args):
             if self.capture_state in {"running", "paused"}:
                 self._set_capture_state("stopped")
 
+        def _ensure_recording_writers(self, annotated: np.ndarray, mask_bgr: np.ndarray) -> None:
+            """Inicjalizuje pliki wideo dla widoku anotowanego i binarnego."""
+            if self.recording_annotated_writer is not None and self.recording_binary_writer is not None:
+                return
+            stem = self.video_files[self.current_video_idx].stem
+            self.recording_base_path = self.output_dir / f"{stem}_gui_record_f{self.frame_index:06d}"
+            fps = max(float(self.fps), 1.0)
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            annotated_path = str(self.recording_base_path) + "_annotated.mp4"
+            binary_path = str(self.recording_base_path) + "_binary.mp4"
+            self.recording_annotated_writer = cv2.VideoWriter(
+                annotated_path,
+                fourcc,
+                fps,
+                (annotated.shape[1], annotated.shape[0]),
+            )
+            self.recording_binary_writer = cv2.VideoWriter(
+                binary_path,
+                fourcc,
+                fps,
+                (mask_bgr.shape[1], mask_bgr.shape[0]),
+            )
+            if not self.recording_annotated_writer.isOpened() or not self.recording_binary_writer.isOpened():
+                self._release_recording_writers()
+                self.recording_enabled = False
+                self.status_label.text = "Błąd zapisu wideo: nie udało się otworzyć plików MP4."
+                return
+            self.status_label.text = f"Nagrywanie ON: {self.recording_base_path.name}_*.mp4"
+
+        def _release_recording_writers(self) -> None:
+            """Zwalnia uchwyty zapisu wideo i czyści stan nagrywania."""
+            if self.recording_annotated_writer is not None:
+                self.recording_annotated_writer.release()
+            if self.recording_binary_writer is not None:
+                self.recording_binary_writer.release()
+            self.recording_annotated_writer = None
+            self.recording_binary_writer = None
+
+        def _toggle_recording(self, *_):
+            """Przełącza tryb nagrywania podglądu GUI do plików MP4."""
+            self.recording_enabled = not self.recording_enabled
+            if not self.recording_enabled:
+                self._release_recording_writers()
+                self.btn_record.text = "Record video: OFF"
+                self.status_label.text = "Nagrywanie OFF"
+                return
+            self.btn_record.text = "Record video: ON"
+            self.status_label.text = "Nagrywanie ON (oczekiwanie na klatkę)..."
+
         def _quit_app(self, *_):
             # Kończy działanie aplikacji po kliknięciu przycisku QUIT.
             self.stop()
@@ -513,6 +615,14 @@ def run_gui(args):
                 self._move_focus(-direction)
             return True
 
+        def _apply_large_font_to_widget_tree(self, widget) -> None:
+            # Rekurencyjnie ustawia większą czcionkę dla całego drzewa kontrolek, aby zachować spójny wygląd GUI.
+            if hasattr(widget, "font_size"):
+                widget.font_size = self.gui_font_size
+            if hasattr(widget, "children"):
+                for child in widget.children:
+                    self._apply_large_font_to_widget_tree(child)
+
         def build(self):
             # Dodatkowe zabezpieczenie: jeśli provider okna zniknie w trakcie startu,
             # pokażemy czytelny błąd zamiast trudnego do diagnozy wyjątku atrybutu.
@@ -533,7 +643,7 @@ def run_gui(args):
             controls = BoxLayout(orientation="vertical", spacing=6, size_hint_y=None)
             controls.bind(minimum_height=controls.setter("height"))
 
-            row_top = BoxLayout(orientation="horizontal", size_hint_y=None, height=42, spacing=8)
+            row_top = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
             self.video_spinner = Spinner(
                 text=self.video_files[self.current_video_idx].name,
                 values=[p.name for p in self.video_files],
@@ -585,7 +695,7 @@ def run_gui(args):
                 self.slider_refs[key] = slider
                 self.nav_targets.append((key, slider))
 
-            toggles = BoxLayout(orientation="horizontal", size_hint_y=None, height=44, spacing=8)
+            toggles = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
             self.btn_analyze = ToggleButton(text="Analyze: OFF", state="normal")
             self.btn_analyze.bind(state=self._toggle_analyze)
             toggles.add_widget(self.btn_analyze)
@@ -611,7 +721,7 @@ def run_gui(args):
                 ]
             )
 
-            row_action = BoxLayout(orientation="horizontal", size_hint_y=None, height=42, spacing=8)
+            row_action = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
             btn_prev_video = Button(text="Prev video")
             btn_prev_video.bind(on_press=lambda *_: self._switch_video_by_delta(-1))
             row_action.add_widget(btn_prev_video)
@@ -646,7 +756,12 @@ def run_gui(args):
                 ]
             )
 
-            row_capture = BoxLayout(orientation="horizontal", size_hint_y=None, height=42, spacing=8)
+            #row_capture = BoxLayout(orientation="horizontal", size_hint_y=None, height=42, spacing=8)
+            row_capture = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
+            self.btn_record = Button(text="Record video: OFF")
+            self.btn_record.bind(on_press=self._toggle_recording)
+            row_capture.add_widget(self.btn_record)
+
             self.btn_start = Button(text="START")
             self.btn_start.bind(on_press=self._start_capture)
             row_capture.add_widget(self.btn_start)
@@ -669,6 +784,7 @@ def run_gui(args):
             controls.add_widget(row_capture)
             self.nav_targets.extend(
                 [
+                    ("Record", self.btn_record),
                     ("START", self.btn_start),
                     ("PAUSE", self.btn_pause),
                     ("RESUME", self.btn_resume),
@@ -677,7 +793,7 @@ def run_gui(args):
                 ]
             )
 
-            self.status_label = Label(text="Ready", size_hint_y=None, height=30, halign="left", valign="middle")
+            self.status_label = Label(text="Ready", size_hint_y=None, height=max(30, int(self.gui_font_size * 1.6)), halign="left", valign="middle", font_size=self.gui_font_size)
             self.status_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
             controls.add_widget(self.status_label)
 
@@ -688,6 +804,7 @@ def run_gui(args):
             Window.bind(on_key_down=self._on_key_down)
             Window.bind(on_resize=self._on_window_resize)
             Window.bind(on_mouse_scroll=self._on_mouse_scroll)
+            self._apply_large_font_to_widget_tree(controls)
             self._refresh_focus_styles()
             self._set_capture_state("idle")
             Clock.schedule_interval(self._update_frame, float(np.clip(_cfg_value(gui_cfg, "wait_ms_running", 16), 1, 200)) / 1000.0)
@@ -729,6 +846,14 @@ def run_gui(args):
             self.speed_accumulator = 0.0
             self.last_frame = None
             self.tracker = SimpleMultiTracker(max_distance=args.max_distance, max_missed=args.max_missed)
+            self.single_tracker = SingleObjectEKFTracker(
+                dt=1.0 / max(self.fps, 1e-6),
+                process_noise=1e-2,
+                measurement_noise=5.0,
+                gating_distance=max(20.0, float(args.max_distance) * 1.5),
+                max_prediction_frames=max(15, int(args.max_missed) * 3),
+            )
+            self.single_track_history = []
 
         def _build_current_run_config(self) -> RunConfig:
             """Buduje pełny model konfiguracji z aktualnego stanu kontrolek GUI."""
@@ -818,7 +943,6 @@ def run_gui(args):
 
         def _apply_auto_params(self, frame: np.ndarray):
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
             self.threshold = int(np.clip(np.percentile(gray, 99.5), 60, 250))
             self.blur = 9
             self.min_area = max(5.0, frame.shape[0] * frame.shape[1] * 0.00002)
@@ -826,8 +950,8 @@ def run_gui(args):
             self.erode_iter = 1
             self.dilate_iter = 2
             self.color_name = choose_auto_color_name(frame, args.roi)
-            self.track_mode = "color" if float(np.mean(hsv[..., 1])) >= 40.0 else "brightness"
-            self.max_spots = max(1, min(20, int((frame.shape[0] * frame.shape[1]) / 50000)))
+            self.track_mode = "brightness"
+            self.max_spots = 1
             self.mode = "processing"
 
             self.mode_spinner.text = self.mode
@@ -888,6 +1012,37 @@ def run_gui(args):
             x0, y0, w, h = roi_box
             annotated = _draw_detection_layer(processed, detections, color=(0, 255, 0))
             cv2.rectangle(annotated, (x0, y0), (x0 + w, y0 + h), (255, 255, 0), 1)
+            cv2.rectangle(mask_bgr, (x0, y0), (x0 + w, y0 + h), (255, 255, 0), 1)
+
+            single_state = self.single_tracker.update(detections)
+            tracked_xy: Optional[Tuple[float, float]]
+            if single_state["x"] is None or single_state["y"] is None:
+                tracked_xy = None
+            else:
+                tracked_xy = (float(single_state["x"]), float(single_state["y"]))
+            predicted_only = bool(single_state.get("predicted_only", True))
+
+            if tracked_xy is not None and self.analyze_enabled:
+                self.single_track_history.append(
+                    TrackPoint(
+                        frame_index=self.frame_index,
+                        time_sec=self.frame_index / self.fps,
+                        detected=not predicted_only,
+                        x=tracked_xy[0],
+                        y=tracked_xy[1],
+                        area=None,
+                        perimeter=None,
+                        circularity=None,
+                        radius=None,
+                        track_id=1,
+                        rank=0,
+                        kalman_predicted=int(predicted_only),
+                    )
+                )
+                draw_polyline_history(annotated, self.single_track_history, (80, 230, 255), max_tail=120)
+                draw_polyline_history(mask_bgr, self.single_track_history, (80, 230, 255), max_tail=120)
+            _draw_single_track_marker(annotated, tracked_xy, predicted_only, label="EKF")
+            _draw_single_track_marker(mask_bgr, tracked_xy, predicted_only, label="EKF")
 
             if self.mode == "calibration":
                 preview = _stack_h([frame, processed])
@@ -938,6 +1093,7 @@ def run_gui(args):
                     f"Video: {self.video_files[self.current_video_idx].name}",
                     f"Mode: {self.mode} | Track: {self.track_mode}",
                     f"Detections: {len(detections)} | Frame: {self.frame_index}",
+                    f"Single EKF: {'PRED' if predicted_only else 'MEAS'} | Max spots: {self.max_spots}",
                     f"Auto params: {'ON' if self.auto_params else 'OFF'} | Speed: x{self.speed_factor:g}",
                 ],
                 origin=(10, 10),
@@ -945,8 +1101,7 @@ def run_gui(args):
                 alpha=0.62,
             )
 
-            if detections and self.analyze_enabled:
-                main_det = detections[0]
+            if tracked_xy is not None and self.analyze_enabled:
                 self.analysis_rows.append(
                     {
                         "frame_index": self.frame_index,
@@ -955,8 +1110,8 @@ def run_gui(args):
                         "mode": self.mode,
                         "track_mode": self.track_mode,
                         "detections": len(detections),
-                        "main_x": round(float(main_det.x), 3),
-                        "main_y": round(float(main_det.y), 3),
+                        "main_x": round(float(tracked_xy[0]), 3),
+                        "main_y": round(float(tracked_xy[1]), 3),
                         "threshold": self.threshold,
                         "blur": self.blur,
                         "min_area": self.min_area,
@@ -964,6 +1119,11 @@ def run_gui(args):
                         "color_name": self.color_name,
                     }
                 )
+            if self.recording_enabled:
+                self._ensure_recording_writers(annotated, mask_bgr)
+                if self.recording_annotated_writer is not None and self.recording_binary_writer is not None:
+                    self.recording_annotated_writer.write(annotated)
+                    self.recording_binary_writer.write(mask_bgr)
 
             rgb = cv2.cvtColor(preview, cv2.COLOR_BGR2RGB)
             buf = rgb.tobytes()
@@ -980,6 +1140,7 @@ def run_gui(args):
         def on_stop(self):
             if self.cap:
                 self.cap.release()
+            self._release_recording_writers()
             self._save_analysis_rows(self.current_video_idx)
 
     TrackerGUIApp().run()

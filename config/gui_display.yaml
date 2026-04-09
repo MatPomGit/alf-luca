@@ -3,29 +3,31 @@
 
 # calibration | processing | compare
 mode: processing
-video_index: 0
+video_index: 10
 
 # brightness | color
 track_mode: brightness
 color_name: green
 
-threshold: 200
+threshold: 250
 blur: 11
-min_area: 10
+min_area: 41
 max_area: 0
 erode_iter: 2
-dilate_iter: 4
+dilate_iter: 5
 
 multi_track: false
-max_spots: 10
+max_spots: 1
 selection_mode: stablest
 
 # Stan GUI po uruchomieniu
 use_calib: true
-analyze: false
+analyze: true
 pause: false
 auto_params: false
 speed_factor: 1.0
+# Rozmiar czcionki kontrolek GUI (px) — ustawiono większą wartość dla lepszej czytelności.
+font_size: 28
 
 # Opóźnienie odświeżania GUI (ms)
 wait_ms_running: 1
