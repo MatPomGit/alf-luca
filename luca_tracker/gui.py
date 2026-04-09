@@ -18,6 +18,10 @@ GUI_SPEED_FACTORS = [1.0, 1.25, 1.5, 2.0, 3.0, 5.0, 10.0, 20.0]
 MP4_QUALITY_TOOL_PATH = "tools/video_tool.py"
 
 
+class GUIEnvironmentError(RuntimeError):
+    """Błąd środowiska uniemożliwiający uruchomienie interfejsu Kivy."""
+
+
 def _parse_yaml_scalar(raw: str):
     value = raw.strip()
     lower = value.lower()
@@ -181,6 +185,14 @@ def run_gui(args):
         from kivy.uix.togglebutton import ToggleButton
     except ImportError as exc:
         raise ImportError("Tryb GUI wymaga biblioteki kivy. Zainstaluj: pip install kivy") from exc
+    # Kivy może się zaimportować, ale bez providera okna `Window` bywa `None`.
+    # Wtedy zamiast późniejszego `AttributeError` zwracamy jasny komunikat o przyczynie.
+    if Window is None:
+        raise GUIEnvironmentError(
+            "Kivy nie znalazł działającego providera okna (Window=None). "
+            "Doinstaluj backend GUI (np. SDL2/X11) i jego zależności systemowe "
+            "albo uruchom aplikację w środowisku z aktywnym serwerem graficznym."
+        )
 
     video_files = discover_video_files("video", args.video)
     if not video_files:
@@ -303,6 +315,12 @@ def run_gui(args):
             return row, slider
 
         def build(self):
+            # Dodatkowe zabezpieczenie: jeśli provider okna zniknie w trakcie startu,
+            # pokażemy czytelny błąd zamiast trudnego do diagnozy wyjątku atrybutu.
+            if Window is None:
+                raise GUIEnvironmentError(
+                    "Nie można zbudować GUI, ponieważ provider okna Kivy nie jest dostępny."
+                )
             Window.minimum_width = 1100
             Window.minimum_height = 720
 

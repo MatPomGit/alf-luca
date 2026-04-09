@@ -152,8 +152,12 @@ def main():
 
         compare_csv(args.reference, args.candidate, args.output_csv, args.report_pdf)
     elif args.command == "gui":
-        from .gui import run_gui
+        from .gui import GUIEnvironmentError, run_gui
 
-        run_gui(args)
+        try:
+            run_gui(args)
+        except GUIEnvironmentError as exc:
+            # Komunikat celowo krótki i praktyczny, aby użytkownik mógł szybko naprawić środowisko.
+            raise SystemExit(f"Błąd uruchamiania GUI: {exc}") from exc
     else:
         parser.print_help()
