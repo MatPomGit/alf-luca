@@ -34,6 +34,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
+import yaml
 
 try:
     import matplotlib.pyplot as plt
@@ -123,6 +124,26 @@ class TrackerConfig:
     trajectory_png: Optional[str] = None
     report_csv: Optional[str] = None
     report_pdf: Optional[str] = None
+
+
+TRACKER_HARDCODED_DEFAULTS = {
+    "track_mode": "brightest",
+    "blur": 11,
+    "threshold": 200,
+    "erode_iter": 2,
+    "dilate_iter": 4,
+    "min_area": 20.0,
+    "max_area": None,
+    "roi": None,
+    "color_name": None,
+    "hsv_lower": None,
+    "hsv_upper": None,
+    "output_csv": "tracking_results.csv",
+    "trajectory_png": None,
+    "report_csv": None,
+    "report_pdf": None,
+    "display": False,
+}
 
 
 def parse_hsv_triplet(value: str) -> Tuple[int, int, int]:
@@ -226,6 +247,97 @@ def get_hsv_ranges_from_args_or_name(
     return []
 
 
+def load_settings_yaml(path: str) -> Dict[str, object]:
+    if not path:
+        return {}
+    if not os.path.exists(path):
+        return {}
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Plik YAML musi zawierać mapę klucz:wartość: {path}")
+    return data
+
+
+def _coerce_yaml_hsv_triplet(value: object) -> Tuple[int, int, int]:
+    if isinstance(value, str):
+        return parse_hsv_triplet(value)
+    if isinstance(value, (list, tuple)) and len(value) == 3:
+        return tuple(int(v) for v in value)  # type: ignore[return-value]
+    raise ValueError("HSV w YAML musi być stringiem 'H,S,V' albo listą [H, S, V].")
+
+
+def _coerce_yaml_roi(value: object) -> Optional[Tuple[int, int, int, int]]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return parse_optional_roi_text(value)
+    if isinstance(value, (list, tuple)) and len(value) == 4:
+        x, y, w, h = (int(v) for v in value)
+        return parse_roi(f"{x},{y},{w},{h}")
+    raise ValueError("ROI w YAML musi być stringiem 'x,y,w,h' albo listą [x, y, w, h].")
+
+
+def normalize_yaml_track_settings(raw: Dict[str, object]) -> Dict[str, object]:
+    out: Dict[str, object] = {}
+    simple_keys = {
+        "track_mode": str,
+        "threshold": int,
+        "blur": int,
+        "erode_iter": int,
+        "dilate_iter": int,
+        "min_area": float,
+        "max_area": float,
+        "color_name": str,
+        "output_csv": str,
+        "trajectory_png": str,
+        "report_csv": str,
+        "report_pdf": str,
+        "display": bool,
+    }
+    for key, caster in simple_keys.items():
+        if key not in raw or raw[key] is None:
+            continue
+        out[key] = caster(raw[key])
+
+    if "roi" in raw:
+        out["roi"] = _coerce_yaml_roi(raw["roi"])
+    if "hsv_lower" in raw and raw["hsv_lower"] is not None:
+        out["hsv_lower"] = _coerce_yaml_hsv_triplet(raw["hsv_lower"])
+    if "hsv_upper" in raw and raw["hsv_upper"] is not None:
+        out["hsv_upper"] = _coerce_yaml_hsv_triplet(raw["hsv_upper"])
+
+    return out
+
+
+def extract_cli_track_overrides(args: argparse.Namespace) -> Dict[str, object]:
+    keys = [
+        "track_mode",
+        "threshold",
+        "blur",
+        "erode_iter",
+        "dilate_iter",
+        "min_area",
+        "max_area",
+        "roi",
+        "color_name",
+        "hsv_lower",
+        "hsv_upper",
+        "output_csv",
+        "trajectory_png",
+        "report_csv",
+        "report_pdf",
+        "display",
+    ]
+    out: Dict[str, object] = {}
+    for key in keys:
+        value = getattr(args, key, None)
+        if value is not None:
+            out[key] = value
+    return out
+
+
 def interactive_configure_track(args: argparse.Namespace) -> TrackerConfig:
     print("\n=== Konfiguracja interaktywna śledzenia ===")
     track_mode = ask_text("Tryb śledzenia (brightest/color)", args.track_mode).strip().lower()
@@ -301,11 +413,34 @@ def interactive_configure_track(args: argparse.Namespace) -> TrackerConfig:
 
 
 def build_tracker_config(args: argparse.Namespace) -> TrackerConfig:
-    if args.interactive:
-        return interactive_configure_track(args)
+    yaml_data = normalize_yaml_track_settings(load_settings_yaml(args.config))
+    merged: Dict[str, object] = dict(TRACKER_HARDCODED_DEFAULTS)
+    merged.update(yaml_data)
+    cli_overrides = extract_cli_track_overrides(args)
+    merged.update(cli_overrides)
 
-    track_mode = args.track_mode
-    hsv_ranges = get_hsv_ranges_from_args_or_name(args.color_name, args.hsv_lower, args.hsv_upper)
+    interactive_args = argparse.Namespace(**vars(args))
+    for key, value in merged.items():
+        setattr(interactive_args, key, value)
+
+    if args.interactive:
+        interactive_cfg = interactive_configure_track(interactive_args)
+        for key, value in cli_overrides.items():
+            setattr(interactive_cfg, key, value)
+        interactive_cfg.hsv_ranges = get_hsv_ranges_from_args_or_name(
+            interactive_cfg.color_name,
+            getattr(interactive_cfg, "hsv_lower", None),
+            getattr(interactive_cfg, "hsv_upper", None),
+        )
+        if interactive_cfg.track_mode == "color" and not interactive_cfg.hsv_ranges:
+            raise ValueError("Dla trybu 'color' podaj --color_name albo --hsv_lower i --hsv_upper.")
+        return interactive_cfg
+
+    track_mode = str(merged["track_mode"])
+    color_name = merged.get("color_name")
+    hsv_lower = merged.get("hsv_lower")
+    hsv_upper = merged.get("hsv_upper")
+    hsv_ranges = get_hsv_ranges_from_args_or_name(color_name, hsv_lower, hsv_upper)
 
     if track_mode == "color" and not hsv_ranges:
         raise ValueError("Dla trybu 'color' podaj --color_name albo --hsv_lower i --hsv_upper.")
@@ -314,20 +449,20 @@ def build_tracker_config(args: argparse.Namespace) -> TrackerConfig:
         video=args.video,
         calib_file=args.calib_file,
         track_mode=track_mode,
-        blur=args.blur,
-        threshold=args.threshold,
-        erode_iter=args.erode_iter,
-        dilate_iter=args.dilate_iter,
-        min_area=args.min_area,
-        max_area=args.max_area,
-        color_name=args.color_name,
+        blur=int(merged["blur"]),
+        threshold=int(merged["threshold"]),
+        erode_iter=int(merged["erode_iter"]),
+        dilate_iter=int(merged["dilate_iter"]),
+        min_area=float(merged["min_area"]),
+        max_area=merged["max_area"],  # type: ignore[arg-type]
+        color_name=color_name,  # type: ignore[arg-type]
         hsv_ranges=hsv_ranges,
-        output_csv=args.output_csv,
-        display=args.display,
-        roi=args.roi,
-        trajectory_png=args.trajectory_png,
-        report_csv=args.report_csv,
-        report_pdf=args.report_pdf,
+        output_csv=str(merged["output_csv"]),
+        display=bool(merged["display"]),
+        roi=merged["roi"],  # type: ignore[arg-type]
+        trajectory_png=merged.get("trajectory_png"),  # type: ignore[arg-type]
+        report_csv=merged.get("report_csv"),  # type: ignore[arg-type]
+        report_pdf=merged.get("report_pdf"),  # type: ignore[arg-type]
     )
 
 
@@ -1033,23 +1168,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_track = subparsers.add_parser("track", help="Śledzenie plamki")
     p_track.add_argument("--video", required=True, help="Plik MP4")
+    p_track.add_argument("--config", default="config/settings.yaml", help="Plik YAML z ustawieniami")
     p_track.add_argument("--calib_file", help="Plik .npz z kalibracją kamery")
-    p_track.add_argument("--track_mode", choices=["brightest", "color"], default="brightest", help="Tryb śledzenia")
+    p_track.add_argument("--track_mode", choices=["brightest", "color"], help="Tryb śledzenia")
     p_track.add_argument("--color_name", choices=sorted(PRESET_HSV_RANGES.keys()), help="Preset koloru dla track_mode=color")
     p_track.add_argument("--hsv_lower", type=parse_hsv_triplet, help="Dolny próg HSV, np. 0,80,80")
     p_track.add_argument("--hsv_upper", type=parse_hsv_triplet, help="Górny próg HSV, np. 10,255,255")
-    p_track.add_argument("--blur", type=int, default=11, help="Rozmiar filtra Gaussa")
-    p_track.add_argument("--threshold", type=int, default=200, help="Próg jasności 0..255")
-    p_track.add_argument("--erode_iter", type=int, default=2, help="Liczba iteracji erozji")
-    p_track.add_argument("--dilate_iter", type=int, default=4, help="Liczba iteracji dylatacji")
-    p_track.add_argument("--min_area", type=float, default=20.0, help="Minimalna powierzchnia konturu")
+    p_track.add_argument("--blur", type=int, help="Rozmiar filtra Gaussa")
+    p_track.add_argument("--threshold", type=int, help="Próg jasności 0..255")
+    p_track.add_argument("--erode_iter", type=int, help="Liczba iteracji erozji")
+    p_track.add_argument("--dilate_iter", type=int, help="Liczba iteracji dylatacji")
+    p_track.add_argument("--min_area", type=float, help="Minimalna powierzchnia konturu")
     p_track.add_argument("--max_area", type=float, help="Maksymalna powierzchnia konturu")
     p_track.add_argument("--roi", type=parse_roi, help="Obszar zainteresowania x,y,w,h")
-    p_track.add_argument("--output_csv", default="tracking_results.csv", help="Plik CSV z wynikami")
+    p_track.add_argument("--output_csv", help="Plik CSV z wynikami")
     p_track.add_argument("--trajectory_png", help="Plik PNG z wykresem trajektorii")
     p_track.add_argument("--report_csv", help="Plik CSV z raportem jakości")
     p_track.add_argument("--report_pdf", help="Plik PDF z raportem jakości")
-    p_track.add_argument("--display", action="store_true", help="Pokaż podgląd na żywo")
+    p_track.add_argument("--display", action="store_true", default=None, help="Pokaż podgląd na żywo")
     p_track.add_argument("--interactive", action="store_true", help="Interaktywny wybór kluczowych parametrów w terminalu")
 
     p_cmp = subparsers.add_parser("compare", help="Porównanie dwóch plików CSV")
