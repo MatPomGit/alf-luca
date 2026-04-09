@@ -19,7 +19,7 @@ Narzędzia do analizy materiałów wideo (MP4), kalibracji kamery i śledzenia p
 Python 3.10+ oraz biblioteki:
 
 ```bash
-pip install opencv-python numpy matplotlib
+pip install opencv-python numpy matplotlib kivy
 ```
 
 Dla narzędzia QA MP4 wymagane są dodatkowo binarki systemowe:
@@ -72,12 +72,12 @@ Możesz też wskazać inny plik:
 python track_luca.py gui --video film.mp4 --gui_config config/gui_display.yaml
 ```
 
-GUI automatycznie wykrywa pliki wideo z folderu `video/` i pozwala przełączać je suwakiem `Video index`.
+GUI automatycznie wykrywa pliki wideo z folderu `video/` i pozwala przełączać je listą rozwijaną.
 Wyniki analizy z GUI są zapisywane do folderu `output/` jako pliki `*_gui_analysis.csv`.
 Wstępnie wybrany indeks pliku możesz ustawić przez `video_index` w `config/gui_display.yaml`.
-Suwak `Auto params` ustawia wszystkie parametry detekcji w tryb automatyczny.
-Suwak `Speed` pozwala przyśpieszyć odtwarzanie: `x1.25`, `x1.5`, `x2`, `x3`, `x5`, `x10`, `x20`.
-Interfejs GUI pokazuje też panele statusu (stan analizy, aktywne ustawienia, skróty klawiaturowe), aby ułatwić pracę operatora.
+Przyciski `Auto params`, `Analyze`, `Pause`, `Multi track` i `Use calib` sterują przebiegiem analizy.
+Wybór `Speed` pozwala przyśpieszyć odtwarzanie: `x1.25`, `x1.5`, `x2`, `x3`, `x5`, `x10`, `x20`.
+Interfejs GUI (Kivy) pokazuje też panele statusu i podgląd przetworzonego obrazu, aby ułatwić pracę operatora.
 
 W GUI wyświetlany jest odnośnik do narzędzia QA MP4 (`tools/video_tool.py`).
 Możesz też nacisnąć klawisz `m`, aby wypisać w konsoli gotową komendę uruchomienia narzędzia.
