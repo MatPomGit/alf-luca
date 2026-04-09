@@ -88,7 +88,7 @@ class SpotKalmanFilter:
 
     def _adapt_covariances(self, innovation_norm: float) -> None:
         """Adaptacyjnie stroi Q/R: duży błąd => szybsza reakcja na nowy pomiar."""
-        response_gain = float(np.clip(innovation_norm / 20.0, 0.6, 3.0))
+        response_gain = float(np.clip(innovation_norm / 10.0, 0.6, 3.0))
 
         # Większa dynamika ruchu zwiększa Q, aby filtr mógł szybciej zmieniać prędkość.
         self.kf.processNoiseCov = self._base_process_cov * response_gain
