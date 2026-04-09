@@ -84,6 +84,11 @@ COLOR_PRESETS: Dict[str, List[Tuple[Tuple[int, int, int], Tuple[int, int, int]]]
 }
 
 
+GUI_MODES = ["calibration", "processing", "compare"]
+GUI_SELECTION_MODES = ["largest", "stablest", "longest"]
+GUI_COLOR_NAMES = list(COLOR_PRESETS.keys())
+
+
 # ----------------------------
 # Wejście interaktywne
 # ----------------------------
@@ -818,6 +823,192 @@ def export_annotated_video(
 
     writer.release()
     cap.release()
+
+
+def _draw_detection_layer(
+    frame: np.ndarray,
+    detections: Sequence[Detection],
+    label_prefix: str = "",
+    color: Tuple[int, int, int] = (0, 255, 0),
+) -> np.ndarray:
+    canvas = frame.copy()
+    for d in detections:
+        cx, cy = int(round(d.x)), int(round(d.y))
+        cv2.circle(canvas, (cx, cy), max(4, int(round(d.radius))), color, 2, cv2.LINE_AA)
+        txt = f"{label_prefix}A={d.area:.0f} R={d.rank}"
+        cv2.putText(canvas, txt, (cx + 6, cy - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+    return canvas
+
+
+def _stack_h(images: Sequence[np.ndarray]) -> np.ndarray:
+    if not images:
+        raise ValueError("Brak obrazów do połączenia.")
+    h = min(img.shape[0] for img in images)
+    resized = []
+    for img in images:
+        scale = h / img.shape[0]
+        w = max(1, int(round(img.shape[1] * scale)))
+        resized.append(cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA))
+    return np.hstack(resized)
+
+
+def run_gui(args):
+    cap = cv2.VideoCapture(args.video)
+    if not cap.isOpened():
+        raise FileNotFoundError(f"Nie udało się otworzyć pliku video: {args.video}")
+
+    camera_matrix = None
+    dist_coeffs = None
+    if args.calib_file:
+        data = np.load(args.calib_file)
+        camera_matrix = data.get("camera_matrix")
+        dist_coeffs = data.get("dist_coeffs")
+
+    cv2.namedWindow("GUI Control", cv2.WINDOW_NORMAL)
+    cv2.namedWindow("GUI Preview", cv2.WINDOW_NORMAL)
+
+    def noop(_=None):
+        return None
+
+    cv2.createTrackbar("Mode 0K 1P 2C", "GUI Control", 1, 2, noop)
+    cv2.createTrackbar("Track 0B 1C", "GUI Control", 0 if args.track_mode == "brightness" else 1, 1, noop)
+    cv2.createTrackbar("Color preset", "GUI Control", max(0, GUI_COLOR_NAMES.index(args.color_name)), len(GUI_COLOR_NAMES) - 1, noop)
+    cv2.createTrackbar("Threshold", "GUI Control", int(np.clip(args.threshold, 0, 255)), 255, noop)
+    cv2.createTrackbar("Blur", "GUI Control", int(np.clip(args.blur, 1, 31)), 31, noop)
+    cv2.createTrackbar("Min area", "GUI Control", int(np.clip(args.min_area, 0, 5000)), 5000, noop)
+    cv2.createTrackbar("Max area(0=off)", "GUI Control", int(np.clip(args.max_area, 0, 20000)), 20000, noop)
+    cv2.createTrackbar("Erode", "GUI Control", int(np.clip(args.erode_iter, 0, 10)), 10, noop)
+    cv2.createTrackbar("Dilate", "GUI Control", int(np.clip(args.dilate_iter, 0, 10)), 10, noop)
+    cv2.createTrackbar("Multi track", "GUI Control", 1 if args.multi_track else 0, 1, noop)
+    cv2.createTrackbar("Max spots", "GUI Control", int(np.clip(args.max_spots, 1, 20)), 20, noop)
+    cv2.createTrackbar("Selection", "GUI Control", max(0, GUI_SELECTION_MODES.index(args.selection_mode)), 2, noop)
+    cv2.createTrackbar("Use calib", "GUI Control", 1 if camera_matrix is not None else 0, 1, noop)
+    cv2.createTrackbar("Pause", "GUI Control", 0, 1, noop)
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    frame_index = 0
+    last_frame: Optional[np.ndarray] = None
+    tracker = SimpleMultiTracker(max_distance=args.max_distance, max_missed=args.max_missed)
+    completed_tracks: Dict[int, Dict] = {}
+
+    while True:
+        paused = cv2.getTrackbarPos("Pause", "GUI Control") == 1
+        if not paused or last_frame is None:
+            ok, frame = cap.read()
+            if not ok:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                tracker = SimpleMultiTracker(max_distance=args.max_distance, max_missed=args.max_missed)
+                completed_tracks = {}
+                frame_index = 0
+                continue
+            last_frame = frame
+            frame_index += 1
+        frame = last_frame.copy()
+
+        mode = GUI_MODES[cv2.getTrackbarPos("Mode 0K 1P 2C", "GUI Control")]
+        track_mode = "color" if cv2.getTrackbarPos("Track 0B 1C", "GUI Control") == 1 else "brightness"
+        color_name = GUI_COLOR_NAMES[cv2.getTrackbarPos("Color preset", "GUI Control")]
+        threshold = cv2.getTrackbarPos("Threshold", "GUI Control")
+        blur = ensure_odd(max(1, cv2.getTrackbarPos("Blur", "GUI Control")))
+        min_area = float(cv2.getTrackbarPos("Min area", "GUI Control"))
+        max_area = float(cv2.getTrackbarPos("Max area(0=off)", "GUI Control"))
+        erode_iter = cv2.getTrackbarPos("Erode", "GUI Control")
+        dilate_iter = cv2.getTrackbarPos("Dilate", "GUI Control")
+        multi_track = cv2.getTrackbarPos("Multi track", "GUI Control") == 1
+        max_spots = max(1, cv2.getTrackbarPos("Max spots", "GUI Control"))
+        selection_mode = GUI_SELECTION_MODES[cv2.getTrackbarPos("Selection", "GUI Control")]
+        use_calib = cv2.getTrackbarPos("Use calib", "GUI Control") == 1 and camera_matrix is not None and dist_coeffs is not None
+
+        processed = frame
+        if use_calib:
+            processed = cv2.undistort(frame, camera_matrix, dist_coeffs)
+
+        detections, mask, roi_box = detect_spots(
+            frame=processed,
+            track_mode=track_mode,
+            blur=blur,
+            threshold=threshold,
+            erode_iter=erode_iter,
+            dilate_iter=dilate_iter,
+            min_area=min_area,
+            max_area=max_area,
+            max_spots=max_spots,
+            color_name=color_name,
+            hsv_lower=None,
+            hsv_upper=None,
+            roi=args.roi,
+        )
+
+        mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        x0, y0, w, h = roi_box
+        annotated = _draw_detection_layer(processed, detections, color=(0, 255, 0))
+        cv2.rectangle(annotated, (x0, y0), (x0 + w, y0 + h), (255, 255, 0), 1)
+
+        if mode == "calibration":
+            calibration_view = _stack_h([frame, processed])
+            cv2.putText(calibration_view, "CALIBRATION: raw | corrected", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 220, 255), 2, cv2.LINE_AA)
+            if camera_matrix is None:
+                cv2.putText(calibration_view, "Brak pliku kalibracji (--calib_file).", (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2, cv2.LINE_AA)
+            preview = calibration_view
+        elif mode == "processing":
+            if multi_track:
+                ended = tracker.update(detections, frame_index, frame_index / fps)
+                completed_tracks.update(ended)
+                for tid, data in tracker.tracks.items():
+                    hist = data["points"]
+                    draw_polyline_history(annotated, hist, color_for_id(tid), max_tail=80)
+                    if hist and hist[-1].detected and hist[-1].x is not None and hist[-1].y is not None:
+                        px, py = int(hist[-1].x), int(hist[-1].y)
+                        cv2.putText(annotated, f"ID={tid}", (px + 8, py + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color_for_id(tid), 1, cv2.LINE_AA)
+            preview = _stack_h([annotated, mask_bgr])
+        else:  # compare
+            det_bright, _, _ = detect_spots(
+                frame=processed,
+                track_mode="brightness",
+                blur=blur,
+                threshold=threshold,
+                erode_iter=erode_iter,
+                dilate_iter=dilate_iter,
+                min_area=min_area,
+                max_area=max_area,
+                max_spots=max_spots,
+                color_name=color_name,
+                hsv_lower=None,
+                hsv_upper=None,
+                roi=args.roi,
+            )
+            det_color, _, _ = detect_spots(
+                frame=processed,
+                track_mode="color",
+                blur=blur,
+                threshold=threshold,
+                erode_iter=erode_iter,
+                dilate_iter=dilate_iter,
+                min_area=min_area,
+                max_area=max_area,
+                max_spots=max_spots,
+                color_name=color_name,
+                hsv_lower=None,
+                hsv_upper=None,
+                roi=args.roi,
+            )
+            bright_view = _draw_detection_layer(processed, det_bright, label_prefix="B ", color=(255, 80, 80))
+            color_view = _draw_detection_layer(processed, det_color, label_prefix="C ", color=(80, 255, 80))
+            preview = _stack_h([bright_view, color_view, mask_bgr])
+            cv2.putText(preview, f"COMPARE brightness={len(det_bright)} color={len(det_color)}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
+
+        cv2.putText(preview, f"Mode={mode} Track={track_mode} Color={color_name} Sel={selection_mode}", (10, preview.shape[0] - 35), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(preview, f"Frame={frame_index} Detections={len(detections)} Blur={blur} Thr={threshold}", (10, preview.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.imshow("GUI Preview", preview)
+
+        key = cv2.waitKey(20 if paused else 1) & 0xFF
+        if key == ord("q"):
+            break
+        if key == ord(" "):
+            cv2.setTrackbarPos("Pause", "GUI Control", 0 if paused else 1)
+
+    cap.release()
+    cv2.destroyAllWindows()
 # ----------------------------
 # Główne śledzenie
 # ----------------------------
@@ -1038,6 +1229,24 @@ def build_parser():
     p_cmp.add_argument("--output_csv", required=True, help="Wyjściowy CSV różnic")
     p_cmp.add_argument("--report_pdf", help="Opcjonalny raport PDF")
 
+    p_gui = subparsers.add_parser("gui", help="GUI do strojenia parametrów i podglądu w czasie rzeczywistym")
+    p_gui.add_argument("--video", required=True, help="Plik wejściowy MP4")
+    p_gui.add_argument("--calib_file", help="Plik kalibracji .npz (opcjonalnie)")
+    p_gui.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
+    p_gui.add_argument("--threshold", type=int, default=200)
+    p_gui.add_argument("--blur", type=int, default=11)
+    p_gui.add_argument("--min_area", type=float, default=10.0)
+    p_gui.add_argument("--max_area", type=float, default=0.0)
+    p_gui.add_argument("--erode_iter", type=int, default=2)
+    p_gui.add_argument("--dilate_iter", type=int, default=4)
+    p_gui.add_argument("--roi", help="Obszar ROI x,y,w,h")
+    p_gui.add_argument("--color_name", choices=GUI_COLOR_NAMES, default="red")
+    p_gui.add_argument("--multi_track", action="store_true")
+    p_gui.add_argument("--max_spots", type=int, default=10)
+    p_gui.add_argument("--max_distance", type=float, default=40.0)
+    p_gui.add_argument("--max_missed", type=int, default=10)
+    p_gui.add_argument("--selection_mode", choices=GUI_SELECTION_MODES, default="stablest")
+
     return parser
 
 
@@ -1051,6 +1260,8 @@ def main():
         track_video(args)
     elif args.command == "compare":
         compare_csv(args.reference, args.candidate, args.output_csv, args.report_pdf)
+    elif args.command == "gui":
+        run_gui(args)
     else:
         parser.print_help()
 
