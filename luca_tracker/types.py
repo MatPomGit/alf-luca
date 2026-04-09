@@ -36,3 +36,6 @@ class TrackPoint:
     track_id: Optional[int]
     rank: Optional[int] = None
     kalman_predicted: int = 0
+    x_world: Optional[float] = None
+    y_world: Optional[float] = None
+    z_world: Optional[float] = None

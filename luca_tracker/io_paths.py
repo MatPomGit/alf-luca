@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 OUTPUT_DIR = Path("/output")
 LOCAL_OUTPUT_DIR = Path.cwd() / "output"
 ENV_OUTPUT_DIR = "LUCA_OUTPUT_DIR"
+_RUN_OUTPUT_DIR: Optional[Path] = None
 
 
 def ensure_output_dir() -> Path:
@@ -35,13 +37,27 @@ def ensure_output_dir() -> Path:
         return LOCAL_OUTPUT_DIR
 
 
+def ensure_run_output_dir() -> Path:
+    """Tworzy katalog bieżącego uruchomienia `YYYYmmdd_HHMMSS` wewnątrz katalogu output."""
+    global _RUN_OUTPUT_DIR
+    if _RUN_OUTPUT_DIR is not None:
+        _RUN_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        return _RUN_OUTPUT_DIR
+
+    # Znacznik czasu jest wspólny dla całego procesu, żeby wszystkie artefakty trafiały do jednego katalogu.
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    _RUN_OUTPUT_DIR = ensure_output_dir() / stamp
+    _RUN_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    return _RUN_OUTPUT_DIR
+
+
 def resolve_output_path(path_value: str) -> str:
     """Mapuje ścieżkę wyjściową do aktywnego katalogu artefaktów dla ścieżek względnych."""
     path = Path(path_value)
     if path.is_absolute():
         path.parent.mkdir(parents=True, exist_ok=True)
         return str(path)
-    out = ensure_output_dir() / path
+    out = ensure_run_output_dir() / path
     out.parent.mkdir(parents=True, exist_ok=True)
     return str(out)
 
