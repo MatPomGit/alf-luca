@@ -284,9 +284,8 @@ def detect_spots(
     for idx, det in enumerate(detections, start=1):
         det.rank = idx
 
-    print("mask:", mask.shape, mask.dtype, "nonzero:", cv2.countNonZero(mask))
-    unique_vals = np.unique(mask)
-    print("mask unique:", unique_vals[:20], "count:", len(unique_vals))
+    # Diagnostyka maski została usunięta z domyślnego przebiegu, żeby nie zaśmiecać konsoli
+    # przy przetwarzaniu każdej klatki wideo.
 
     return detections, mask, (x0, y0, w, h)
 
