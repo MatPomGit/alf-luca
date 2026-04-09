@@ -21,9 +21,12 @@ import json
 import shlex
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 
 
 @dataclass
@@ -54,7 +57,11 @@ def run_cmd(cmd: List[str]) -> subprocess.CompletedProcess:
 
 
 def ensure_binary(name: str) -> None:
-    check = run_cmd([name, "-version"])
+    try:
+        check = run_cmd([name, "-version"])
+    except FileNotFoundError:
+        print(f"[BŁĄD] Nie znaleziono polecenia '{name}' w PATH.", file=sys.stderr)
+        sys.exit(2)
     if check.returncode != 0:
         print(f"[BŁĄD] Nie znaleziono polecenia '{name}' w PATH.", file=sys.stderr)
         sys.exit(2)
@@ -265,6 +272,170 @@ def save_report(path: Path, result: AnalysisResult) -> None:
     print(f"[OK] Zapisano raport JSON: {path}")
 
 
+def format_analysis(result: AnalysisResult) -> str:
+    lines = [
+        "=== Analiza MP4 ===",
+        f"Plik: {result.input_file}",
+        f"Kontener: {result.format_name}",
+        f"Czas trwania: {result.duration_sec}",
+        f"Rozmiar [B]: {result.size_bytes}",
+        f"Wideo: codec={result.video_codec}, {result.width}x{result.height}, fps={result.fps}, bitrate={result.video_bitrate_bps}",
+        f"Audio: codec={result.audio_codec}, bitrate={result.audio_bitrate_bps}",
+    ]
+
+    if not result.issues:
+        lines.append("[OK] Nie wykryto istotnych problemów.")
+    else:
+        lines.append("")
+        lines.append("Wykryte problemy:")
+        for issue in result.issues:
+            prefix = {"info": "[INFO]", "warning": "[WARN]", "error": "[ERR]"}.get(issue.level, "[?]")
+            lines.append(f"{prefix} {issue.code}: {issue.message}")
+
+    return "\n".join(lines)
+
+
+class VideoToolGUI:
+    def __init__(self) -> None:
+        self.root = tk.Tk()
+        self.root.title("Video Tool - analiza i naprawa MP4")
+        self.root.geometry("840x580")
+
+        self.selected_file: Optional[Path] = None
+        self.last_result: Optional[AnalysisResult] = None
+
+        self.file_var = tk.StringVar(value="Nie wybrano pliku.")
+        self.output_var = tk.StringVar(value="")
+        self.status_var = tk.StringVar(value="Gotowe.")
+
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        top = ttk.Frame(self.root, padding=12)
+        top.pack(fill="x")
+        ttk.Label(top, text="Plik wejściowy:").grid(row=0, column=0, sticky="w")
+        ttk.Label(top, textvariable=self.file_var, width=80).grid(row=0, column=1, columnspan=4, sticky="w")
+
+        btn_pick = ttk.Button(top, text="Wybierz plik MP4", command=self.pick_file)
+        btn_pick.grid(row=1, column=0, pady=(8, 0), sticky="w")
+
+        btn_analyze = ttk.Button(top, text="Analizuj", command=self.analyze_current_file)
+        btn_analyze.grid(row=1, column=1, padx=8, pady=(8, 0), sticky="w")
+
+        btn_report = ttk.Button(top, text="Zapisz raport JSON", command=self.save_report_from_gui)
+        btn_report.grid(row=1, column=2, padx=8, pady=(8, 0), sticky="w")
+
+        btn_repair = ttk.Button(top, text="Napraw / normalizuj", command=self.repair_current_file)
+        btn_repair.grid(row=1, column=3, padx=8, pady=(8, 0), sticky="w")
+
+        self.text = tk.Text(self.root, wrap="word", height=24)
+        self.text.pack(fill="both", expand=True, padx=12, pady=12)
+
+        status = ttk.Label(self.root, textvariable=self.status_var, relief="sunken", anchor="w")
+        status.pack(fill="x", side="bottom")
+
+    def _set_status(self, message: str) -> None:
+        self.status_var.set(message)
+        self.root.update_idletasks()
+
+    def pick_file(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Wybierz plik MP4",
+            filetypes=[("Pliki MP4", "*.mp4"), ("Wszystkie pliki", "*.*")],
+        )
+        if not path:
+            return
+        self.selected_file = Path(path)
+        self.file_var.set(str(self.selected_file))
+        self.text.delete("1.0", tk.END)
+        self.text.insert(tk.END, f"Wybrano plik:\n{self.selected_file}\n")
+        self._set_status("Wybrano plik.")
+
+    def analyze_current_file(self) -> None:
+        if not self.selected_file:
+            messagebox.showwarning("Brak pliku", "Najpierw wybierz plik do analizy.")
+            return
+        self._set_status("Analiza pliku...")
+        self.root.after(50, self._run_analysis)
+
+    def _run_analysis(self) -> None:
+        try:
+            result = analyze_mp4(self.selected_file)  # type: ignore[arg-type]
+            self.last_result = result
+            self.text.delete("1.0", tk.END)
+            self.text.insert(tk.END, format_analysis(result))
+            self._set_status("Analiza zakończona.")
+        except Exception as exc:
+            self._set_status("Błąd analizy.")
+            messagebox.showerror("Błąd", str(exc))
+
+    def save_report_from_gui(self) -> None:
+        if not self.last_result:
+            messagebox.showwarning("Brak analizy", "Najpierw wykonaj analizę pliku.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Zapisz raport JSON",
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json")],
+        )
+        if not path:
+            return
+        save_report(Path(path), self.last_result)
+        self._set_status(f"Zapisano raport: {path}")
+
+    def repair_current_file(self) -> None:
+        if not self.selected_file:
+            messagebox.showwarning("Brak pliku", "Najpierw wybierz plik do naprawy.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Zapisz naprawiony plik",
+            defaultextension=".mp4",
+            filetypes=[("Pliki MP4", "*.mp4")],
+        )
+        if not path:
+            return
+        self.output_var.set(path)
+        self._set_status("Trwa naprawa/normalizacja...")
+        worker = threading.Thread(target=self._repair_worker, args=(Path(path),), daemon=True)
+        worker.start()
+
+    def _repair_worker(self, output_file: Path) -> None:
+        try:
+            cmd = build_ffmpeg_command(
+                input_file=self.selected_file,  # type: ignore[arg-type]
+                output_file=output_file,
+                target_bitrate=None,
+                target_fps=None,
+                crf=23,
+                preset="medium",
+                audio_bitrate="128k",
+                remove_audio=False,
+            )
+            proc = run_cmd(cmd)
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr.strip() or "ffmpeg nie zakończył się poprawnie.")
+            repaired = analyze_mp4(output_file)
+            self.last_result = repaired
+            text = format_analysis(repaired)
+            self.root.after(0, self._repair_done, text, str(output_file))
+        except Exception as exc:
+            self.root.after(0, self._repair_error, str(exc))
+
+    def _repair_done(self, output_text: str, output_path: str) -> None:
+        self.text.delete("1.0", tk.END)
+        self.text.insert(tk.END, output_text)
+        self._set_status(f"Naprawa zakończona: {output_path}")
+        messagebox.showinfo("Sukces", f"Zapisano plik wynikowy:\n{output_path}")
+
+    def _repair_error(self, message: str) -> None:
+        self._set_status("Błąd naprawy.")
+        messagebox.showerror("Błąd naprawy", message)
+
+    def run(self) -> int:
+        self.root.mainloop()
+        return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -272,7 +443,7 @@ def main() -> int:
             "Program analizuje plik i opcjonalnie naprawia go przez ponowne kodowanie."
         )
     )
-    parser.add_argument("--input", required=True, help="Ścieżka do pliku wejściowego.")
+    parser.add_argument("--input", help="Ścieżka do pliku wejściowego.")
     parser.add_argument("--output", help="Ścieżka do pliku wyjściowego (wymagana dla naprawy).")
     parser.add_argument("--analyze-only", action="store_true", help="Tylko analiza, bez zapisu pliku.")
     parser.add_argument("--target-bitrate", help="Docelowy bitrate wideo, np. 2500k.")
@@ -282,10 +453,21 @@ def main() -> int:
     parser.add_argument("--audio-bitrate", default="128k", help="Bitrate audio AAC (domyślnie: 128k).")
     parser.add_argument("--remove-audio", action="store_true", help="Usuń dźwięk z pliku wyjściowego.")
     parser.add_argument("--report-json", help="Opcjonalna ścieżka do zapisu raportu JSON.")
+    parser.add_argument("--gui", action="store_true", help="Uruchom graficzny interfejs narzędzia.")
     args = parser.parse_args()
+
+    if args.gui:
+        ensure_binary("ffmpeg")
+        ensure_binary("ffprobe")
+        app = VideoToolGUI()
+        return app.run()
 
     ensure_binary("ffmpeg")
     ensure_binary("ffprobe")
+
+    if not args.input:
+        print("[BŁĄD] Dla trybu CLI wymagane jest --input.", file=sys.stderr)
+        return 2
 
     input_file = Path(args.input)
     if not input_file.exists():
