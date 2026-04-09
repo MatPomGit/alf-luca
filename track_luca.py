@@ -1162,14 +1162,18 @@ def run_gui(args):
             completed_tracks = {}
             frame_index = 0
             last_frame = None
+            speed_accumulator = 0.0
 
         analyze_enabled = cv2.getTrackbarPos("Analyze (0=setup,1=run)", "GUI") == 1
         paused = cv2.getTrackbarPos("Pause", "GUI") == 1
         speed_factor = GUI_SPEED_FACTORS[cv2.getTrackbarPos("Speed", "GUI")]
-        speed_accumulator += speed_factor
-        frames_to_advance = max(1, int(speed_accumulator))
-        speed_accumulator -= int(speed_accumulator)
         should_advance = analyze_enabled and not paused
+        if should_advance:
+            speed_accumulator += speed_factor
+            frames_to_advance = max(1, int(speed_accumulator))
+            speed_accumulator -= int(speed_accumulator)
+        else:
+            frames_to_advance = 1
         if should_advance or last_frame is None:
             ok, frame = False, None
             for _ in range(frames_to_advance):
@@ -1217,6 +1221,7 @@ def run_gui(args):
             max_spots = max(1, min(20, int((frame.shape[0] * frame.shape[1]) / 50000)))
             selection_mode = "stablest"
             use_calib = camera_matrix is not None and dist_coeffs is not None
+            multi_track = True
             mode = "processing"
             cv2.setTrackbarPos("Mode 0:K 1:P 2:C", "GUI", GUI_MODES.index(mode))
             cv2.setTrackbarPos("Track 0:Bright 1:Color", "GUI", 1 if track_mode == "color" else 0)
