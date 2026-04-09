@@ -1,7 +1,8 @@
 # Zależności runtime dla narzędzi CLI/GUI i pipeline'u analizy wideo.
 # Wersje są ustawione jako minimalne, aby ułatwić aktualizacje w środowiskach R&D.
 
-numpy>=1.24
+kivy==2.3.0
 opencv-python>=4.8
+numpy>=1.24
 matplotlib>=3.7
-kivy>=2.2
+
