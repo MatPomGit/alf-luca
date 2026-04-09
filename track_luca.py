@@ -232,6 +232,11 @@ def build_mask(
     hsv_lower: Optional[str],
     hsv_upper: Optional[str],
 ) -> np.ndarray:
+    # Kompatybilność wsteczna: w części starszych konfiguracji pojawiało się
+    # "brightest" zamiast poprawnego "brightness".
+    if track_mode == "brightest":
+        track_mode = "brightness"
+
     blur = ensure_odd(blur)
 
     if track_mode == "brightness":
@@ -1271,7 +1276,12 @@ def build_parser():
     p_track.add_argument("--report_csv", help="CSV z raportem jakości")
     p_track.add_argument("--report_pdf", help="PDF z raportem jakości")
 
-    p_track.add_argument("--color_name", default="red", help="Preset koloru lub custom")
+    p_track.add_argument(
+        "--color_name",
+        choices=[*GUI_COLOR_NAMES, "custom"],
+        default="red",
+        help="Preset koloru lub custom",
+    )
     p_track.add_argument("--hsv_lower", help="Dolna granica HSV np. 0,80,80")
     p_track.add_argument("--hsv_upper", help="Górna granica HSV np. 10,255,255")
 
