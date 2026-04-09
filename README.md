@@ -54,7 +54,7 @@ python track_luca.py calibrate \
 
 ```bash
 python track_luca.py track \
-  --video film.mp4 \
+  --video luca_regal.mp4 \
   --track_mode brightness \
   --output_csv tracking_results.csv \
   --trajectory_png trajectory.png \
@@ -83,7 +83,7 @@ Domyślne wartości suwaków GUI są ładowane z pliku `config/gui_display.yaml`
 Możesz też wskazać inny plik:
 
 ```bash
-python track_luca.py gui --video film.mp4 --gui_config config/gui_display.yaml
+python track_luca.py gui --video luca_regal.mp4 --gui_config config/gui_display.yaml
 ```
 
 GUI automatycznie wykrywa pliki wideo z folderu `video/` i pozwala przełączać je listą rozwijaną.
@@ -111,7 +111,7 @@ Możesz też nacisnąć klawisz `m`, aby wypisać w konsoli gotową komendę uru
 
 ```bash
 python tools/video_tool.py \
-  --input film.mp4 \
+  --input luca_regal.mp4 \
   --analyze-only \
   --report-json report_mp4.json
 ```
@@ -120,7 +120,7 @@ python tools/video_tool.py \
 
 ```bash
 python tools/video_tool.py \
-  --input film.mp4 \
+  --input luca_regal.mp4 \
   --output film_fixed.mp4 \
   --target-bitrate 2500k \
   --target-fps 30 \
@@ -132,7 +132,7 @@ python tools/video_tool.py \
 
 ```bash
 python tools/video_tool.py \
-  --input film.mp4 \
+  --input luca_regal.mp4 \
   --output film_no_audio.mp4 \
   --remove-audio
 ```
