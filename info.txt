@@ -23,3 +23,9 @@ python track_luca.py track \
 
 # Interaktywny dobór parametrów
 python track_luca.py track --video film.mp4 --interactive --multi_track
+
+# GUI (aktualny styl: subkomenda)
+python track_luca.py gui --video film.mp4 --track_mode color --color_name red
+
+# GUI (kompatybilność wsteczna: --mode)
+python track_luca.py --mode gui --video film.mp4 --track_mode color --color_name red

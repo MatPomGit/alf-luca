@@ -25,6 +25,7 @@ import csv
 import glob
 import math
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -1324,9 +1325,34 @@ def build_parser():
     return parser
 
 
+def normalize_legacy_argv(argv: Sequence[str]) -> List[str]:
+    """
+    Obsługuje starszy styl uruchomienia:
+        python track_luca.py --mode <calibrate|track|compare|gui> ...
+
+    i zamienia go na aktualny styl z subkomendami:
+        python track_luca.py <calibrate|track|compare|gui> ...
+    """
+    args = list(argv)
+    commands = {"calibrate", "track", "compare", "gui"}
+    if not args:
+        return args
+    if args[0] in commands:
+        return args
+
+    if "--mode" in args:
+        mode_idx = args.index("--mode")
+        if mode_idx + 1 < len(args):
+            mode = args[mode_idx + 1]
+            if mode in commands:
+                return [mode, *args[:mode_idx], *args[mode_idx + 2 :]]
+    return args
+
+
 def main():
     parser = build_parser()
-    args = parser.parse_args()
+    argv = normalize_legacy_argv(sys.argv[1:])
+    args = parser.parse_args(argv)
 
     if args.command == "calibrate":
         calibrate_camera(args.calib_dir, args.rows, args.cols, args.square_size, args.output_file)
