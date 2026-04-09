@@ -5,14 +5,30 @@ import glob
 import sys
 from typing import List, Optional, Sequence
 
-from .gui import GUI_COLOR_NAMES, GUI_SELECTION_MODES, MP4_QUALITY_TOOL_PATH, run_gui
-from .reports import compare_csv
-from .tracking import calibrate_camera, track_video
-
 DEFAULT_GUI_VIDEO_GLOB_PATTERNS = ("video/*.mp4", "*.mp4")
+DEFAULT_GUI_COLOR_NAMES = ["red", "green", "blue", "white", "yellow"]
+DEFAULT_GUI_SELECTION_MODES = ["largest", "stablest", "longest"]
+DEFAULT_MP4_QUALITY_TOOL_PATH = "tools/video_tool.py"
+
+
+def _load_gui_metadata() -> tuple[List[str], List[str], str]:
+    """Zwraca metadane GUI bez wymuszania zależności od OpenCV/Kivy.
+
+    Funkcja próbuje pobrać wartości z modułu `gui`, ale jeśli środowisko nie ma
+    bibliotek GUI (np. tylko analiza CLI), używa bezpiecznych wartości domyślnych.
+    """
+    try:
+        from .gui import GUI_COLOR_NAMES, GUI_SELECTION_MODES, MP4_QUALITY_TOOL_PATH
+
+        return list(GUI_COLOR_NAMES), list(GUI_SELECTION_MODES), MP4_QUALITY_TOOL_PATH
+    except Exception:
+        # Celowo łagodny fallback, żeby `--help` działało bez ciężkich zależności.
+        return list(DEFAULT_GUI_COLOR_NAMES), list(DEFAULT_GUI_SELECTION_MODES), DEFAULT_MP4_QUALITY_TOOL_PATH
 
 
 def build_parser():
+    # Metadane GUI ładujemy leniwie, aby parser CLI działał nawet bez OpenCV/Kivy.
+    gui_colors, gui_selection_modes, mp4_tool_path = _load_gui_metadata()
     parser = argparse.ArgumentParser(
         description="Śledzenie jasnej lub kolorowej plamki światła w video MP4. Obsługuje także opcjonalne wygładzanie filtrem Kalmana."
     )
@@ -42,7 +58,7 @@ def build_parser():
     p_track.add_argument("--trajectory_png", help="PNG z wykresem trajektorii")
     p_track.add_argument("--report_csv", help="CSV z raportem jakości")
     p_track.add_argument("--report_pdf", help="PDF z raportem jakości")
-    p_track.add_argument("--color_name", choices=[*GUI_COLOR_NAMES, "custom"], default="red", help="Preset koloru lub custom")
+    p_track.add_argument("--color_name", choices=[*gui_colors, "custom"], default="red", help="Preset koloru lub custom")
     p_track.add_argument("--hsv_lower", help="Dolna granica HSV np. 0,80,80")
     p_track.add_argument("--hsv_upper", help="Górna granica HSV np. 10,255,255")
     p_track.add_argument("--multi_track", action="store_true", help="Śledzenie wielu plamek jednocześnie")
@@ -74,18 +90,19 @@ def build_parser():
     p_gui.add_argument("--erode_iter", type=int, default=2)
     p_gui.add_argument("--dilate_iter", type=int, default=4)
     p_gui.add_argument("--roi", help="Obszar ROI x,y,w,h")
-    p_gui.add_argument("--color_name", choices=GUI_COLOR_NAMES, default="red")
+    p_gui.add_argument("--color_name", choices=gui_colors, default="red")
     p_gui.add_argument("--multi_track", action="store_true")
     p_gui.add_argument("--max_spots", type=int, default=10)
     p_gui.add_argument("--max_distance", type=float, default=40.0)
     p_gui.add_argument("--max_missed", type=int, default=10)
-    p_gui.add_argument("--selection_mode", choices=GUI_SELECTION_MODES, default="stablest")
+    p_gui.add_argument("--selection_mode", choices=gui_selection_modes, default="stablest")
     p_gui.add_argument("--gui_config", default="config/gui_display.yaml", help="Plik YAML z domyślnymi wartościami suwaków GUI.")
-    p_gui.add_argument("--mp4_tool_path", default=MP4_QUALITY_TOOL_PATH, help="Odnośnik do narzędzia QA MP4 pokazywany w GUI (domyślnie: tools/video_tool.py).")
+    p_gui.add_argument("--mp4_tool_path", default=mp4_tool_path, help="Odnośnik do narzędzia QA MP4 pokazywany w GUI (domyślnie: tools/video_tool.py).")
     return parser
 
 
 def normalize_legacy_argv(argv: Sequence[str]) -> List[str]:
+    # Normalizujemy stary interfejs `--mode`, aby zachować zgodność wsteczną.
     args = list(argv)
     commands = {"calibrate", "track", "compare", "gui"}
     if not args:
@@ -102,6 +119,7 @@ def normalize_legacy_argv(argv: Sequence[str]) -> List[str]:
 
 
 def pick_default_gui_video() -> Optional[str]:
+    # Szukamy domyślnego pliku MP4 według kilku wzorców, w stałej kolejności.
     for pattern in DEFAULT_GUI_VIDEO_GLOB_PATTERNS:
         matches = sorted(glob.glob(pattern))
         if matches:
@@ -110,6 +128,7 @@ def pick_default_gui_video() -> Optional[str]:
 
 
 def main():
+    # Parser i argumenty CLI są przetwarzane bez importu ciężkich modułów.
     parser = build_parser()
     argv = normalize_legacy_argv(sys.argv[1:])
     args = parser.parse_args(argv)
@@ -120,12 +139,21 @@ def main():
             parser.error("Dla trybu GUI wymagany jest plik MP4. Podaj --video lub umieść plik *.mp4 w katalogu ./video.")
 
     if args.command == "calibrate":
+        # Import lokalny ogranicza wymagania środowiskowe do użytego trybu.
+        from .tracking import calibrate_camera
+
         calibrate_camera(args.calib_dir, args.rows, args.cols, args.square_size, args.output_file)
     elif args.command == "track":
+        from .tracking import track_video
+
         track_video(args)
     elif args.command == "compare":
+        from .reports import compare_csv
+
         compare_csv(args.reference, args.candidate, args.output_csv, args.report_pdf)
     elif args.command == "gui":
+        from .gui import run_gui
+
         run_gui(args)
     else:
         parser.print_help()
