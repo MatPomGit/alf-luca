@@ -141,7 +141,7 @@ def get_default_params_for_mode(track_mode: str) -> Dict[str, object]:
     return detector_cls.default_params()
 
 
-def contour_to_detection(contour, offset_x: int = 0, offset_y: int = 0) -> Optional[Detection]:
+def contour_to_detection(contour: np.ndarray, offset_x: int = 0, offset_y: int = 0) -> Optional[Detection]:
     """Przekształca pojedynczy kontur OpenCV do struktury Detection."""
     area = float(cv2.contourArea(contour))
     if area <= 0:
