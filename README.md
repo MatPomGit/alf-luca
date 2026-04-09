@@ -70,6 +70,7 @@ Wyniki analizy z GUI są zapisywane do folderu `output/` jako pliki `*_gui_analy
 Wstępnie wybrany indeks pliku możesz ustawić przez `video_index` w `config/gui_display.yaml`.
 Suwak `Auto params` ustawia wszystkie parametry detekcji w tryb automatyczny.
 Suwak `Speed` pozwala przyśpieszyć odtwarzanie: `x1.25`, `x1.5`, `x2`, `x3`, `x5`, `x10`, `x20`.
+Interfejs GUI pokazuje też panele statusu (stan analizy, aktywne ustawienia, skróty klawiaturowe), aby ułatwić pracę operatora.
 
 W GUI wyświetlany jest odnośnik do narzędzia QA MP4 (`tools/video_tool.py`).
 Możesz też nacisnąć klawisz `m`, aby wypisać w konsoli gotową komendę uruchomienia narzędzia.

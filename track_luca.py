@@ -1018,6 +1018,41 @@ def _stack_h(images: Sequence[np.ndarray]) -> np.ndarray:
     return np.hstack(resized)
 
 
+def _draw_hud_panel(
+    image: np.ndarray,
+    lines: Sequence[str],
+    origin: Tuple[int, int],
+    text_color: Tuple[int, int, int] = (245, 245, 245),
+    bg_color: Tuple[int, int, int] = (25, 25, 25),
+    alpha: float = 0.55,
+    line_h: int = 22,
+) -> None:
+    if not lines:
+        return
+    x, y = origin
+    pad = 10
+    max_w = 0
+    for line in lines:
+        (w, _), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
+        max_w = max(max_w, w)
+    panel_w = max_w + 2 * pad
+    panel_h = len(lines) * line_h + 2 * pad
+    x2 = min(image.shape[1] - 1, x + panel_w)
+    y2 = min(image.shape[0] - 1, y + panel_h)
+    x = max(0, min(x, image.shape[1] - 2))
+    y = max(0, min(y, image.shape[0] - 2))
+
+    overlay = image.copy()
+    cv2.rectangle(overlay, (x, y), (x2, y2), bg_color, -1)
+    cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0, image)
+    cv2.rectangle(image, (x, y), (x2, y2), (85, 85, 85), 1, cv2.LINE_AA)
+
+    ty = y + pad + 14
+    for line in lines:
+        cv2.putText(image, line, (x + pad, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.55, text_color, 1, cv2.LINE_AA)
+        ty += line_h
+
+
 def run_gui(args):
     video_files = discover_video_files("video", args.video)
     if not video_files:
@@ -1275,15 +1310,34 @@ def run_gui(args):
             preview = _stack_h([bright_view, color_view, mask_bgr])
             cv2.putText(preview, f"COMPARE brightness={len(det_bright)} color={len(det_color)}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
 
-        cv2.putText(preview, f"Mode={mode} Track={track_mode} Color={color_name} Sel={selection_mode}", (10, preview.shape[0] - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(preview, f"MP4 QA tool: {args.mp4_tool_path} (klawisz: m)", (10, preview.shape[0] - 35), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 255, 200), 2, cv2.LINE_AA)
         state = "RUN" if analyze_enabled else "SETUP"
-        cv2.putText(preview, f"State={state} Frame={frame_index} Detections={len(detections)} Blur={blur} Thr={threshold}", (10, preview.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(preview, f"Video: {video_files[current_video_idx].name}", (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 220, 120), 2, cv2.LINE_AA)
-        cv2.putText(preview, f"Auto={'ON' if auto_params else 'OFF'} Speed=x{speed_factor:g}", (10, 82), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (180, 255, 180), 2, cv2.LINE_AA)
+        info_lines = [
+            f"Video: {video_files[current_video_idx].name}",
+            f"State: {state} | Mode: {mode} | Track: {track_mode}",
+            f"Color: {color_name} | Selection: {selection_mode}",
+            f"Detections: {len(detections)} | Frame: {frame_index}",
+            f"Blur: {blur} | Threshold: {threshold}",
+            f"Auto params: {'ON' if auto_params else 'OFF'} | Speed: x{speed_factor:g}",
+        ]
+        help_lines = [
+            "Skróty: q - wyjście | spacja - pauza",
+            "m - podpowiedź uruchomienia MP4 QA",
+            f"MP4 QA tool: {args.mp4_tool_path}",
+        ]
+
+        _draw_hud_panel(preview, info_lines, origin=(10, 10), bg_color=(18, 26, 36), alpha=0.62)
+        _draw_hud_panel(
+            preview,
+            help_lines,
+            origin=(max(10, preview.shape[1] - 560), 10),
+            bg_color=(30, 24, 16),
+            alpha=0.58,
+        )
+
+        cv2.rectangle(preview, (0, 0), (preview.shape[1] - 1, preview.shape[0] - 1), (90, 90, 90), 1, cv2.LINE_AA)
         if detections:
             main_det = detections[0]
-            cv2.putText(preview, f"Pozycja punktu: x={main_det.x:.1f}px y={main_det.y:.1f}px", (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(preview, f"Pozycja punktu: x={main_det.x:.1f}px y={main_det.y:.1f}px", (20, preview.shape[0] - 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2, cv2.LINE_AA)
             if analyze_enabled:
                 analysis_rows.append(
                     {
