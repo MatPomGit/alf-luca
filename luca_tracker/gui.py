@@ -7,6 +7,15 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
+from .config_model import (
+    DetectorConfig as RunDetectorConfig,
+    EvalConfig,
+    InputConfig,
+    PostprocessConfig,
+    RunConfig,
+    TrackerConfig as RunTrackerConfig,
+    save_run_config,
+)
 from .tracking import COLOR_PRESETS, SimpleMultiTracker, detect_spots, ensure_odd, parse_roi
 from .types import Detection
 from .video_export import color_for_id, draw_polyline_history
@@ -400,6 +409,10 @@ def run_gui(args):
             btn_restart.bind(on_press=lambda *_: self._restart_video())
             row_action.add_widget(btn_restart)
 
+            btn_export_cfg = Button(text="Eksport run config")
+            btn_export_cfg.bind(on_press=lambda *_: self._export_run_config())
+            row_action.add_widget(btn_export_cfg)
+
             btn_mp4 = Button(text="Pokaż komendę QA wideo")
             btn_mp4.bind(
                 on_press=lambda *_: print(
@@ -458,6 +471,63 @@ def run_gui(args):
             self.speed_accumulator = 0.0
             self.last_frame = None
             self.tracker = SimpleMultiTracker(max_distance=args.max_distance, max_missed=args.max_missed)
+
+        def _build_current_run_config(self) -> RunConfig:
+            """Buduje pełny model konfiguracji z aktualnego stanu kontrolek GUI."""
+            return RunConfig(
+                input=InputConfig(
+                    video=str(self.video_files[self.current_video_idx]),
+                    calib_file=args.calib_file,
+                    display=False,
+                    interactive=False,
+                ),
+                detector=RunDetectorConfig(
+                    track_mode=self.track_mode,
+                    blur=ensure_odd(max(1, int(self.blur))),
+                    threshold=int(self.threshold),
+                    erode_iter=int(self.erode_iter),
+                    dilate_iter=int(self.dilate_iter),
+                    min_area=float(self.min_area),
+                    max_area=float(self.max_area),
+                    max_spots=max(1, int(self.max_spots)),
+                    color_name=self.color_name,
+                    hsv_lower=None,
+                    hsv_upper=None,
+                    roi=args.roi,
+                ),
+                tracker=RunTrackerConfig(
+                    multi_track=bool(self.multi_track),
+                    max_distance=float(args.max_distance),
+                    max_missed=int(args.max_missed),
+                    selection_mode=self.selection_mode,
+                ),
+                postprocess=PostprocessConfig(
+                    use_kalman=False,
+                    kalman_process_noise=1e-2,
+                    kalman_measurement_noise=1e-1,
+                    draw_all_tracks=False,
+                ),
+                eval=EvalConfig(
+                    output_csv=str(self.output_dir / f"{self.video_files[self.current_video_idx].stem}_tracking.csv"),
+                    trajectory_png=str(self.output_dir / f"{self.video_files[self.current_video_idx].stem}_trajectory.png"),
+                    report_csv=str(self.output_dir / f"{self.video_files[self.current_video_idx].stem}_report.csv"),
+                    report_pdf=str(self.output_dir / f"{self.video_files[self.current_video_idx].stem}_report.pdf"),
+                    all_tracks_csv=str(self.output_dir / f"{self.video_files[self.current_video_idx].stem}_all_tracks.csv"),
+                    annotated_video=str(self.output_dir / f"{self.video_files[self.current_video_idx].stem}_annotated.mp4"),
+                ),
+            )
+
+        def _export_run_config(self):
+            """Eksportuje bieżące ustawienia GUI do pliku run config (preferowany YAML, fallback JSON)."""
+            cfg = self._build_current_run_config()
+            export_path = self.output_dir / f"{self.video_files[self.current_video_idx].stem}_run_config.yaml"
+            try:
+                save_run_config(cfg, export_path)
+            except RuntimeError:
+                export_path = self.output_dir / f"{self.video_files[self.current_video_idx].stem}_run_config.json"
+                save_run_config(cfg, export_path)
+            self.status_label.text = f"Wyeksportowano run config: {export_path}"
+            print(f"[GUI] Wyeksportowano run config: {export_path}")
 
         def _on_key_down(self, _, key, __, ___, ____):
             if key == 113:
