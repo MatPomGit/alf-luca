@@ -356,6 +356,10 @@ def run_gui(args):
             self.auto_params = bool(_cfg_value(gui_cfg, "auto_params", False))
             cfg_speed = float(_cfg_value(gui_cfg, "speed_factor", 1.0))
             self.speed_factor = cfg_speed if cfg_speed in GUI_SPEED_FACTORS else 1.0
+            # Konfigurowalny rozmiar czcionki GUI pozwala łatwo zwiększyć czytelność interfejsu.
+            cfg_font_size = float(_cfg_value(gui_cfg, "font_size", 28))
+            self.gui_font_size = float(np.clip(cfg_font_size, 12, 72))
+            self.row_height = max(44, int(self.gui_font_size * 2.1))
             self.capture_state = "idle"
             self.nav_targets: List[Tuple[str, object]] = []
             self.nav_index = 0
@@ -455,10 +459,10 @@ def run_gui(args):
 
         def _make_slider(self, label: str, min_v: float, max_v: float, value: float, step: float, on_change):
             # Buduje jeden wiersz suwaka i zwraca referencję do kontrolki, aby obsłużyć nawigację klawiaturą/myszką.
-            row = BoxLayout(orientation="horizontal", size_hint_y=None, height=44, spacing=8)
-            lbl = Label(text=label, size_hint_x=0.36, halign="left", valign="middle")
+            row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
+            lbl = Label(text=label, size_hint_x=0.36, halign="left", valign="middle", font_size=self.gui_font_size)
             lbl.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
-            value_lbl = Label(text=str(value), size_hint_x=0.16)
+            value_lbl = Label(text=str(value), size_hint_x=0.16, font_size=self.gui_font_size)
             slider = Slider(min=min_v, max=max_v, value=value, step=step, size_hint_x=0.48)
 
             def _update(_, val):
@@ -611,6 +615,14 @@ def run_gui(args):
                 self._move_focus(-direction)
             return True
 
+        def _apply_large_font_to_widget_tree(self, widget) -> None:
+            # Rekurencyjnie ustawia większą czcionkę dla całego drzewa kontrolek, aby zachować spójny wygląd GUI.
+            if hasattr(widget, "font_size"):
+                widget.font_size = self.gui_font_size
+            if hasattr(widget, "children"):
+                for child in widget.children:
+                    self._apply_large_font_to_widget_tree(child)
+
         def build(self):
             # Dodatkowe zabezpieczenie: jeśli provider okna zniknie w trakcie startu,
             # pokażemy czytelny błąd zamiast trudnego do diagnozy wyjątku atrybutu.
@@ -631,7 +643,7 @@ def run_gui(args):
             controls = BoxLayout(orientation="vertical", spacing=6, size_hint_y=None)
             controls.bind(minimum_height=controls.setter("height"))
 
-            row_top = BoxLayout(orientation="horizontal", size_hint_y=None, height=42, spacing=8)
+            row_top = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
             self.video_spinner = Spinner(
                 text=self.video_files[self.current_video_idx].name,
                 values=[p.name for p in self.video_files],
@@ -683,7 +695,7 @@ def run_gui(args):
                 self.slider_refs[key] = slider
                 self.nav_targets.append((key, slider))
 
-            toggles = BoxLayout(orientation="horizontal", size_hint_y=None, height=44, spacing=8)
+            toggles = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
             self.btn_analyze = ToggleButton(text="Analyze: OFF", state="normal")
             self.btn_analyze.bind(state=self._toggle_analyze)
             toggles.add_widget(self.btn_analyze)
@@ -709,7 +721,7 @@ def run_gui(args):
                 ]
             )
 
-            row_action = BoxLayout(orientation="horizontal", size_hint_y=None, height=42, spacing=8)
+            row_action = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
             btn_prev_video = Button(text="Prev video")
             btn_prev_video.bind(on_press=lambda *_: self._switch_video_by_delta(-1))
             row_action.add_widget(btn_prev_video)
@@ -744,7 +756,8 @@ def run_gui(args):
                 ]
             )
 
-            row_capture = BoxLayout(orientation="horizontal", size_hint_y=None, height=42, spacing=8)
+            #row_capture = BoxLayout(orientation="horizontal", size_hint_y=None, height=42, spacing=8)
+            row_capture = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
             self.btn_record = Button(text="Record video: OFF")
             self.btn_record.bind(on_press=self._toggle_recording)
             row_capture.add_widget(self.btn_record)
@@ -780,7 +793,7 @@ def run_gui(args):
                 ]
             )
 
-            self.status_label = Label(text="Ready", size_hint_y=None, height=30, halign="left", valign="middle")
+            self.status_label = Label(text="Ready", size_hint_y=None, height=max(30, int(self.gui_font_size * 1.6)), halign="left", valign="middle", font_size=self.gui_font_size)
             self.status_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
             controls.add_widget(self.status_label)
 
@@ -791,6 +804,7 @@ def run_gui(args):
             Window.bind(on_key_down=self._on_key_down)
             Window.bind(on_resize=self._on_window_resize)
             Window.bind(on_mouse_scroll=self._on_mouse_scroll)
+            self._apply_large_font_to_widget_tree(controls)
             self._refresh_focus_styles()
             self._set_capture_state("idle")
             Clock.schedule_interval(self._update_frame, float(np.clip(_cfg_value(gui_cfg, "wait_ms_running", 16), 1, 200)) / 1000.0)
