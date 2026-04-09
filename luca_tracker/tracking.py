@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import logging
 import math
 import os
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -19,6 +20,8 @@ from .reports import (
 )
 from .types import Detection, TrackPoint
 from .video_export import export_annotated_video
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     from kalman_tracker import smooth_xy_sequence
@@ -284,8 +287,18 @@ def detect_spots(
     for idx, det in enumerate(detections, start=1):
         det.rank = idx
 
-    # Diagnostyka maski została usunięta z domyślnego przebiegu, żeby nie zaśmiecać konsoli
-    # przy przetwarzaniu każdej klatki wideo.
+    # Diagnostykę maski logujemy wyłącznie na poziomie DEBUG, aby domyślnie
+    # nie zaśmiecać konsoli przy przetwarzaniu każdej klatki.
+    if LOGGER.isEnabledFor(logging.DEBUG):
+        unique_vals = np.unique(mask)
+        LOGGER.debug(
+            "Mask stats: shape=%s dtype=%s nonzero=%s unique=%s unique_count=%s",
+            mask.shape,
+            mask.dtype,
+            cv2.countNonZero(mask),
+            unique_vals[:20],
+            len(unique_vals),
+        )
 
     return detections, mask, (x0, y0, w, h)
 
