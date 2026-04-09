@@ -49,8 +49,8 @@ class PostprocessConfig:
     """Konfiguracja obróbki po śledzeniu (np. wygładzanie Kalmana)."""
 
     use_kalman: bool = False
-    kalman_process_noise: float = 1e-2
-    kalman_measurement_noise: float = 1e-1
+    kalman_process_noise: float = 3e-2
+    kalman_measurement_noise: float = 5e-2
     draw_all_tracks: bool = False
 
 
