@@ -1,0 +1,25 @@
+
+// Przykład
+python track_spot.py track \
+  --video film.mp4 \
+  --multi_track \
+  --selection_mode stablest \
+  --all_tracks_csv wszystkie_trajektorie.csv \
+  --output_csv glowna_trajektoria.csv \
+  --trajectory_png trajektoria.png \
+  --report_csv raport.csv \
+  --report_pdf raport.pdf \
+  --display
+
+# Śledzenie wielu czerwonych plamek i wybór największej:
+python track_spot.py track \
+  --video film.mp4 \
+  --track_mode color \
+  --color_name red \
+  --multi_track \
+  --selection_mode largest \
+  --all_tracks_csv wszystkie.csv \
+  --output_csv glowna.csv
+
+# Interaktywny dobór parametrów
+python track_spot.py track --video film.mp4 --interactive --multi_track
