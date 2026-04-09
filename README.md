@@ -58,6 +58,13 @@ python track_luca.py track \
 python track_luca.py gui
 ```
 
+Możesz też uruchomić samo:
+
+```bash
+python track_luca.py
+```
+
+Wtedy program domyślnie przełączy się na tryb `gui` i spróbuje użyć pierwszego pliku `*.mp4` (najpierw z katalogu `video/`, potem z bieżącego katalogu).
 Domyślne wartości suwaków GUI są ładowane z pliku `config/gui_display.yaml`.
 Możesz też wskazać inny plik:
 
