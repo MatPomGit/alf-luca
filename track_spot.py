@@ -51,6 +51,7 @@ class Detection:
     bbox_y: int
     bbox_w: int
     bbox_h: int
+    rank: int = 0
 
 
 @dataclass
@@ -65,6 +66,7 @@ class TrackPoint:
     circularity: Optional[float]
     radius: Optional[float]
     track_id: Optional[int]
+    rank: Optional[int] = None
 
 
 # ----------------------------
@@ -323,7 +325,10 @@ def detect_spots(
         detections.append(d)
 
     detections.sort(key=lambda d: d.area, reverse=True)
-    return detections[:max_spots], mask, (x0, y0, w, h)
+    detections = detections[:max_spots]
+    for idx, det in enumerate(detections, start=1):
+        det.rank = idx
+    return detections, mask, (x0, y0, w, h)
 
 
 # ----------------------------
@@ -375,6 +380,7 @@ class SimpleMultiTracker:
                     circularity=det.circularity,
                     radius=det.radius,
                     track_id=tid,
+                    rank=det.rank,
                 )
             )
             assigned_tracks.add(tid)
@@ -396,6 +402,7 @@ class SimpleMultiTracker:
                         circularity=None,
                         radius=None,
                         track_id=tid,
+                        rank=None,
                     )
                 )
 
@@ -420,6 +427,7 @@ class SimpleMultiTracker:
                         circularity=det.circularity,
                         radius=det.radius,
                         track_id=tid,
+                        rank=det.rank,
                     )
                 ],
             }
@@ -506,12 +514,12 @@ def save_track_csv(points: Sequence[TrackPoint], csv_path: str):
         writer = csv.writer(f)
         writer.writerow([
             "frame_index", "time_sec", "detected", "x", "y", "area",
-            "perimeter", "circularity", "radius", "track_id"
+            "perimeter", "circularity", "radius", "track_id", "rank"
         ])
         for p in points:
             writer.writerow([
                 p.frame_index, p.time_sec, int(p.detected), p.x, p.y, p.area,
-                p.perimeter, p.circularity, p.radius, p.track_id
+                p.perimeter, p.circularity, p.radius, p.track_id, p.rank
             ])
 
 
@@ -520,13 +528,13 @@ def save_all_tracks_csv(track_histories: Dict[int, Dict], csv_path: str):
         writer = csv.writer(f)
         writer.writerow([
             "track_id", "frame_index", "time_sec", "detected", "x", "y", "area",
-            "perimeter", "circularity", "radius"
+            "perimeter", "circularity", "radius", "rank"
         ])
         for tid, data in sorted(track_histories.items()):
             for p in data["points"]:
                 writer.writerow([
                     tid, p.frame_index, p.time_sec, int(p.detected), p.x, p.y,
-                    p.area, p.perimeter, p.circularity, p.radius
+                    p.area, p.perimeter, p.circularity, p.radius, p.rank
                 ])
 
 
@@ -651,6 +659,7 @@ def load_tracking_csv(csv_path: str) -> List[TrackPoint]:
                     circularity=float(row["circularity"]) if row["circularity"] not in {"", "None"} else None,
                     radius=float(row["radius"]) if row["radius"] not in {"", "None"} else None,
                     track_id=int(row["track_id"]) if row["track_id"] not in {"", "None"} else None,
+                    rank=int(row["rank"]) if row.get("rank", "") not in {"", "None"} else None,
                 )
             )
     return points
@@ -705,6 +714,110 @@ def compare_csv(reference_csv: str, candidate_csv: str, output_csv: str, report_
         print(f"[OK] Zapisano raport PDF: {report_pdf}")
 
 
+
+
+def color_for_id(track_id: int) -> Tuple[int, int, int]:
+    palette = [
+        (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
+        (255, 0, 255), (0, 255, 255), (0, 165, 255), (180, 105, 255),
+        (128, 255, 0), (255, 128, 0), (128, 0, 255), (0, 128, 255),
+    ]
+    return palette[(track_id - 1) % len(palette)]
+
+
+def draw_polyline_history(frame: np.ndarray, points: Sequence[TrackPoint], color: Tuple[int, int, int], max_tail: int = 80):
+    hist = [(int(round(p.x)), int(round(p.y))) for p in points if p.detected and p.x is not None and p.y is not None]
+    hist = hist[-max_tail:]
+    if len(hist) >= 2:
+        pts = np.array(hist, dtype=np.int32).reshape((-1, 1, 2))
+        cv2.polylines(frame, [pts], False, color, 2, cv2.LINE_AA)
+
+
+def build_track_history_lookup(track_histories: Dict[int, Dict]) -> Dict[int, Dict[int, List[TrackPoint]]]:
+    lookup: Dict[int, Dict[int, List[TrackPoint]]] = {}
+    for tid, data in track_histories.items():
+        frame_map: Dict[int, List[TrackPoint]] = {}
+        running: List[TrackPoint] = []
+        for p in data["points"]:
+            running.append(p)
+            frame_map[p.frame_index] = list(running)
+        lookup[tid] = frame_map
+    return lookup
+
+
+def export_annotated_video(
+    input_video: str,
+    output_video: str,
+    track_histories: Dict[int, Dict],
+    main_track_id: Optional[int] = None,
+    draw_all_tracks: bool = True,
+    roi: Optional[str] = None,
+):
+    cap = cv2.VideoCapture(input_video)
+    if not cap.isOpened():
+        raise FileNotFoundError(f"Nie udało się otworzyć pliku video do eksportu: {input_video}")
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(output_video, fourcc, fps, (width, height))
+    if not writer.isOpened():
+        cap.release()
+        raise RuntimeError(f"Nie udało się otworzyć pliku wyjściowego video: {output_video}")
+
+    point_by_frame: Dict[int, List[TrackPoint]] = {}
+    for tid, data in track_histories.items():
+        for p in data["points"]:
+            point_by_frame.setdefault(p.frame_index, []).append(p)
+
+    history_lookup = build_track_history_lookup(track_histories)
+
+    frame_index = 0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+
+        if roi:
+            try:
+                x0, y0, w, h = parse_roi(roi, frame.shape)
+                cv2.rectangle(frame, (x0, y0), (x0 + w, y0 + h), (255, 255, 0), 1)
+            except Exception:
+                pass
+
+        current_points = point_by_frame.get(frame_index, [])
+        for p in current_points:
+            if p.track_id is None or not p.detected or p.x is None or p.y is None:
+                continue
+            if not draw_all_tracks and p.track_id != main_track_id:
+                continue
+
+            color = color_for_id(p.track_id)
+            if p.track_id == main_track_id:
+                color = (0, 255, 255)
+
+            hist = history_lookup.get(p.track_id, {}).get(frame_index, [])
+            draw_polyline_history(frame, hist, color, max_tail=120)
+
+            cx, cy = int(round(p.x)), int(round(p.y))
+            rr = max(4, int(round(p.radius or 4)))
+            cv2.circle(frame, (cx, cy), rr, color, 2, cv2.LINE_AA)
+
+            label = f"ID={p.track_id}"
+            if p.rank is not None:
+                label += f" R={p.rank}"
+            if p.track_id == main_track_id:
+                label += " MAIN"
+            cv2.putText(frame, label, (cx + 6, cy - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2, cv2.LINE_AA)
+
+        cv2.putText(frame, f"Frame: {frame_index}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+        writer.write(frame)
+        frame_index += 1
+
+    writer.release()
+    cap.release()
 # ----------------------------
 # Główne śledzenie
 # ----------------------------
@@ -775,6 +888,7 @@ def track_video(args):
                     circularity=best.circularity if best else None,
                     radius=best.radius if best else None,
                     track_id=1 if best else None,
+                    rank=best.rank if best else None,
                 )
             )
 
@@ -831,6 +945,17 @@ def track_video(args):
             save_track_report_pdf(args.report_pdf, metrics, "Raport jakości śledzenia", args.trajectory_png, extra)
             print(f"[OK] Zapisano raport PDF: {args.report_pdf}")
 
+        if args.annotated_video:
+            export_annotated_video(
+                input_video=args.video,
+                output_video=args.annotated_video,
+                track_histories=finished_tracks,
+                main_track_id=main_track_id,
+                draw_all_tracks=args.draw_all_tracks,
+                roi=args.roi,
+            )
+            print(f"[OK] Zapisano wideo wynikowe: {args.annotated_video}")
+
     else:
         save_track_csv(single_points, args.output_csv)
         print(f"[OK] Zapisano wyniki do: {args.output_csv}")
@@ -845,6 +970,18 @@ def track_video(args):
         if args.report_pdf:
             save_track_report_pdf(args.report_pdf, metrics, "Raport jakości śledzenia", args.trajectory_png)
             print(f"[OK] Zapisano raport PDF: {args.report_pdf}")
+
+        if args.annotated_video:
+            pseudo_tracks = {1: {"points": single_points}}
+            export_annotated_video(
+                input_video=args.video,
+                output_video=args.annotated_video,
+                track_histories=pseudo_tracks,
+                main_track_id=1,
+                draw_all_tracks=True,
+                roi=args.roi,
+            )
+            print(f"[OK] Zapisano wideo wynikowe: {args.annotated_video}")
 
 
 # ----------------------------
@@ -892,6 +1029,8 @@ def build_parser():
     p_track.add_argument("--max_missed", type=int, default=10, help="Maksymalna liczba zgubionych klatek dla toru")
     p_track.add_argument("--selection_mode", choices=["largest", "stablest", "longest"], default="stablest")
     p_track.add_argument("--all_tracks_csv", help="CSV ze wszystkimi trajektoriami")
+    p_track.add_argument("--annotated_video", help="Wyjściowy MP4 z narysowanymi trajektoriami")
+    p_track.add_argument("--draw_all_tracks", action="store_true", help="Na filmie wynikowym rysuj wszystkie trajektorie")
 
     p_cmp = subparsers.add_parser("compare", help="Porównanie dwóch CSV")
     p_cmp.add_argument("--reference", required=True, help="Referencyjny CSV")
