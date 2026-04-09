@@ -47,6 +47,23 @@ class PipelineConfig:
     kalman: KalmanConfig = field(default_factory=KalmanConfig)
 
 
+ANSI = {
+    "reset": "\033[0m",
+    "green": "\033[92m",
+    "yellow": "\033[93m",
+    "cyan": "\033[96m",
+    "magenta": "\033[95m",
+}
+
+
+def _log_stage(kind: str, message: str, color: str = "cyan") -> None:
+    """Drukuje kolorową informację o etapie pipeline'u."""
+    prefix = f"[{kind}]"
+    tone = ANSI.get(color, "")
+    reset = ANSI["reset"] if tone else ""
+    print(f"{tone}{prefix} {message}{reset}")
+
+
 def ask_value(prompt: str, cast, default):
     """Pobiera wartość od użytkownika z obsługą domyślnej odpowiedzi."""
     raw = input(f"{prompt} [{default}]: ").strip()
@@ -288,10 +305,21 @@ def track_video(args_or_config):
         interactive_track_config(args_or_config)
 
     config = _resolve_config(args_or_config)
+    _log_stage(
+        "OK",
+        (
+            f"Start analizy | mode={config.detector.track_mode}, "
+            f"multi_track={config.multi_track}, use_kalman={config.use_kalman}, "
+            f"selection_mode={config.selection_mode}"
+        ),
+        "magenta",
+    )
+    _log_stage("OK", f"Wczytywanie pliku do analizy: {config.video}", "yellow")
 
     camera_matrix = None
     dist_coeffs = None
     if config.calib_file:
+        _log_stage("OK", f"Wczytuję kalibrację: {config.calib_file}", "yellow")
         data = np.load(config.calib_file)
         camera_matrix = data.get("camera_matrix")
         dist_coeffs = data.get("dist_coeffs")
@@ -306,28 +334,29 @@ def track_video(args_or_config):
             process_noise=config.kalman.process_noise,
             measurement_noise=config.kalman.measurement_noise,
         )
+        _log_stage("OK", "Zastosowano filtrację Kalmana.", "yellow")
 
     save_track_csv(main_points, config.output_csv)
+    _log_stage("OK", f"Zapisano CSV pomiarowy: {config.output_csv}", "green")
 
     if config.multi_track:
         finished_tracks = result["finished_tracks"]
-        print(f"[OK] Zapisano główną trajektorię do: {config.output_csv}")
-        print(f"[OK] Wybrano track_id={main_track_id} jako trajektorię główną ({config.selection_mode})")
+        _log_stage("OK", f"Wybrano track_id={main_track_id} jako trajektorię główną ({config.selection_mode})", "green")
         if config.all_tracks_csv:
             save_all_tracks_csv(finished_tracks, config.all_tracks_csv)
-            print(f"[OK] Zapisano wszystkie trajektorie do: {config.all_tracks_csv}")
+            _log_stage("OK", f"Zapisano wszystkie trajektorie: {config.all_tracks_csv}", "green")
 
         metrics = metrics_from_points(main_points)
         extra = [f"selected_track_id: {main_track_id}", f"selection_mode: {config.selection_mode}"]
         if config.trajectory_png:
             generate_trajectory_png(main_points, config.trajectory_png, title=f"Trajektoria główna track_id={main_track_id}")
-            print(f"[OK] Zapisano wykres trajektorii: {config.trajectory_png}")
+            _log_stage("OK", f"Zapisano wykres trajektorii: {config.trajectory_png}", "green")
         if config.report_csv:
             save_metrics_csv(metrics, config.report_csv)
-            print(f"[OK] Zapisano raport CSV: {config.report_csv}")
+            _log_stage("OK", f"Zapisano raport CSV: {config.report_csv}", "green")
         if config.report_pdf:
             save_track_report_pdf(config.report_pdf, metrics, "Raport jakości śledzenia", config.trajectory_png, extra)
-            print(f"[OK] Zapisano raport PDF: {config.report_pdf}")
+            _log_stage("OK", f"Zapisano raport PDF: {config.report_pdf}", "green")
         if config.annotated_video:
             export_annotated_video(
                 input_video=config.video,
@@ -337,19 +366,18 @@ def track_video(args_or_config):
                 draw_all_tracks=config.draw_all_tracks,
                 roi=config.detector.roi,
             )
-            print(f"[OK] Zapisano wideo wynikowe: {config.annotated_video}")
+            _log_stage("OK", f"Zapisano wideo wynikowe: {config.annotated_video}", "green")
     else:
-        print(f"[OK] Zapisano wyniki do: {config.output_csv}")
         metrics = metrics_from_points(main_points)
         if config.trajectory_png:
             generate_trajectory_png(main_points, config.trajectory_png)
-            print(f"[OK] Zapisano wykres trajektorii: {config.trajectory_png}")
+            _log_stage("OK", f"Zapisano wykres trajektorii: {config.trajectory_png}", "green")
         if config.report_csv:
             save_metrics_csv(metrics, config.report_csv)
-            print(f"[OK] Zapisano raport CSV: {config.report_csv}")
+            _log_stage("OK", f"Zapisano raport CSV: {config.report_csv}", "green")
         if config.report_pdf:
             save_track_report_pdf(config.report_pdf, metrics, "Raport jakości śledzenia", config.trajectory_png)
-            print(f"[OK] Zapisano raport PDF: {config.report_pdf}")
+            _log_stage("OK", f"Zapisano raport PDF: {config.report_pdf}", "green")
         if config.annotated_video:
             pseudo_tracks = {1: {"points": main_points}}
             export_annotated_video(
@@ -360,7 +388,9 @@ def track_video(args_or_config):
                 draw_all_tracks=True,
                 roi=config.detector.roi,
             )
-            print(f"[OK] Zapisano wideo wynikowe: {config.annotated_video}")
+            _log_stage("OK", f"Zapisano wideo wynikowe: {config.annotated_video}", "green")
+
+    _log_stage("OK", "Przetwarzanie zakończone.", "magenta")
 
 
 def _build_parser() -> argparse.ArgumentParser:

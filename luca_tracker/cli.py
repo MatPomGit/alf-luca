@@ -1,8 +1,18 @@
 from __future__ import annotations
 import argparse
 import glob
+import os
+import time
 import sys
 from typing import List, Optional, Sequence
+
+from .io_paths import (
+    build_measurement_stem,
+    ensure_output_dir,
+    resolve_analysis_input,
+    resolve_output_path,
+    with_default,
+)
 
 DEFAULT_GUI_VIDEO_GLOB_PATTERNS = (
     "video/*.mp4",
@@ -21,6 +31,7 @@ DEFAULT_GUI_VIDEO_GLOB_PATTERNS = (
 DEFAULT_GUI_COLOR_NAMES = ["red", "green", "blue", "white", "yellow"]
 DEFAULT_GUI_SELECTION_MODES = ["largest", "stablest", "longest"]
 DEFAULT_MP4_QUALITY_TOOL_PATH = "tools/video_tool.py"
+DEFAULT_CONSOLE_CLOSE_TIMEOUT_SEC = 4
 
 
 def _load_gui_metadata() -> tuple[List[str], List[str], str]:
@@ -153,6 +164,8 @@ def main():
             parser.error("Dla trybu GUI wymagany jest plik wideo. Podaj --video lub umieść plik *.mp4/*.mkv/*.avi/*.mov/*.m4v/*.webm w katalogu ./video.")
 
     if args.command == "calibrate":
+        ensure_output_dir()
+        args.output_file = resolve_output_path(args.output_file)
         # Import lokalny ogranicza wymagania środowiskowe do użytego trybu.
         from .tracking import calibrate_camera
 
@@ -161,16 +174,53 @@ def main():
         from .config_model import load_run_config, run_config_to_pipeline_config
         from .tracking import track_video
 
+        ensure_output_dir()
         if args.config:
             run_config = load_run_config(args.config)
+            run_config.input.video = resolve_analysis_input(run_config.input.video)
+            base = build_measurement_stem(run_config.input.video)
+            output_csv_cfg = with_default(run_config.eval.output_csv, f"{base}_track.csv")
+            if output_csv_cfg == "tracking_results.csv":
+                output_csv_cfg = f"{base}_tracking_results.csv"
+            run_config.eval.output_csv = resolve_output_path(output_csv_cfg)
+            run_config.eval.trajectory_png = resolve_output_path(
+                with_default(run_config.eval.trajectory_png, f"{base}_trajectory.png")
+            )
+            run_config.eval.report_csv = resolve_output_path(with_default(run_config.eval.report_csv, f"{base}_report.csv"))
+            run_config.eval.report_pdf = resolve_output_path(with_default(run_config.eval.report_pdf, f"{base}_report.pdf"))
+            if run_config.eval.all_tracks_csv:
+                run_config.eval.all_tracks_csv = resolve_output_path(run_config.eval.all_tracks_csv)
+            if run_config.eval.annotated_video:
+                run_config.eval.annotated_video = resolve_output_path(run_config.eval.annotated_video)
             track_video(run_config_to_pipeline_config(run_config))
         else:
             if not args.video:
                 parser.error("Dla trybu track wymagany jest --video lub --config.")
+            args.video = resolve_analysis_input(args.video)
+            base = build_measurement_stem(args.video)
+            output_csv_value = args.output_csv
+            if output_csv_value == "tracking_results.csv":
+                output_csv_value = f"{base}_tracking_results.csv"
+            args.output_csv = resolve_output_path(output_csv_value)
+            args.trajectory_png = resolve_output_path(args.trajectory_png or f"{base}_trajectory.png")
+            args.report_csv = resolve_output_path(args.report_csv or f"{base}_report.csv")
+            args.report_pdf = resolve_output_path(args.report_pdf or f"{base}_report.pdf")
+            if args.all_tracks_csv:
+                args.all_tracks_csv = resolve_output_path(args.all_tracks_csv)
+            if args.annotated_video:
+                args.annotated_video = resolve_output_path(args.annotated_video)
+            if args.calib_file:
+                args.calib_file = resolve_analysis_input(args.calib_file)
             track_video(args)
     elif args.command == "compare":
         from .reports import compare_csv
 
+        ensure_output_dir()
+        args.reference = resolve_analysis_input(args.reference)
+        args.candidate = resolve_analysis_input(args.candidate)
+        args.output_csv = resolve_output_path(args.output_csv)
+        if args.report_pdf:
+            args.report_pdf = resolve_output_path(args.report_pdf)
         compare_csv(args.reference, args.candidate, args.output_csv, args.report_pdf)
     elif args.command == "gui":
         from .gui import GUIEnvironmentError, run_gui
@@ -182,3 +232,12 @@ def main():
             raise SystemExit(f"Błąd uruchamiania GUI: {exc}") from exc
     else:
         parser.print_help()
+
+    if args.command in {"calibrate", "track", "compare"}:
+        print("\n[OK] Analiza zakończona pomyślnie.")
+        print("\a\a", end="")
+        timeout_sec = int(os.getenv("LUCA_CONSOLE_CLOSE_TIMEOUT", DEFAULT_CONSOLE_CLOSE_TIMEOUT_SEC))
+        print(f"[INFO] Okno konsoli zostanie zamknięte za {timeout_sec} s.")
+        time.sleep(max(0, timeout_sec))
+        if os.name == "nt":
+            os.system("exit")
