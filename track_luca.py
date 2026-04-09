@@ -21,6 +21,7 @@ więc nie wymaga dodatkowych pakietów.
 from __future__ import annotations
 
 import argparse
+import time
 import csv
 import glob
 import math
@@ -360,6 +361,18 @@ def detect_spots(
     detections = detections[:max_spots]
     for idx, det in enumerate(detections, start=1):
         det.rank = idx
+
+    print("mask:", mask.shape, mask.dtype, "nonzero:", cv2.countNonZero(mask))
+    unique_vals = np.unique(mask)
+    print("mask unique:", unique_vals[:20], "count:", len(unique_vals))
+
+    # do debugowania
+    t0 = time.perf_counter()
+    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    t1 = time.perf_counter()
+    print(f"findContours took {t1 - t0:.3f}s, found {len(contours)} contours")
+    
+
     return detections, mask, (x0, y0, w, h)
 
 
