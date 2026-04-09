@@ -90,9 +90,32 @@ python track_luca.py gui --video luca_regal.mp4 --gui_config config/gui_display.
 GUI automatycznie wykrywa pliki wideo z folderu `video/` i pozwala przełączać je listą rozwijaną.
 Wyniki analizy z GUI są zapisywane do folderu `output/` jako pliki `*_gui_analysis.csv`.
 Wstępnie wybrany indeks pliku możesz ustawić przez `video_index` w `config/gui_display.yaml`.
-Przyciski `Auto params`, `Analyze`, `Pause`, `Multi track` i `Use calib` sterują przebiegiem analizy.
-Wybór `Speed` pozwala przyśpieszyć odtwarzanie: `x1.25`, `x1.5`, `x2`, `x3`, `x5`, `x10`, `x20`.
 Interfejs GUI (Kivy) pokazuje też panele statusu i podgląd przetworzonego obrazu, aby ułatwić pracę operatora.
+
+### Nowe funkcjonalności GUI
+
+- Okno aplikacji jest maksymalizowane przy starcie (jeśli wspiera to backend Kivy), a układ panelu dostosowuje się do zmiany rozmiaru okna.
+- Dodano więcej przycisków akcji:
+  - `Prev video` / `Next video` — szybkie przełączanie nagrania,
+  - `Restart video` — restart od początku bieżącego materiału.
+- Dodano pełny zestaw sterowania nagrywaniem/analityką:
+  - `START` — start przetwarzania,
+  - `PAUSE` — wstrzymanie,
+  - `RESUME` — wznowienie,
+  - `STOP` — zatrzymanie,
+  - `QUIT` — zamknięcie aplikacji GUI.
+- Działa nawigacja kółkiem myszy:
+  - kółko bez `SHIFT` przełącza aktywne pole,
+  - kółko z `SHIFT` zmienia wartość aktualnie wybranego pola.
+- Działa nawigacja klawiszami strzałek:
+  - `↑/↓` — wybór pól,
+  - `←/→` — zmiana wartości pola.
+- Dodatkowe skróty klawiszowe:
+  - `Space` — szybkie przełączanie START/PAUSE/RESUME,
+  - `S` — STOP,
+  - `M` — wypisanie komendy do narzędzia QA wideo.
+
+Wybór `Speed` pozwala przyśpieszyć odtwarzanie: `x1.25`, `x1.5`, `x2`, `x3`, `x5`, `x10`, `x20`.
 
 W GUI wyświetlany jest odnośnik do narzędzia QA wideo (`tools/video_tool.py`).
 Możesz też nacisnąć klawisz `m`, aby wypisać w konsoli gotową komendę uruchomienia narzędzia.
