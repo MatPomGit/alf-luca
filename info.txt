@@ -1,6 +1,6 @@
 
 // Przykład
-python track_spot.py track \
+python track_luca.py track \
   --video film.mp4 \
   --multi_track \
   --selection_mode stablest \
@@ -12,7 +12,7 @@ python track_spot.py track \
   --display
 
 # Śledzenie wielu czerwonych plamek i wybór największej:
-python track_spot.py track \
+python track_luca.py track \
   --video film.mp4 \
   --track_mode color \
   --color_name red \
@@ -22,4 +22,4 @@ python track_spot.py track \
   --output_csv glowna.csv
 
 # Interaktywny dobór parametrów
-python track_spot.py track --video film.mp4 --interactive --multi_track
+python track_luca.py track --video film.mp4 --interactive --multi_track

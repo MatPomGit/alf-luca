@@ -6,7 +6,7 @@ Osobny moduł z filtrem Kalmana do wygładzania i krótkoterminowego
 podtrzymywania trajektorii plamki światła.
 
 Użycie w programie głównym:
-    python track_spot.py track --video film.mp4 --use_kalman
+    python track_luca.py track --video film.mp4 --use_kalman
 
 Parametry:
 - process_noise: im większy, tym filtr szybciej reaguje na zmiany ruchu.
