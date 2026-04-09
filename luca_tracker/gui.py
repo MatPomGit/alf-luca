@@ -16,6 +16,7 @@ GUI_SELECTION_MODES = ["largest", "stablest", "longest"]
 GUI_COLOR_NAMES = list(COLOR_PRESETS.keys())
 GUI_SPEED_FACTORS = [1.0, 1.25, 1.5, 2.0, 3.0, 5.0, 10.0, 20.0]
 MP4_QUALITY_TOOL_PATH = "tools/video_tool.py"
+GUI_SLIDER_STEP = {"Threshold": 1, "Blur": 2, "Min area": 10, "Max area": 50, "Erode": 1, "Dilate": 1, "Max spots": 1}
 
 
 class GUIEnvironmentError(RuntimeError):
@@ -244,6 +245,9 @@ def run_gui(args):
             self.auto_params = bool(_cfg_value(gui_cfg, "auto_params", False))
             cfg_speed = float(_cfg_value(gui_cfg, "speed_factor", 1.0))
             self.speed_factor = cfg_speed if cfg_speed in GUI_SPEED_FACTORS else 1.0
+            self.capture_state = "idle"
+            self.nav_targets: List[Tuple[str, object]] = []
+            self.nav_index = 0
 
         def _open_video(self, idx: int):
             cap = cv2.VideoCapture(str(self.video_files[idx]))
@@ -294,6 +298,7 @@ def run_gui(args):
             self.tracker = SimpleMultiTracker(max_distance=args.max_distance, max_missed=args.max_missed)
 
         def _make_slider(self, label: str, min_v: float, max_v: float, value: float, step: float, on_change):
+            # Buduje jeden wiersz suwaka i zwraca referencję do kontrolki, aby obsłużyć nawigację klawiaturą/myszką.
             row = BoxLayout(orientation="horizontal", size_hint_y=None, height=44, spacing=8)
             lbl = Label(text=label, size_hint_x=0.36, halign="left", valign="middle")
             lbl.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
@@ -314,6 +319,89 @@ def run_gui(args):
             row.add_widget(value_lbl)
             return row, slider
 
+        def _set_capture_state(self, state: str):
+            # Centralny stan pracy nagrywania/analityki, wykorzystywany przez przyciski START/PAUSE/RESUME/STOP.
+            self.capture_state = state
+            self.analyze_enabled = state == "running"
+            self.paused = state == "paused"
+            self.btn_analyze.state = "down" if self.analyze_enabled else "normal"
+            self.btn_analyze.text = f"Analyze: {'ON' if self.analyze_enabled else 'OFF'}"
+            self.btn_start.disabled = state == "running"
+            self.btn_pause.disabled = state != "running"
+            self.btn_resume.disabled = state != "paused"
+            self.btn_stop.disabled = state in {"idle", "stopped"}
+            self.status_label.text = f"Stan nagrania: {state.upper()}"
+
+        def _step_selected_control(self, direction: int):
+            # Zmienia wartość aktualnie wybranego pola: spinnera, suwaka lub przełącznika.
+            if not self.nav_targets:
+                return
+            _, widget = self.nav_targets[self.nav_index]
+            if isinstance(widget, Spinner):
+                values = list(widget.values)
+                if not values:
+                    return
+                idx = values.index(widget.text) if widget.text in values else 0
+                widget.text = values[(idx + direction) % len(values)]
+                return
+            if isinstance(widget, Slider):
+                step = GUI_SLIDER_STEP.get(self.nav_targets[self.nav_index][0], widget.step or 1)
+                widget.value = _clip_slider(widget.value + direction * step, widget.min, widget.max)
+                return
+            if isinstance(widget, ToggleButton):
+                widget.state = "normal" if widget.state == "down" else "down"
+
+        def _move_focus(self, direction: int):
+            # Przesuwa fokus między polami GUI, aby dało się sterować samą klawiaturą.
+            if not self.nav_targets:
+                return
+            self.nav_index = (self.nav_index + direction) % len(self.nav_targets)
+            self._refresh_focus_styles()
+
+        def _refresh_focus_styles(self):
+            # Proste podświetlenie aktualnie wybranego pola nawigacji.
+            for idx, (_, widget) in enumerate(self.nav_targets):
+                if hasattr(widget, "background_color"):
+                    widget.background_color = (0.2, 0.55, 0.85, 1.0) if idx == self.nav_index else (1, 1, 1, 1)
+
+        def _start_capture(self, *_):
+            if self.capture_state in {"idle", "stopped"}:
+                self._restart_video()
+            self._set_capture_state("running")
+
+        def _pause_capture(self, *_):
+            if self.capture_state == "running":
+                self._set_capture_state("paused")
+
+        def _resume_capture(self, *_):
+            if self.capture_state == "paused":
+                self._set_capture_state("running")
+
+        def _stop_capture(self, *_):
+            if self.capture_state in {"running", "paused"}:
+                self._set_capture_state("stopped")
+
+        def _switch_video_by_delta(self, delta: int):
+            target = (self.current_video_idx + delta) % len(self.video_files)
+            self.video_spinner.text = self.video_files[target].name
+
+        def _on_window_resize(self, _, width: float, height: float):
+            # Dopasowuje panel kontrolek i obraz do nowego rozmiaru okna.
+            control_height = max(240, int(height * 0.36))
+            self.scroll_controls.height = control_height
+            self.image_widget.size_hint_y = 1
+
+        def _on_mouse_scroll(self, _, _x: float, _y: float, _sx: float, sy: float):
+            # Rolka myszy: bez SHIFT przełącza fokus, z SHIFT zmienia wartość aktywnej kontrolki.
+            if sy == 0:
+                return False
+            direction = 1 if sy > 0 else -1
+            if "shift" in Window.modifiers:
+                self._step_selected_control(direction)
+            else:
+                self._move_focus(-direction)
+            return True
+
         def build(self):
             # Dodatkowe zabezpieczenie: jeśli provider okna zniknie w trakcie startu,
             # pokażemy czytelny błąd zamiast trudnego do diagnozy wyjątku atrybutu.
@@ -323,6 +411,8 @@ def run_gui(args):
                 )
             Window.minimum_width = 1100
             Window.minimum_height = 720
+            if hasattr(Window, "maximize"):
+                Window.maximize()
 
             root = BoxLayout(orientation="vertical", spacing=8, padding=8)
             self.image_widget = Image(allow_stretch=True, keep_ratio=True)
@@ -357,6 +447,15 @@ def run_gui(args):
             row_top.add_widget(self.speed_spinner)
 
             controls.add_widget(row_top)
+            self.nav_targets.extend(
+                [
+                    ("Video", self.video_spinner),
+                    ("Mode", self.mode_spinner),
+                    ("Track", self.track_spinner),
+                    ("Color", self.color_spinner),
+                    ("Speed", self.speed_spinner),
+                ]
+            )
 
             slider_rows = [
                 ("Threshold", 0, 255, self.threshold, 1, lambda v: setattr(self, "threshold", int(v))),
@@ -372,15 +471,12 @@ def run_gui(args):
                 row, slider = self._make_slider(key, mn, mx, val, step, fn)
                 controls.add_widget(row)
                 self.slider_refs[key] = slider
+                self.nav_targets.append((key, slider))
 
             toggles = BoxLayout(orientation="horizontal", size_hint_y=None, height=44, spacing=8)
             self.btn_analyze = ToggleButton(text="Analyze: OFF", state="normal")
             self.btn_analyze.bind(state=self._toggle_analyze)
             toggles.add_widget(self.btn_analyze)
-
-            self.btn_pause = ToggleButton(text="Pause: OFF", state="normal")
-            self.btn_pause.bind(state=self._toggle_pause)
-            toggles.add_widget(self.btn_pause)
 
             self.btn_auto = ToggleButton(text="Auto params: ON" if self.auto_params else "Auto params: OFF", state="down" if self.auto_params else "normal")
             self.btn_auto.bind(state=self._toggle_auto)
@@ -394,8 +490,24 @@ def run_gui(args):
             self.btn_calib.bind(state=self._toggle_calib)
             toggles.add_widget(self.btn_calib)
             controls.add_widget(toggles)
+            self.nav_targets.extend(
+                [
+                    ("Analyze", self.btn_analyze),
+                    ("Auto", self.btn_auto),
+                    ("Multi", self.btn_multi),
+                    ("Calib", self.btn_calib),
+                ]
+            )
 
             row_action = BoxLayout(orientation="horizontal", size_hint_y=None, height=42, spacing=8)
+            btn_prev_video = Button(text="Prev video")
+            btn_prev_video.bind(on_press=lambda *_: self._switch_video_by_delta(-1))
+            row_action.add_widget(btn_prev_video)
+
+            btn_next_video = Button(text="Next video")
+            btn_next_video.bind(on_press=lambda *_: self._switch_video_by_delta(1))
+            row_action.add_widget(btn_next_video)
+
             btn_restart = Button(text="Restart video")
             btn_restart.bind(on_press=lambda *_: self._restart_video())
             row_action.add_widget(btn_restart)
@@ -409,16 +521,54 @@ def run_gui(args):
             )
             row_action.add_widget(btn_mp4)
             controls.add_widget(row_action)
+            self.nav_targets.extend(
+                [
+                    ("Prev video", btn_prev_video),
+                    ("Next video", btn_next_video),
+                    ("Restart video", btn_restart),
+                    ("QA video", btn_mp4),
+                ]
+            )
+
+            row_capture = BoxLayout(orientation="horizontal", size_hint_y=None, height=42, spacing=8)
+            self.btn_start = Button(text="START")
+            self.btn_start.bind(on_press=self._start_capture)
+            row_capture.add_widget(self.btn_start)
+
+            self.btn_pause = Button(text="PAUSE")
+            self.btn_pause.bind(on_press=self._pause_capture)
+            row_capture.add_widget(self.btn_pause)
+
+            self.btn_resume = Button(text="RESUME")
+            self.btn_resume.bind(on_press=self._resume_capture)
+            row_capture.add_widget(self.btn_resume)
+
+            self.btn_stop = Button(text="STOP")
+            self.btn_stop.bind(on_press=self._stop_capture)
+            row_capture.add_widget(self.btn_stop)
+            controls.add_widget(row_capture)
+            self.nav_targets.extend(
+                [
+                    ("START", self.btn_start),
+                    ("PAUSE", self.btn_pause),
+                    ("RESUME", self.btn_resume),
+                    ("STOP", self.btn_stop),
+                ]
+            )
 
             self.status_label = Label(text="Ready", size_hint_y=None, height=30, halign="left", valign="middle")
             self.status_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
             controls.add_widget(self.status_label)
 
-            scroll = ScrollView(size_hint=(1, None), size=(Window.width, 300), do_scroll_x=False)
-            scroll.add_widget(controls)
-            root.add_widget(scroll)
+            self.scroll_controls = ScrollView(size_hint=(1, None), size=(Window.width, 300), do_scroll_x=False)
+            self.scroll_controls.add_widget(controls)
+            root.add_widget(self.scroll_controls)
 
             Window.bind(on_key_down=self._on_key_down)
+            Window.bind(on_resize=self._on_window_resize)
+            Window.bind(on_mouse_scroll=self._on_mouse_scroll)
+            self._refresh_focus_styles()
+            self._set_capture_state("idle")
             Clock.schedule_interval(self._update_frame, float(np.clip(_cfg_value(gui_cfg, "wait_ms_running", 16), 1, 200)) / 1000.0)
             return root
 
@@ -430,12 +580,12 @@ def run_gui(args):
             self.speed_factor = float(selected.replace("x", ""))
 
         def _toggle_analyze(self, _, state: str):
-            self.analyze_enabled = state == "down"
-            self.btn_analyze.text = f"Analyze: {'ON' if self.analyze_enabled else 'OFF'}"
-
-        def _toggle_pause(self, _, state: str):
-            self.paused = state == "down"
-            self.btn_pause.text = f"Pause: {'ON' if self.paused else 'OFF'}"
+            desired = state == "down"
+            self.btn_analyze.text = f"Analyze: {'ON' if desired else 'OFF'}"
+            if desired and self.capture_state in {"idle", "stopped"}:
+                self._start_capture()
+            elif not desired and self.capture_state in {"running", "paused"}:
+                self._stop_capture()
 
         def _toggle_auto(self, _, state: str):
             self.auto_params = state == "down"
@@ -464,7 +614,21 @@ def run_gui(args):
                 self.stop()
                 return True
             if key == 32:
-                self.btn_pause.state = "normal" if self.btn_pause.state == "down" else "down"
+                if self.capture_state == "running":
+                    self._pause_capture()
+                elif self.capture_state == "paused":
+                    self._resume_capture()
+                else:
+                    self._start_capture()
+                return True
+            if key in (273, 274):
+                self._move_focus(-1 if key == 273 else 1)
+                return True
+            if key in (275, 276):
+                self._step_selected_control(1 if key == 275 else -1)
+                return True
+            if key == 115:
+                self._stop_capture()
                 return True
             if key == 109:
                 print(
@@ -500,7 +664,7 @@ def run_gui(args):
             self.slider_refs["Max spots"].value = self.max_spots
 
         def _update_frame(self, _dt):
-            should_advance = self.analyze_enabled and not self.paused
+            should_advance = self.capture_state == "running"
             if should_advance:
                 self.speed_accumulator += self.speed_factor
                 frames_to_advance = max(1, int(self.speed_accumulator))
