@@ -57,6 +57,9 @@ class Detection:
     bbox_y: int
     bbox_w: int
     bbox_h: int
+    ellipse_center: Optional[Tuple[float, float]] = None
+    ellipse_axes: Optional[Tuple[float, float]] = None
+    ellipse_angle: Optional[float] = None
     rank: int = 0
 
 
@@ -287,6 +290,14 @@ def contour_to_detection(contour, offset_x: int = 0, offset_y: int = 0) -> Optio
     circ = float(4.0 * math.pi * area / (perimeter * perimeter)) if perimeter > 0 else 0.0
     (_, _), radius = cv2.minEnclosingCircle(contour)
     bx, by, bw, bh = cv2.boundingRect(contour)
+    ellipse_center: Optional[Tuple[float, float]] = None
+    ellipse_axes: Optional[Tuple[float, float]] = None
+    ellipse_angle: Optional[float] = None
+    if len(contour) >= 5:
+        (ecx, ecy), (axis_a, axis_b), angle = cv2.fitEllipse(contour)
+        ellipse_center = (float(ecx + offset_x), float(ecy + offset_y))
+        ellipse_axes = (float(axis_a), float(axis_b))
+        ellipse_angle = float(angle)
     return Detection(
         x=x,
         y=y,
@@ -298,6 +309,9 @@ def contour_to_detection(contour, offset_x: int = 0, offset_y: int = 0) -> Optio
         bbox_y=by + offset_y,
         bbox_w=bw,
         bbox_h=bh,
+        ellipse_center=ellipse_center,
+        ellipse_axes=ellipse_axes,
+        ellipse_angle=ellipse_angle,
     )
 
 
@@ -888,7 +902,21 @@ def _draw_detection_layer(
     for d in detections:
         cx, cy = int(round(d.x)), int(round(d.y))
         cv2.circle(canvas, (cx, cy), max(4, int(round(d.radius))), color, 2, cv2.LINE_AA)
-        txt = f"{label_prefix}A={d.area:.0f} R={d.rank}"
+        if d.ellipse_center is not None and d.ellipse_axes is not None and d.ellipse_angle is not None:
+            ecx, ecy = d.ellipse_center
+            axis_a, axis_b = d.ellipse_axes
+            cv2.ellipse(
+                canvas,
+                (int(round(ecx)), int(round(ecy))),
+                (max(1, int(round(axis_a / 2.0))), max(1, int(round(axis_b / 2.0)))),
+                d.ellipse_angle,
+                0,
+                360,
+                (0, 200, 255),
+                2,
+                cv2.LINE_AA,
+            )
+        txt = f"{label_prefix}A={d.area:.0f} R={d.rank} XY=({d.x:.1f},{d.y:.1f})"
         cv2.putText(canvas, txt, (cx + 6, cy - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
     return canvas
 
@@ -917,26 +945,26 @@ def run_gui(args):
         camera_matrix = data.get("camera_matrix")
         dist_coeffs = data.get("dist_coeffs")
 
-    cv2.namedWindow("GUI Control", cv2.WINDOW_NORMAL)
-    cv2.namedWindow("GUI Preview", cv2.WINDOW_NORMAL)
+    cv2.namedWindow("GUI", cv2.WINDOW_NORMAL)
 
     def noop(_=None):
         return None
 
-    cv2.createTrackbar("Mode 0K 1P 2C", "GUI Control", 1, 2, noop)
-    cv2.createTrackbar("Track 0B 1C", "GUI Control", 0 if args.track_mode == "brightness" else 1, 1, noop)
-    cv2.createTrackbar("Color preset", "GUI Control", max(0, GUI_COLOR_NAMES.index(args.color_name)), len(GUI_COLOR_NAMES) - 1, noop)
-    cv2.createTrackbar("Threshold", "GUI Control", int(np.clip(args.threshold, 0, 255)), 255, noop)
-    cv2.createTrackbar("Blur", "GUI Control", int(np.clip(args.blur, 1, 31)), 31, noop)
-    cv2.createTrackbar("Min area", "GUI Control", int(np.clip(args.min_area, 0, 5000)), 5000, noop)
-    cv2.createTrackbar("Max area(0=off)", "GUI Control", int(np.clip(args.max_area, 0, 20000)), 20000, noop)
-    cv2.createTrackbar("Erode", "GUI Control", int(np.clip(args.erode_iter, 0, 10)), 10, noop)
-    cv2.createTrackbar("Dilate", "GUI Control", int(np.clip(args.dilate_iter, 0, 10)), 10, noop)
-    cv2.createTrackbar("Multi track", "GUI Control", 1 if args.multi_track else 0, 1, noop)
-    cv2.createTrackbar("Max spots", "GUI Control", int(np.clip(args.max_spots, 1, 20)), 20, noop)
-    cv2.createTrackbar("Selection", "GUI Control", max(0, GUI_SELECTION_MODES.index(args.selection_mode)), 2, noop)
-    cv2.createTrackbar("Use calib", "GUI Control", 1 if camera_matrix is not None else 0, 1, noop)
-    cv2.createTrackbar("Pause", "GUI Control", 0, 1, noop)
+    cv2.createTrackbar("Mode 0:K 1:P 2:C", "GUI", 1, 2, noop)
+    cv2.createTrackbar("Track 0:Bright 1:Color", "GUI", 0 if args.track_mode == "brightness" else 1, 1, noop)
+    cv2.createTrackbar("Color", "GUI", max(0, GUI_COLOR_NAMES.index(args.color_name)), len(GUI_COLOR_NAMES) - 1, noop)
+    cv2.createTrackbar("Threshold", "GUI", int(np.clip(args.threshold, 0, 255)), 255, noop)
+    cv2.createTrackbar("Blur", "GUI", int(np.clip(args.blur, 1, 31)), 31, noop)
+    cv2.createTrackbar("Min area", "GUI", int(np.clip(args.min_area, 0, 5000)), 5000, noop)
+    cv2.createTrackbar("Max area (0=off)", "GUI", int(np.clip(args.max_area, 0, 20000)), 20000, noop)
+    cv2.createTrackbar("Erode", "GUI", int(np.clip(args.erode_iter, 0, 10)), 10, noop)
+    cv2.createTrackbar("Dilate", "GUI", int(np.clip(args.dilate_iter, 0, 10)), 10, noop)
+    cv2.createTrackbar("Multi track", "GUI", 1 if args.multi_track else 0, 1, noop)
+    cv2.createTrackbar("Max spots", "GUI", int(np.clip(args.max_spots, 1, 20)), 20, noop)
+    cv2.createTrackbar("Selection", "GUI", max(0, GUI_SELECTION_MODES.index(args.selection_mode)), 2, noop)
+    cv2.createTrackbar("Use calib", "GUI", 1 if camera_matrix is not None else 0, 1, noop)
+    cv2.createTrackbar("Analyze (0=setup,1=run)", "GUI", 0, 1, noop)
+    cv2.createTrackbar("Pause", "GUI", 0, 1, noop)
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     frame_index = 0
@@ -945,8 +973,10 @@ def run_gui(args):
     completed_tracks: Dict[int, Dict] = {}
 
     while True:
-        paused = cv2.getTrackbarPos("Pause", "GUI Control") == 1
-        if not paused or last_frame is None:
+        analyze_enabled = cv2.getTrackbarPos("Analyze (0=setup,1=run)", "GUI") == 1
+        paused = cv2.getTrackbarPos("Pause", "GUI") == 1
+        should_advance = analyze_enabled and not paused
+        if should_advance or last_frame is None:
             ok, frame = cap.read()
             if not ok:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -955,22 +985,23 @@ def run_gui(args):
                 frame_index = 0
                 continue
             last_frame = frame
-            frame_index += 1
+            if analyze_enabled:
+                frame_index += 1
         frame = last_frame.copy()
 
-        mode = GUI_MODES[cv2.getTrackbarPos("Mode 0K 1P 2C", "GUI Control")]
-        track_mode = "color" if cv2.getTrackbarPos("Track 0B 1C", "GUI Control") == 1 else "brightness"
-        color_name = GUI_COLOR_NAMES[cv2.getTrackbarPos("Color preset", "GUI Control")]
-        threshold = cv2.getTrackbarPos("Threshold", "GUI Control")
-        blur = ensure_odd(max(1, cv2.getTrackbarPos("Blur", "GUI Control")))
-        min_area = float(cv2.getTrackbarPos("Min area", "GUI Control"))
-        max_area = float(cv2.getTrackbarPos("Max area(0=off)", "GUI Control"))
-        erode_iter = cv2.getTrackbarPos("Erode", "GUI Control")
-        dilate_iter = cv2.getTrackbarPos("Dilate", "GUI Control")
-        multi_track = cv2.getTrackbarPos("Multi track", "GUI Control") == 1
-        max_spots = max(1, cv2.getTrackbarPos("Max spots", "GUI Control"))
-        selection_mode = GUI_SELECTION_MODES[cv2.getTrackbarPos("Selection", "GUI Control")]
-        use_calib = cv2.getTrackbarPos("Use calib", "GUI Control") == 1 and camera_matrix is not None and dist_coeffs is not None
+        mode = GUI_MODES[cv2.getTrackbarPos("Mode 0:K 1:P 2:C", "GUI")]
+        track_mode = "color" if cv2.getTrackbarPos("Track 0:Bright 1:Color", "GUI") == 1 else "brightness"
+        color_name = GUI_COLOR_NAMES[cv2.getTrackbarPos("Color", "GUI")]
+        threshold = cv2.getTrackbarPos("Threshold", "GUI")
+        blur = ensure_odd(max(1, cv2.getTrackbarPos("Blur", "GUI")))
+        min_area = float(cv2.getTrackbarPos("Min area", "GUI"))
+        max_area = float(cv2.getTrackbarPos("Max area (0=off)", "GUI"))
+        erode_iter = cv2.getTrackbarPos("Erode", "GUI")
+        dilate_iter = cv2.getTrackbarPos("Dilate", "GUI")
+        multi_track = cv2.getTrackbarPos("Multi track", "GUI") == 1
+        max_spots = max(1, cv2.getTrackbarPos("Max spots", "GUI"))
+        selection_mode = GUI_SELECTION_MODES[cv2.getTrackbarPos("Selection", "GUI")]
+        use_calib = cv2.getTrackbarPos("Use calib", "GUI") == 1 and camera_matrix is not None and dist_coeffs is not None
 
         processed = frame
         if use_calib:
@@ -1004,7 +1035,7 @@ def run_gui(args):
                 cv2.putText(calibration_view, "Brak pliku kalibracji (--calib_file).", (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2, cv2.LINE_AA)
             preview = calibration_view
         elif mode == "processing":
-            if multi_track:
+            if multi_track and analyze_enabled:
                 ended = tracker.update(detections, frame_index, frame_index / fps)
                 completed_tracks.update(ended)
                 for tid, data in tracker.tracks.items():
@@ -1052,14 +1083,18 @@ def run_gui(args):
 
         cv2.putText(preview, f"Mode={mode} Track={track_mode} Color={color_name} Sel={selection_mode}", (10, preview.shape[0] - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
         cv2.putText(preview, f"MP4 QA tool: {args.mp4_tool_path} (klawisz: m)", (10, preview.shape[0] - 35), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 255, 200), 2, cv2.LINE_AA)
-        cv2.putText(preview, f"Frame={frame_index} Detections={len(detections)} Blur={blur} Thr={threshold}", (10, preview.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.imshow("GUI Preview", preview)
+        state = "RUN" if analyze_enabled else "SETUP"
+        cv2.putText(preview, f"State={state} Frame={frame_index} Detections={len(detections)} Blur={blur} Thr={threshold}", (10, preview.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+        if detections:
+            main_det = detections[0]
+            cv2.putText(preview, f"Pozycja punktu: x={main_det.x:.1f}px y={main_det.y:.1f}px", (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2, cv2.LINE_AA)
+        cv2.imshow("GUI", preview)
 
         key = cv2.waitKey(20 if paused else 1) & 0xFF
         if key == ord("q"):
             break
         if key == ord(" "):
-            cv2.setTrackbarPos("Pause", "GUI Control", 0 if paused else 1)
+            cv2.setTrackbarPos("Pause", "GUI", 0 if paused else 1)
         if key == ord("m"):
             print(
                 "[GUI] Narzędzie do weryfikacji MP4:",
