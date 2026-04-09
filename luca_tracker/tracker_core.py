@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
+
 from .types import Detection, TrackPoint
 
 
@@ -131,6 +133,130 @@ class SimpleMultiTracker:
         finished = dict(self.tracks)
         self.tracks = {}
         return finished
+
+
+class SingleObjectEKFTracker:
+    """Tracker pojedynczego obiektu oparty o rozszerzony filtr Kalmana.
+
+    Model stanu: [x, y, vx, vy].
+    Model pomiaru: [x, y].
+    Dla tego przypadku model jest liniowy, ale interfejs i kroki aktualizacji
+    pozostają zgodne z praktyką EKF (predykcja + linearyzacja Jacobianu).
+    """
+
+    def __init__(
+        self,
+        dt: float = 1.0,
+        process_noise: float = 1e-2,
+        measurement_noise: float = 5.0,
+        gating_distance: float = 60.0,
+        max_prediction_frames: int = 45,
+    ) -> None:
+        self.dt = float(max(dt, 1e-6))
+        self.gating_distance = float(max(1.0, gating_distance))
+        self.max_prediction_frames = int(max(1, max_prediction_frames))
+        self.process_noise = float(max(1e-8, process_noise))
+        self.measurement_noise = float(max(1e-8, measurement_noise))
+        self.state = np.zeros((4, 1), dtype=np.float64)
+        self.P = np.eye(4, dtype=np.float64) * 100.0
+        self.missed_frames = 0
+        self.initialized = False
+
+    def _transition(self) -> np.ndarray:
+        """Zwraca macierz przejścia modelu stałej prędkości."""
+        return np.array(
+            [
+                [1.0, 0.0, self.dt, 0.0],
+                [0.0, 1.0, 0.0, self.dt],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=np.float64,
+        )
+
+    def _process_covariance(self) -> np.ndarray:
+        """Buduje kowariancję procesu dla modelu stałej prędkości."""
+        dt2 = self.dt * self.dt
+        dt3 = dt2 * self.dt
+        dt4 = dt2 * dt2
+        q = self.process_noise
+        return q * np.array(
+            [
+                [dt4 / 4.0, 0.0, dt3 / 2.0, 0.0],
+                [0.0, dt4 / 4.0, 0.0, dt3 / 2.0],
+                [dt3 / 2.0, 0.0, dt2, 0.0],
+                [0.0, dt3 / 2.0, 0.0, dt2],
+            ],
+            dtype=np.float64,
+        )
+
+    @staticmethod
+    def _measurement_jacobian() -> np.ndarray:
+        """Jacobian modelu pomiaru h(x)=[x,y] dla kroku EKF."""
+        return np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]], dtype=np.float64)
+
+    def _predict_only(self) -> Tuple[float, float]:
+        """Wykonuje sam krok predykcji i zwraca przewidywane XY."""
+        F = self._transition()
+        Q = self._process_covariance()
+        self.state = F @ self.state
+        self.P = F @ self.P @ F.T + Q
+        return float(self.state[0, 0]), float(self.state[1, 0])
+
+    def _pick_measurement(self, detections: List[Detection], pred_xy: Tuple[float, float]) -> Optional[Detection]:
+        """Wybiera detekcję najbliższą predykcji, o ile mieści się w bramce dystansu."""
+        if not detections:
+            return None
+        px, py = pred_xy
+        nearest: Optional[Detection] = None
+        nearest_dist = float("inf")
+        for det in detections:
+            dist = math.hypot(float(det.x) - px, float(det.y) - py)
+            if dist < nearest_dist:
+                nearest = det
+                nearest_dist = dist
+        if nearest is None or nearest_dist > self.gating_distance:
+            return None
+        return nearest
+
+    def update(self, detections: List[Detection]) -> Dict[str, Optional[float]]:
+        """Aktualizuje tracker i zwraca aktualną pozycję niezależnie od obecności pomiaru."""
+        if not self.initialized:
+            if not detections:
+                return {"x": None, "y": None, "predicted_only": True, "matched": False}
+            # Inicjalizacja od największej plamki daje bardziej stabilny start toru.
+            seed = max(detections, key=lambda item: float(item.area))
+            self.state = np.array([[float(seed.x)], [float(seed.y)], [0.0], [0.0]], dtype=np.float64)
+            self.P = np.eye(4, dtype=np.float64) * 25.0
+            self.initialized = True
+            self.missed_frames = 0
+            return {"x": float(seed.x), "y": float(seed.y), "predicted_only": False, "matched": True}
+
+        pred_xy = self._predict_only()
+        matched = self._pick_measurement(detections, pred_xy)
+        if matched is None:
+            self.missed_frames += 1
+            if self.missed_frames > self.max_prediction_frames:
+                self.initialized = False
+                self.P = np.eye(4, dtype=np.float64) * 100.0
+            return {"x": pred_xy[0], "y": pred_xy[1], "predicted_only": True, "matched": False}
+
+        H = self._measurement_jacobian()
+        R = np.eye(2, dtype=np.float64) * self.measurement_noise
+        z = np.array([[float(matched.x)], [float(matched.y)]], dtype=np.float64)
+        innovation = z - (H @ self.state)
+        S = H @ self.P @ H.T + R
+        K = self.P @ H.T @ np.linalg.inv(S)
+        self.state = self.state + (K @ innovation)
+        I = np.eye(4, dtype=np.float64)
+        self.P = (I - K @ H) @ self.P
+        self.missed_frames = 0
+        return {
+            "x": float(self.state[0, 0]),
+            "y": float(self.state[1, 0]),
+            "predicted_only": False,
+            "matched": True,
+        }
 
 
 def choose_main_track(track_histories: Dict[int, Dict], selection_mode: str) -> Optional[int]:

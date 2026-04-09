@@ -22,7 +22,7 @@ from .detectors import (
 from .pipeline import calibrate_camera, track_video
 from .postprocess import apply_kalman_to_points
 from .reports import compute_track_metrics, generate_trajectory_png, metrics_from_points, save_all_tracks_csv, save_metrics_csv, save_track_csv, save_track_report_pdf
-from .tracker_core import SimpleMultiTracker, choose_main_track
+from .tracker_core import SimpleMultiTracker, SingleObjectEKFTracker, choose_main_track
 from .types import Detection, TrackPoint
 from .video_export import export_annotated_video
 
@@ -32,6 +32,7 @@ __all__ = [
     "Detection",
     "TrackPoint",
     "SimpleMultiTracker",
+    "SingleObjectEKFTracker",
     "apply_kalman_to_points",
     "build_mask",
     "calibrate_camera",

@@ -107,7 +107,7 @@ python track_luca.py calibrate \
 
 # 3) Użyj kalibracji podczas śledzenia
 python track_luca.py track \
-  --video video/luca_regal.mp4 \
+  --video video/sledzenie_plamki.mp4 \
   --track_mode brightness \
   --calib_file camera_calib.npz \
   --output_csv output/tracking_with_calib.csv \
@@ -132,7 +132,7 @@ python track_luca.py track \
 
 ```bash
 python track_luca.py track \
-  --video video/luca_regal.mp4 \
+  --video video/sledzenie_plamki.mp4 \
   --track_mode brightness \
   --roi 220,120,900,650 \
   --start_frame 0 \
@@ -157,7 +157,7 @@ python track_luca.py track \
 
 ```bash
 python track_luca.py track \
-  --video video/luca_regal.mp4 \
+  --video video/sledzenie_plamki.mp4 \
   --track_mode brightness \
   --calib_file camera_calib.npz \
   --output_csv output/tracking_calib.csv \
@@ -182,7 +182,7 @@ Każdy wariant obejmuje:
 ```bash
 # 1) Pomiar referencyjny
 python track_luca.py track \
-  --video video/luca_regal.mp4 \
+  --video video/sledzenie_plamki.mp4 \
   --track_mode brightness \
   --output_csv output/luca_regal_ref.csv \
   --trajectory_png output/luca_regal_ref.png \
@@ -191,22 +191,22 @@ python track_luca.py track \
 
 # 2) Pomiar porównawczy (inne parametry detekcji)
 python track_luca.py track \
-  --video video/luca_regal.mp4 \
+  --video video/sledzenie_plamki.mp4 \
   --track_mode brightness \
   --threshold 185 \
   --blur 9 \
   --min_area 8 \
-  --output_csv output/luca_regal_test.csv \
-  --trajectory_png output/luca_regal_test.png \
-  --report_csv output/luca_regal_test_report.csv \
-  --report_pdf output/luca_regal_test_report.pdf
+  --output_csv output/sledzenie_plamki_test.csv \
+  --trajectory_png output/sledzenie_plamki_test.png \
+  --report_csv output/sledzenie_plamki_test_report.csv \
+  --report_pdf output/sledzenie_plamki_test_report.pdf
 
 # 3) Porównanie dwóch wyników CSV
 python track_luca.py compare \
-  --reference output/luca_regal_ref.csv \
-  --candidate output/luca_regal_test.csv \
-  --output_csv output/luca_regal_diff.csv \
-  --report_pdf output/luca_regal_diff_report.pdf
+  --reference output/sledzenie_plamki_ref.csv \
+  --candidate output/sledzenie_plamki_test.csv \
+  --output_csv output/sledzenie_plamki_diff.csv \
+  --report_pdf output/sledzenie_plamki_diff_report.pdf
 ```
 
 #### Wariant B — z dodatkowym zapisem wideo z nałożonym śledzonym punktem
@@ -252,8 +252,8 @@ python track_luca.py compare \
 # 0) (Jednorazowo) kalibracja kamery
 python track_luca.py calibrate \
   --calib_dir ./images_calib \
-  --rows 6 \
-  --cols 9 \
+  --rows 7 \
+  --cols 10 \
   --square_size 1.0 \
   --output_file camera_calib.npz
 
