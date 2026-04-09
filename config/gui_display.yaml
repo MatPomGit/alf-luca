@@ -22,7 +22,7 @@ selection_mode: stablest
 
 # Stan GUI po uruchomieniu
 use_calib: true
-analyze: false
+analyze: true
 pause: false
 auto_params: false
 speed_factor: 1.0
