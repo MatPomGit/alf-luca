@@ -7,7 +7,7 @@ video_index: 0
 
 # brightness | color
 track_mode: brightness
-color_name: red
+color_name: green
 
 threshold: 200
 blur: 11
