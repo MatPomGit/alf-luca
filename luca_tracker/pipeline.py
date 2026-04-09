@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import math
 import os
 import sys
 import time
@@ -46,6 +47,9 @@ class PipelineConfig:
     annotated_video: Optional[str] = None
     draw_all_tracks: bool = False
     use_kalman: bool = False
+    pnp_object_points: Optional[str] = None
+    pnp_image_points: Optional[str] = None
+    pnp_world_plane_z: float = 0.0
     detector: DetectorConfig = field(default_factory=DetectorConfig)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     kalman: KalmanConfig = field(default_factory=KalmanConfig)
@@ -223,6 +227,9 @@ def _resolve_config(args_or_config) -> PipelineConfig:
         annotated_video=getattr(args_or_config, "annotated_video", None),
         draw_all_tracks=getattr(args_or_config, "draw_all_tracks", False),
         use_kalman=getattr(args_or_config, "use_kalman", False),
+        pnp_object_points=getattr(args_or_config, "pnp_object_points", None),
+        pnp_image_points=getattr(args_or_config, "pnp_image_points", None),
+        pnp_world_plane_z=getattr(args_or_config, "pnp_world_plane_z", 0.0),
         detector=DetectorConfig(
             track_mode=getattr(args_or_config, "track_mode", "brightness"),
             blur=getattr(args_or_config, "blur", 11),
@@ -247,6 +254,107 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             measurement_noise=getattr(args_or_config, "kalman_measurement_noise", 1e-1),
         ),
     )
+
+
+def _parse_point_series(raw_points: Optional[str], expected_dims: int, label: str) -> Optional[np.ndarray]:
+    """Parsuje listę punktów z formatu `x,y;...` lub `x,y,z;...` do tablicy numpy."""
+    if not raw_points:
+        return None
+    points: List[List[float]] = []
+    for chunk in raw_points.split(";"):
+        token = chunk.strip()
+        if not token:
+            continue
+        values = [float(value.strip()) for value in token.split(",") if value.strip()]
+        if len(values) != expected_dims:
+            raise ValueError(f"Nieprawidłowy format {label}. Oczekiwano {expected_dims} liczb na punkt.")
+        points.append(values)
+    if len(points) < 4:
+        raise ValueError(f"Do estymacji PnP potrzeba co najmniej 4 punktów referencyjnych: {label}.")
+    return np.asarray(points, dtype=np.float64)
+
+
+def _estimate_pnp_pose(
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+    object_points_raw: Optional[str],
+    image_points_raw: Optional[str],
+) -> Optional[tuple[np.ndarray, np.ndarray]]:
+    """Estymuje pozycję kamery metodą PnP na podstawie par punktów 3D-2D."""
+    object_points = _parse_point_series(object_points_raw, expected_dims=3, label="pnp_object_points")
+    image_points = _parse_point_series(image_points_raw, expected_dims=2, label="pnp_image_points")
+    if object_points is None or image_points is None:
+        return None
+    if len(object_points) != len(image_points):
+        raise ValueError("Liczba punktów `pnp_object_points` i `pnp_image_points` musi być identyczna.")
+
+    # Korzystamy z klasycznego solvePnP, bo jest stabilny dla zadań ogólnych.
+    ok, rvec, tvec = cv2.solvePnP(
+        objectPoints=object_points,
+        imagePoints=image_points,
+        cameraMatrix=camera_matrix,
+        distCoeffs=dist_coeffs,
+        flags=cv2.SOLVEPNP_ITERATIVE,
+    )
+    if not ok:
+        raise RuntimeError("Nie udało się wyznaczyć pozycji kamery metodą solvePnP.")
+    return rvec, tvec
+
+
+def _pixel_to_world_on_plane(
+    x_px: float,
+    y_px: float,
+    camera_matrix: np.ndarray,
+    rvec: np.ndarray,
+    tvec: np.ndarray,
+    plane_z: float,
+) -> Optional[tuple[float, float, float]]:
+    """Przelicza punkt 2D (piksel) na 3D przecinając promień z płaszczyzną `Z=plane_z`."""
+    rotation_matrix, _ = cv2.Rodrigues(rvec)
+    inv_rotation = np.linalg.inv(rotation_matrix)
+    inv_camera = np.linalg.inv(camera_matrix)
+
+    uv1 = np.array([[x_px], [y_px], [1.0]], dtype=np.float64)
+    direction_world = inv_rotation @ (inv_camera @ uv1)
+    camera_center_world = -inv_rotation @ tvec
+
+    denom = float(direction_world[2, 0])
+    if math.isclose(denom, 0.0, abs_tol=1e-12):
+        return None
+
+    scale = (plane_z - float(camera_center_world[2, 0])) / denom
+    point_world = camera_center_world + direction_world * scale
+    return float(point_world[0, 0]), float(point_world[1, 0]), float(point_world[2, 0])
+
+
+def _inject_world_coordinates(
+    points: List[TrackPoint],
+    camera_matrix: np.ndarray,
+    rvec: np.ndarray,
+    tvec: np.ndarray,
+    plane_z: float,
+) -> None:
+    """Wzbogaca listę punktów trajektorii o współrzędne świata XYZ wyznaczone z PnP."""
+    for point in points:
+        if not point.detected or point.x is None or point.y is None:
+            point.x_world = None
+            point.y_world = None
+            point.z_world = None
+            continue
+        world_point = _pixel_to_world_on_plane(
+            x_px=point.x,
+            y_px=point.y,
+            camera_matrix=camera_matrix,
+            rvec=rvec,
+            tvec=tvec,
+            plane_z=plane_z,
+        )
+        if world_point is None:
+            point.x_world = None
+            point.y_world = None
+            point.z_world = None
+            continue
+        point.x_world, point.y_world, point.z_world = world_point
 
 
 def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -> Dict[str, Any]:
@@ -397,6 +505,9 @@ def track_video(args_or_config):
             "detector": vars(config.detector),
             "tracker": vars(config.tracker),
             "kalman": vars(config.kalman),
+            "pnp_object_points": config.pnp_object_points,
+            "pnp_image_points": config.pnp_image_points,
+            "pnp_world_plane_z": config.pnp_world_plane_z,
         },
     )
 
@@ -407,6 +518,23 @@ def track_video(args_or_config):
             measurement_noise=config.kalman.measurement_noise,
         )
         _log_stage("OK", "Zastosowano filtrację Kalmana.", "yellow")
+
+    if camera_matrix is not None and dist_coeffs is not None:
+        pnp_pose = _estimate_pnp_pose(
+            camera_matrix=camera_matrix,
+            dist_coeffs=dist_coeffs,
+            object_points_raw=config.pnp_object_points,
+            image_points_raw=config.pnp_image_points,
+        )
+        if pnp_pose:
+            rvec, tvec = pnp_pose
+            _inject_world_coordinates(main_points, camera_matrix, rvec, tvec, config.pnp_world_plane_z)
+            if config.multi_track:
+                for track_data in result["finished_tracks"].values():
+                    _inject_world_coordinates(track_data["points"], camera_matrix, rvec, tvec, config.pnp_world_plane_z)
+            _log_stage("OK", "Dodano współrzędne świata XYZ wyznaczone metodą PnP.", "yellow")
+        elif config.pnp_object_points or config.pnp_image_points:
+            _log_stage("INFO", "Pominięto XYZ: brakuje pełnego zestawu punktów PnP.", "yellow")
 
     save_track_csv(main_points, config.output_csv, run_metadata=run_metadata)
     _log_stage("OK", f"Zapisano CSV pomiarowy: {config.output_csv}", "green")
@@ -487,6 +615,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_distance", type=float, default=40.0)
     parser.add_argument("--max_missed", type=int, default=10)
     parser.add_argument("--selection_mode", choices=["largest", "stablest", "longest"], default="stablest")
+    parser.add_argument("--pnp_object_points", help="Punkty 3D świata: X,Y,Z;X,Y,Z;... (min. 4)")
+    parser.add_argument("--pnp_image_points", help="Punkty 2D obrazu: x,y;x,y;... (min. 4)")
+    parser.add_argument("--pnp_world_plane_z", type=float, default=0.0, help="Płaszczyzna świata dla rekonstrukcji XYZ (domyślnie Z=0)")
     return parser
 
 

@@ -97,6 +97,9 @@ def build_parser():
     p_track.add_argument("--use_kalman", action="store_true", help="Wygładzanie trajektorii filtrem Kalmana")
     p_track.add_argument("--kalman_process_noise", type=float, default=1e-2, help="Szum procesu dla filtru Kalmana")
     p_track.add_argument("--kalman_measurement_noise", type=float, default=1e-1, help="Szum pomiaru dla filtru Kalmana")
+    p_track.add_argument("--pnp_object_points", help="Punkty 3D świata dla PnP w formacie X,Y,Z;X,Y,Z;... (min. 4)")
+    p_track.add_argument("--pnp_image_points", help="Punkty 2D obrazu dla PnP w formacie x,y;x,y;... (min. 4)")
+    p_track.add_argument("--pnp_world_plane_z", type=float, default=0.0, help="Wysokość płaszczyzny świata Z dla rekonstrukcji XYZ")
 
     p_cmp = subparsers.add_parser("compare", help="Porównanie dwóch CSV")
     p_cmp.add_argument("--reference", required=True, help="Referencyjny CSV")
