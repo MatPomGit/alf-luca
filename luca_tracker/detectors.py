@@ -181,6 +181,36 @@ def contour_to_detection(contour, offset_x: int = 0, offset_y: int = 0) -> Optio
     )
 
 
+def build_mask(
+    frame: np.ndarray,
+    track_mode: str = "brightness",
+    blur: int = 11,
+    threshold: int = 200,
+    erode_iter: int = 2,
+    dilate_iter: int = 4,
+    color_name: str = "red",
+    hsv_lower: Optional[str] = None,
+    hsv_upper: Optional[str] = None,
+) -> np.ndarray:
+    """Buduje maskę binarną dla pełnej klatki.
+
+    Funkcja zachowuje zgodność wsteczną ze starszym API modułu `tracking`,
+    które oczekiwało eksportu `build_mask` z `luca_tracker.detectors`.
+    """
+    detector_cls = _resolve_detector_class(track_mode)
+    detector_config = DetectorConfig(
+        track_mode=track_mode,
+        blur=blur,
+        threshold=threshold,
+        erode_iter=erode_iter,
+        dilate_iter=dilate_iter,
+        color_name=color_name,
+        hsv_lower=hsv_lower,
+        hsv_upper=hsv_upper,
+    )
+    return detector_cls(detector_config).detect_mask(frame)
+
+
 def detect_spots(
     frame: np.ndarray,
     track_mode: str,
