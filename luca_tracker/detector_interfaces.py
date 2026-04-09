@@ -15,6 +15,8 @@ class DetectorConfig:
     threshold: int = 200
     erode_iter: int = 2
     dilate_iter: int = 4
+    opening_kernel: int = 0
+    closing_kernel: int = 0
     min_area: float = 10.0
     max_area: float = 0.0
     max_spots: int = 10
@@ -22,6 +24,9 @@ class DetectorConfig:
     hsv_lower: Optional[str] = None
     hsv_upper: Optional[str] = None
     roi: Optional[str] = None
+    temporal_stabilization: bool = False
+    temporal_window: int = 3
+    temporal_mode: str = "majority"
 
 
 @runtime_checkable

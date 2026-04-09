@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from .detector_registry import available_detector_names
-from .detectors import DetectorConfig, detect_spots_with_config
+from .detectors import DetectorConfig, TemporalMaskFilter, detect_spots_with_config
 from .postprocess import KalmanConfig, apply_kalman_to_points
 from .reports import (
     build_run_metadata,
@@ -140,6 +140,11 @@ def interactive_track_config(args):
     args.max_area = ask_value("Maksymalne pole plamki (0 = brak limitu)", float, args.max_area)
     args.erode_iter = ask_value("Liczba erozji", int, args.erode_iter)
     args.dilate_iter = ask_value("Liczba dylatacji", int, args.dilate_iter)
+    args.opening_kernel = ask_value("Rozmiar opening (0 = wyłączone)", int, args.opening_kernel)
+    args.closing_kernel = ask_value("Rozmiar closing (0 = wyłączone)", int, args.closing_kernel)
+    args.temporal_stabilization = ask_bool("Włączyć stabilizację temporalną maski?", args.temporal_stabilization)
+    args.temporal_window = ask_value("Rozmiar bufora temporalnego (klatki)", int, args.temporal_window)
+    args.temporal_mode = ask_value("Tryb stabilizacji temporalnej (majority/and)", str, args.temporal_mode)
     args.multi_track = ask_bool("Śledzić wiele plamek jednocześnie?", args.multi_track)
     args.max_spots = ask_value("Maksymalna liczba plamek na klatkę", int, args.max_spots)
     args.selection_mode = ask_value(
@@ -236,6 +241,8 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             threshold=getattr(args_or_config, "threshold", 200),
             erode_iter=getattr(args_or_config, "erode_iter", 2),
             dilate_iter=getattr(args_or_config, "dilate_iter", 4),
+            opening_kernel=getattr(args_or_config, "opening_kernel", 0),
+            closing_kernel=getattr(args_or_config, "closing_kernel", 0),
             min_area=getattr(args_or_config, "min_area", 10.0),
             max_area=getattr(args_or_config, "max_area", 0.0),
             max_spots=getattr(args_or_config, "max_spots", 10),
@@ -243,6 +250,9 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             hsv_lower=getattr(args_or_config, "hsv_lower", None),
             hsv_upper=getattr(args_or_config, "hsv_upper", None),
             roi=getattr(args_or_config, "roi", None),
+            temporal_stabilization=getattr(args_or_config, "temporal_stabilization", False),
+            temporal_window=getattr(args_or_config, "temporal_window", 3),
+            temporal_mode=getattr(args_or_config, "temporal_mode", "majority"),
         ),
         tracker=TrackerConfig(
             max_distance=getattr(args_or_config, "max_distance", 40.0),
@@ -380,6 +390,15 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
     single_points: List[TrackPoint] = []
 
     frame_index = 0
+    temporal_filter: Optional[TemporalMaskFilter] = None
+    if config.detector.temporal_stabilization:
+        temporal_filter = TemporalMaskFilter(
+            window_size=config.detector.temporal_window,
+            mode=config.detector.temporal_mode,
+        )
+        # Stabilizacja temporalna obniża migotanie maski, ale kosztem opóźnienia reakcji o kilka klatek.
+        _log_stage("INFO", "Włączono filtr temporalny maski (mniej szumu, większa bezwładność).", "yellow")
+
     while True:
         ok, frame = cap.read()
         if not ok:
@@ -388,7 +407,7 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
         if camera_matrix is not None and dist_coeffs is not None:
             frame = cv2.undistort(frame, camera_matrix, dist_coeffs)
 
-        detections, mask, roi_box = detect_spots_with_config(frame, config.detector)
+        detections, mask, roi_box = detect_spots_with_config(frame, config.detector, temporal_filter=temporal_filter)
         time_sec = frame_index / fps
 
         if config.multi_track:
@@ -606,10 +625,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_area", type=float, default=0.0)
     parser.add_argument("--erode_iter", type=int, default=2)
     parser.add_argument("--dilate_iter", type=int, default=4)
+    parser.add_argument("--opening_kernel", type=int, default=0, help="Rozmiar jądra opening (0/1 = wyłączone)")
+    parser.add_argument("--closing_kernel", type=int, default=0, help="Rozmiar jądra closing (0/1 = wyłączone)")
     parser.add_argument("--color_name", default="red")
     parser.add_argument("--hsv_lower")
     parser.add_argument("--hsv_upper")
     parser.add_argument("--roi")
+    parser.add_argument("--temporal_stabilization", action="store_true", help="Włącza filtr temporalny maski")
+    parser.add_argument("--temporal_window", type=int, default=3, help="Rozmiar bufora temporalnego (liczba klatek)")
+    parser.add_argument("--temporal_mode", choices=["majority", "and"], default="majority")
     parser.add_argument("--multi_track", action="store_true")
     parser.add_argument("--max_spots", type=int, default=10)
     parser.add_argument("--max_distance", type=float, default=40.0)
