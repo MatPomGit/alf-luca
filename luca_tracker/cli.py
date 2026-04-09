@@ -5,7 +5,7 @@ import glob
 import sys
 from typing import List, Optional, Sequence
 
-DEFAULT_GUI_VIDEO_GLOB_PATTERNS = ("video/*.mp4", "*.mp4")
+DEFAULT_GUI_VIDEO_GLOB_PATTERNS = ("video/*.mp4", "video/*.mkv", "*.mp4", "*.mkv")
 DEFAULT_GUI_COLOR_NAMES = ["red", "green", "blue", "white", "yellow"]
 DEFAULT_GUI_SELECTION_MODES = ["largest", "stablest", "longest"]
 DEFAULT_MP4_QUALITY_TOOL_PATH = "tools/video_tool.py"
@@ -30,7 +30,7 @@ def build_parser():
     # Metadane GUI ładujemy leniwie, aby parser CLI działał nawet bez OpenCV/Kivy.
     gui_colors, gui_selection_modes, mp4_tool_path = _load_gui_metadata()
     parser = argparse.ArgumentParser(
-        description="Śledzenie jasnej lub kolorowej plamki światła w video MP4. Obsługuje także opcjonalne wygładzanie filtrem Kalmana."
+        description="Śledzenie jasnej lub kolorowej plamki światła w video (MP4/MKV). Obsługuje także opcjonalne wygładzanie filtrem Kalmana."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -42,7 +42,7 @@ def build_parser():
     p_cal.add_argument("--output_file", default="camera_calib.npz", help="Plik wynikowy .npz")
 
     p_track = subparsers.add_parser("track", help="Śledzenie plamki")
-    p_track.add_argument("--video", required=True, help="Plik wejściowy MP4")
+    p_track.add_argument("--video", required=True, help="Plik wejściowy wideo (np. MP4/MKV)")
     p_track.add_argument("--calib_file", help="Plik kalibracji .npz")
     p_track.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
     p_track.add_argument("--threshold", type=int, default=200, help="Próg jasności")
@@ -67,7 +67,7 @@ def build_parser():
     p_track.add_argument("--max_missed", type=int, default=10, help="Maksymalna liczba zgubionych klatek dla toru")
     p_track.add_argument("--selection_mode", choices=["largest", "stablest", "longest"], default="stablest")
     p_track.add_argument("--all_tracks_csv", help="CSV ze wszystkimi trajektoriami")
-    p_track.add_argument("--annotated_video", help="Wyjściowy MP4 z narysowanymi trajektoriami")
+    p_track.add_argument("--annotated_video", help="Wyjściowy plik wideo z narysowanymi trajektoriami (zalecane .mp4)")
     p_track.add_argument("--draw_all_tracks", action="store_true", help="Na filmie wynikowym rysuj wszystkie trajektorie")
     p_track.add_argument("--use_kalman", action="store_true", help="Wygładzanie trajektorii filtrem Kalmana")
     p_track.add_argument("--kalman_process_noise", type=float, default=1e-2, help="Szum procesu dla filtru Kalmana")
@@ -80,7 +80,7 @@ def build_parser():
     p_cmp.add_argument("--report_pdf", help="Opcjonalny raport PDF")
 
     p_gui = subparsers.add_parser("gui", help="GUI do strojenia parametrów i podglądu w czasie rzeczywistym")
-    p_gui.add_argument("--video", help="Opcjonalny plik wejściowy MP4 (domyślnie ładowane są pliki z folderu video/)")
+    p_gui.add_argument("--video", help="Opcjonalny plik wejściowy wideo (np. MP4/MKV; domyślnie ładowane są pliki z folderu video/)")
     p_gui.add_argument("--calib_file", help="Plik kalibracji .npz (opcjonalnie)")
     p_gui.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
     p_gui.add_argument("--threshold", type=int, default=200)
@@ -119,7 +119,7 @@ def normalize_legacy_argv(argv: Sequence[str]) -> List[str]:
 
 
 def pick_default_gui_video() -> Optional[str]:
-    # Szukamy domyślnego pliku MP4 według kilku wzorców, w stałej kolejności.
+    # Szukamy domyślnego pliku wideo (najpierw MP4, potem MKV) według kilku wzorców, w stałej kolejności.
     for pattern in DEFAULT_GUI_VIDEO_GLOB_PATTERNS:
         matches = sorted(glob.glob(pattern))
         if matches:
@@ -136,7 +136,7 @@ def main():
     if args.command == "gui" and not getattr(args, "video", None):
         args.video = pick_default_gui_video()
         if not args.video:
-            parser.error("Dla trybu GUI wymagany jest plik MP4. Podaj --video lub umieść plik *.mp4 w katalogu ./video.")
+            parser.error("Dla trybu GUI wymagany jest plik wideo. Podaj --video lub umieść plik *.mp4 albo *.mkv w katalogu ./video.")
 
     if args.command == "calibrate":
         # Import lokalny ogranicza wymagania środowiskowe do użytego trybu.

@@ -1,6 +1,6 @@
 # alf-luca
 
-Narzędzia do analizy materiałów wideo (MP4), kalibracji kamery i śledzenia plamki światła w nagraniach.
+Narzędzia do analizy materiałów wideo (MP4/MKV), kalibracji kamery i śledzenia plamki światła w nagraniach.
 
 ## Zawartość repozytorium
 
@@ -10,7 +10,7 @@ Narzędzia do analizy materiałów wideo (MP4), kalibracji kamery i śledzenia p
   - `compare` (porównanie CSV),
   - `gui` (interaktywne strojenie parametrów).
 - `kalman_tracker.py` — moduł filtru Kalmana do wygładzania trajektorii.
-- `tools/video_tool.py` — narzędzie do weryfikacji jakości MP4 i opcjonalnej naprawy/normalizacji.
+- `tools/video_tool.py` — narzędzie do weryfikacji jakości MP4/MKV i opcjonalnej naprawy/normalizacji.
 - `config/` — pliki konfiguracyjne i przykładowe dane kalibracyjne.
   - `config/gui_display.yaml` — domyślne wartości suwaków i stanu okna trybu `gui`.
 
@@ -68,7 +68,7 @@ Możesz też uruchomić samo:
 python track_luca.py
 ```
 
-Wtedy program domyślnie przełączy się na tryb `gui` i spróbuje użyć pierwszego pliku `*.mp4` (najpierw z katalogu `video/`, potem z bieżącego katalogu).
+Wtedy program domyślnie przełączy się na tryb `gui` i spróbuje użyć pierwszego pliku `*.mp4` lub `*.mkv` (najpierw z katalogu `video/`, potem z bieżącego katalogu).
 Domyślne wartości suwaków GUI są ładowane z pliku `config/gui_display.yaml`.
 Możesz też wskazać inny plik:
 
@@ -97,7 +97,7 @@ Możesz też nacisnąć klawisz `m`, aby wypisać w konsoli gotową komendę uru
   2) czy masz zainstalowane wymagane biblioteki (`opencv-python`, `numpy`, `matplotlib`),
   3) czy używasz wspieranej wersji Python 3.10+.
 
-### 4. Weryfikacja jakości MP4 (bez modyfikacji pliku)
+### 4. Weryfikacja jakości MP4/MKV (bez modyfikacji pliku)
 
 ```bash
 python tools/video_tool.py \
@@ -106,7 +106,7 @@ python tools/video_tool.py \
   --report-json report_mp4.json
 ```
 
-### 5. Naprawa/normalizacja MP4 z ustawieniem bitrate i FPS
+### 5. Naprawa/normalizacja MP4/MKV z ustawieniem bitrate i FPS
 
 ```bash
 python tools/video_tool.py \
@@ -118,7 +118,7 @@ python tools/video_tool.py \
   --preset medium
 ```
 
-### 6. Usunięcie dźwięku z pliku MP4
+### 6. Usunięcie dźwięku z pliku MP4/MKV
 
 ```bash
 python tools/video_tool.py \
@@ -149,7 +149,7 @@ Programy mogą generować m.in.:
 - PDF z raportem (`--report_pdf`),
 - PNG wykresu trajektorii (`--trajectory_png`),
 - MP4 z naniesionymi trajektoriami (`--annotated_video`),
-- JSON z analizą jakości MP4 (`--report-json`).
+- JSON z analizą jakości MP4/MKV (`--report-json`).
 
 ## Uwagi
 
