@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import List, Optional, Sequence, Tuple
 
-import cv2
+import cv2  # ty:ignore[unresolved-import]
 import numpy as np
 
 
