@@ -12,6 +12,7 @@ Narzędzia do analizy materiałów wideo (MP4), kalibracji kamery i śledzenia p
 - `kalman_tracker.py` — moduł filtru Kalmana do wygładzania trajektorii.
 - `tools/video_tool.py` — narzędzie do weryfikacji jakości MP4 i opcjonalnej naprawy/normalizacji.
 - `config/` — pliki konfiguracyjne i przykładowe dane kalibracyjne.
+  - `config/gui_display.yaml` — domyślne wartości suwaków i stanu okna trybu `gui`.
 
 ## Wymagania
 
@@ -54,8 +55,22 @@ python track_luca.py track \
 ### 3. GUI do strojenia parametrów
 
 ```bash
-python track_luca.py gui --video film.mp4
+python track_luca.py gui
 ```
+
+Domyślne wartości suwaków GUI są ładowane z pliku `config/gui_display.yaml`.
+Możesz też wskazać inny plik:
+
+```bash
+python track_luca.py gui --video film.mp4 --gui_config config/gui_display.yaml
+```
+
+GUI automatycznie wykrywa pliki wideo z folderu `video/` i pozwala przełączać je suwakiem `Video index`.
+Wyniki analizy z GUI są zapisywane do folderu `output/` jako pliki `*_gui_analysis.csv`.
+Wstępnie wybrany indeks pliku możesz ustawić przez `video_index` w `config/gui_display.yaml`.
+Suwak `Auto params` ustawia wszystkie parametry detekcji w tryb automatyczny.
+Suwak `Speed` pozwala przyśpieszyć odtwarzanie: `x1.25`, `x1.5`, `x2`, `x3`, `x5`, `x10`, `x20`.
+Interfejs GUI pokazuje też panele statusu (stan analizy, aktywne ustawienia, skróty klawiaturowe), aby ułatwić pracę operatora.
 
 W GUI wyświetlany jest odnośnik do narzędzia QA MP4 (`tools/video_tool.py`).
 Możesz też nacisnąć klawisz `m`, aby wypisać w konsoli gotową komendę uruchomienia narzędzia.
