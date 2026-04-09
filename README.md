@@ -82,6 +82,17 @@ Interfejs GUI pokazuje też panele statusu (stan analizy, aktywne ustawienia, sk
 W GUI wyświetlany jest odnośnik do narzędzia QA MP4 (`tools/video_tool.py`).
 Możesz też nacisnąć klawisz `m`, aby wypisać w konsoli gotową komendę uruchomienia narzędzia.
 
+## Rozwiązywanie problemów
+
+- Jeśli pojawiał się błąd:
+  `ImportError: cannot import name 'parse_roi' from partially initialized module ...`
+  był on związany z cyklicznym importem między modułami `tracking` i `video_export`.
+  W aktualnej wersji repo problem został usunięty.
+- W razie problemów z uruchomieniem sprawdź:
+  1) czy uruchamiasz skrypt z katalogu repo (`python track_luca.py ...`),
+  2) czy masz zainstalowane wymagane biblioteki (`opencv-python`, `numpy`, `matplotlib`),
+  3) czy używasz wspieranej wersji Python 3.10+.
+
 ### 4. Weryfikacja jakości MP4 (bez modyfikacji pliku)
 
 ```bash
