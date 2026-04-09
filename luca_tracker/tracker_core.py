@@ -210,7 +210,7 @@ def run_tracker_with_config(
 
 def _build_parser() -> argparse.ArgumentParser:
     """Tworzy parser CLI do samodzielnego uruchamiania rdzenia trackera."""
-    print("TRACKER_CORE: Tworzę parser CLI")
+    # print("TRACKER_CORE: Tworzę parser CLI")
     parser = argparse.ArgumentParser(description="Standalone tracker core for detection sequences.")
     parser.add_argument("--input_json", required=True, help="JSON with detection lists per frame.")
     parser.add_argument("--fps", type=float, default=30.0)
