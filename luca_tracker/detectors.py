@@ -3,13 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Type
 
 import cv2
 import numpy as np
 
+from .detector_interfaces import BaseDetector, DetectorConfig
 from .types import Detection
 
 
@@ -23,24 +24,6 @@ COLOR_PRESETS: Dict[str, List[Tuple[Tuple[int, int, int], Tuple[int, int, int]]]
     "orange": [((8, 100, 80), (22, 255, 255))],
     "purple": [((130, 60, 60), (165, 255, 255))],
 }
-
-
-@dataclass
-class DetectorConfig:
-    """Konfiguracja detektora używana przez pipeline i tryb standalone."""
-
-    track_mode: str = "brightness"
-    blur: int = 11
-    threshold: int = 200
-    erode_iter: int = 2
-    dilate_iter: int = 4
-    min_area: float = 10.0
-    max_area: float = 0.0
-    max_spots: int = 10
-    color_name: str = "red"
-    hsv_lower: Optional[str] = None
-    hsv_upper: Optional[str] = None
-    roi: Optional[str] = None
 
 
 def parse_roi(roi_text: Optional[str], frame_shape: Tuple[int, int, int]) -> Tuple[int, int, int, int]:
@@ -75,37 +58,55 @@ def parse_hsv_pair(text: Optional[str], fallback: Tuple[int, int, int]) -> Tuple
     return tuple(parts)  # type: ignore
 
 
-def build_mask(
-    roi_frame: np.ndarray,
-    track_mode: str,
-    blur: int,
-    threshold: int,
-    erode_iter: int,
-    dilate_iter: int,
-    color_name: str,
-    hsv_lower: Optional[str],
-    hsv_upper: Optional[str],
-) -> np.ndarray:
-    """Buduje binarną maskę detekcji dla ROI na podstawie jasności lub koloru."""
-    if track_mode == "brightest":
-        track_mode = "brightness"
+class BrightnessDetector(BaseDetector):
+    """Adapter dla detekcji opartej o progowanie jasności."""
 
-    blur = ensure_odd(blur)
+    @classmethod
+    def default_params(cls) -> dict:
+        """Zwraca domyślne parametry specyficzne dla trybu brightness."""
+        return {
+            "blur": 11,
+            "threshold": 200,
+            "erode_iter": 2,
+            "dilate_iter": 4,
+        }
 
-    if track_mode == "brightness":
+    def detect_mask(self, roi_frame: np.ndarray) -> np.ndarray:
+        """Buduje maskę binarną dla ROI na podstawie jasności pikseli."""
+        blur = ensure_odd(self.config.blur)
         gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (blur, blur), 0)
-        _, mask = cv2.threshold(blurred, threshold, 255, cv2.THRESH_BINARY)
-    elif track_mode == "color":
+        _, mask = cv2.threshold(blurred, self.config.threshold, 255, cv2.THRESH_BINARY)
+        return _apply_morphology(mask, erode_iter=self.config.erode_iter, dilate_iter=self.config.dilate_iter)
+
+
+class ColorDetector(BaseDetector):
+    """Adapter dla detekcji opartej o zakresy HSV."""
+
+    @classmethod
+    def default_params(cls) -> dict:
+        """Zwraca domyślne parametry specyficzne dla trybu color."""
+        return {
+            "blur": 11,
+            "color_name": "red",
+            "hsv_lower": None,
+            "hsv_upper": None,
+            "erode_iter": 2,
+            "dilate_iter": 4,
+        }
+
+    def detect_mask(self, roi_frame: np.ndarray) -> np.ndarray:
+        """Buduje maskę binarną dla ROI na podstawie koloru w przestrzeni HSV."""
+        blur = ensure_odd(self.config.blur)
         hsv = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2HSV)
-        if color_name == "custom":
-            lower = parse_hsv_pair(hsv_lower, (0, 80, 80))
-            upper = parse_hsv_pair(hsv_upper, (10, 255, 255))
+        if self.config.color_name == "custom":
+            lower = parse_hsv_pair(self.config.hsv_lower, (0, 80, 80))
+            upper = parse_hsv_pair(self.config.hsv_upper, (10, 255, 255))
             ranges = [(lower, upper)]
         else:
-            if color_name not in COLOR_PRESETS:
-                raise ValueError(f"Nieznany preset koloru: {color_name}")
-            ranges = COLOR_PRESETS[color_name]
+            if self.config.color_name not in COLOR_PRESETS:
+                raise ValueError(f"Nieznany preset koloru: {self.config.color_name}")
+            ranges = COLOR_PRESETS[self.config.color_name]
 
         mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
         for low, high in ranges:
@@ -114,14 +115,30 @@ def build_mask(
         if blur > 1:
             mask = cv2.GaussianBlur(mask, (blur, blur), 0)
             _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-    else:
-        raise ValueError("track_mode musi mieć wartość brightness albo color")
+        return _apply_morphology(mask, erode_iter=self.config.erode_iter, dilate_iter=self.config.dilate_iter)
 
+
+def _apply_morphology(mask: np.ndarray, erode_iter: int, dilate_iter: int) -> np.ndarray:
+    """Nakłada wspólne operacje morfologiczne na maskę niezależnie od metody detekcji."""
     if erode_iter > 0:
         mask = cv2.erode(mask, None, iterations=erode_iter)
     if dilate_iter > 0:
         mask = cv2.dilate(mask, None, iterations=dilate_iter)
     return mask
+
+
+def _resolve_detector_class(track_mode: str) -> Type[BaseDetector]:
+    """Pobiera klasę adaptera detektora na podstawie nazwy metody."""
+    from .detector_registry import get_detector_class
+
+    normalized_mode = "brightness" if track_mode == "brightest" else track_mode
+    return get_detector_class(normalized_mode)
+
+
+def get_default_params_for_mode(track_mode: str) -> Dict[str, object]:
+    """Udostępnia domyślne parametry zarejestrowane dla wskazanej metody detekcji."""
+    detector_cls = _resolve_detector_class(track_mode)
+    return detector_cls.default_params()
 
 
 def contour_to_detection(contour, offset_x: int = 0, offset_y: int = 0) -> Optional[Detection]:
@@ -182,8 +199,8 @@ def detect_spots(
     """Wykrywa plamki na klatce i zwraca detekcje, maskę oraz użyte ROI."""
     x0, y0, w, h = parse_roi(roi, frame.shape)
     roi_frame = frame[y0 : y0 + h, x0 : x0 + w]
-    mask = build_mask(
-        roi_frame=roi_frame,
+    detector_cls = _resolve_detector_class(track_mode)
+    detector_config = DetectorConfig(
         track_mode=track_mode,
         blur=blur,
         threshold=threshold,
@@ -193,6 +210,7 @@ def detect_spots(
         hsv_lower=hsv_lower,
         hsv_upper=hsv_upper,
     )
+    mask = detector_cls(detector_config).detect_mask(roi_frame)
 
     contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     detections: List[Detection] = []
@@ -235,9 +253,11 @@ def detect_spots_with_config(frame: np.ndarray, config: DetectorConfig):
 
 def _build_parser() -> argparse.ArgumentParser:
     """Tworzy parser CLI do samodzielnego uruchamiania modułu detekcji."""
+    from .detector_registry import available_detector_names
+
     parser = argparse.ArgumentParser(description="Standalone detector for single image.")
     parser.add_argument("--image", required=True, help="Path to input image.")
-    parser.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
+    parser.add_argument("--track_mode", choices=available_detector_names(), default="brightness")
     parser.add_argument("--threshold", type=int, default=200)
     parser.add_argument("--blur", type=int, default=11)
     parser.add_argument("--min_area", type=float, default=10.0)
