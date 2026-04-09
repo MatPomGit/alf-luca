@@ -136,6 +136,18 @@ def interactive_track_config(args):
     args.track_mode = ask_value(f"Tryb śledzenia ({supported_modes})", str, args.track_mode)
     args.blur = ask_value("Rozmiar rozmycia Gaussa (nieparzysty)", int, args.blur)
     args.threshold = ask_value("Próg jasności 0-255", int, args.threshold)
+    args.threshold_mode = ask_value(
+        "Tryb progowania (fixed/otsu/adaptive)",
+        str,
+        getattr(args, "threshold_mode", "fixed"),
+    )
+    args.adaptive_block_size = ask_value(
+        "Adaptive block size (nieparzyste, >=3)",
+        int,
+        getattr(args, "adaptive_block_size", 31),
+    )
+    args.adaptive_c = ask_value("Adaptive C", float, getattr(args, "adaptive_c", 5.0))
+    args.use_clahe = ask_bool("Włączyć CLAHE przed progowaniem?", getattr(args, "use_clahe", False))
     args.min_area = ask_value("Minimalne pole plamki", float, args.min_area)
     args.max_area = ask_value("Maksymalne pole plamki (0 = brak limitu)", float, args.max_area)
     args.erode_iter = ask_value("Liczba erozji", int, args.erode_iter)
@@ -234,6 +246,10 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             track_mode=getattr(args_or_config, "track_mode", "brightness"),
             blur=getattr(args_or_config, "blur", 11),
             threshold=getattr(args_or_config, "threshold", 200),
+            threshold_mode=getattr(args_or_config, "threshold_mode", "fixed"),
+            adaptive_block_size=getattr(args_or_config, "adaptive_block_size", 31),
+            adaptive_c=getattr(args_or_config, "adaptive_c", 5.0),
+            use_clahe=getattr(args_or_config, "use_clahe", False),
             erode_iter=getattr(args_or_config, "erode_iter", 2),
             dilate_iter=getattr(args_or_config, "dilate_iter", 4),
             min_area=getattr(args_or_config, "min_area", 10.0),

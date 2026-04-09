@@ -67,6 +67,10 @@ class BrightnessDetector(BaseDetector):
         return {
             "blur": 11,
             "threshold": 200,
+            "threshold_mode": "fixed",
+            "adaptive_block_size": 31,
+            "adaptive_c": 5.0,
+            "use_clahe": False,
             "erode_iter": 2,
             "dilate_iter": 4,
         }
@@ -74,9 +78,32 @@ class BrightnessDetector(BaseDetector):
     def detect_mask(self, roi_frame: np.ndarray) -> np.ndarray:
         """Buduje maskę binarną dla ROI na podstawie jasności pikseli."""
         blur = ensure_odd(self.config.blur)
+        threshold_mode = str(getattr(self.config, "threshold_mode", "fixed")).strip().lower()
+        if threshold_mode not in {"fixed", "otsu", "adaptive"}:
+            raise ValueError(f"Nieobsługiwany threshold_mode: {threshold_mode}")
         gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (blur, blur), 0)
-        _, mask = cv2.threshold(blurred, self.config.threshold, 255, cv2.THRESH_BINARY)
+        # Opcjonalna normalizacja lokalnego kontrastu (CLAHE) poprawia separację plamki
+        # przy nierównomiernym oświetleniu sceny.
+        if bool(getattr(self.config, "use_clahe", False)):
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            gray = clahe.apply(gray)
+        blurred = cv2.GaussianBlur(gray, (blur, blur), 0) if blur > 1 else gray
+
+        if threshold_mode == "fixed":
+            _, mask = cv2.threshold(blurred, self.config.threshold, 255, cv2.THRESH_BINARY)
+        elif threshold_mode == "otsu":
+            _, mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        else:
+            adaptive_block_size = ensure_odd(max(3, int(getattr(self.config, "adaptive_block_size", 31))))
+            adaptive_c = float(getattr(self.config, "adaptive_c", 5.0))
+            mask = cv2.adaptiveThreshold(
+                blurred,
+                255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY,
+                adaptive_block_size,
+                adaptive_c,
+            )
         return _apply_morphology(mask, erode_iter=self.config.erode_iter, dilate_iter=self.config.dilate_iter)
 
 
@@ -186,6 +213,10 @@ def build_mask(
     track_mode: str = "brightness",
     blur: int = 11,
     threshold: int = 200,
+    threshold_mode: str = "fixed",
+    adaptive_block_size: int = 31,
+    adaptive_c: float = 5.0,
+    use_clahe: bool = False,
     erode_iter: int = 2,
     dilate_iter: int = 4,
     color_name: str = "red",
@@ -202,6 +233,10 @@ def build_mask(
         track_mode=track_mode,
         blur=blur,
         threshold=threshold,
+        threshold_mode=threshold_mode,
+        adaptive_block_size=adaptive_block_size,
+        adaptive_c=adaptive_c,
+        use_clahe=use_clahe,
         erode_iter=erode_iter,
         dilate_iter=dilate_iter,
         color_name=color_name,
@@ -216,6 +251,10 @@ def detect_spots(
     track_mode: str,
     blur: int,
     threshold: int,
+    threshold_mode: str,
+    adaptive_block_size: int,
+    adaptive_c: float,
+    use_clahe: bool,
     erode_iter: int,
     dilate_iter: int,
     min_area: float,
@@ -234,6 +273,10 @@ def detect_spots(
         track_mode=track_mode,
         blur=blur,
         threshold=threshold,
+        threshold_mode=threshold_mode,
+        adaptive_block_size=adaptive_block_size,
+        adaptive_c=adaptive_c,
+        use_clahe=use_clahe,
         erode_iter=erode_iter,
         dilate_iter=dilate_iter,
         color_name=color_name,
@@ -269,6 +312,10 @@ def detect_spots_with_config(frame: np.ndarray, config: DetectorConfig):
         track_mode=config.track_mode,
         blur=config.blur,
         threshold=config.threshold,
+        threshold_mode=config.threshold_mode,
+        adaptive_block_size=config.adaptive_block_size,
+        adaptive_c=config.adaptive_c,
+        use_clahe=config.use_clahe,
         erode_iter=config.erode_iter,
         dilate_iter=config.dilate_iter,
         min_area=config.min_area,
@@ -289,6 +336,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image", required=True, help="Path to input image.")
     parser.add_argument("--track_mode", choices=available_detector_names(), default="brightness")
     parser.add_argument("--threshold", type=int, default=200)
+    parser.add_argument("--threshold_mode", choices=["fixed", "otsu", "adaptive"], default="fixed")
+    parser.add_argument("--adaptive_block_size", type=int, default=31)
+    parser.add_argument("--adaptive_c", type=float, default=5.0)
+    parser.add_argument("--use_clahe", action="store_true")
     parser.add_argument("--blur", type=int, default=11)
     parser.add_argument("--min_area", type=float, default=10.0)
     parser.add_argument("--max_area", type=float, default=0.0)
