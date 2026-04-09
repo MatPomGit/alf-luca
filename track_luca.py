@@ -209,7 +209,9 @@ def ask_bool(prompt: str, default: bool) -> bool:
 
 def interactive_track_config(args):
     print("\n=== Interaktywny dobór parametrów śledzenia ===")
-    args.track_mode = ask_value("Tryb śledzenia (brightness/color)", str, args.track_mode)
+    args.track_mode = normalize_track_mode(
+        ask_value("Tryb śledzenia (brightness/color)", str, args.track_mode)
+    )
     args.blur = ask_value("Rozmiar rozmycia Gaussa (nieparzysty)", int, args.blur)
     args.threshold = ask_value("Próg jasności 0-255", int, args.threshold)
     args.min_area = ask_value("Minimalne pole plamki", float, args.min_area)
@@ -314,6 +316,17 @@ def parse_hsv_pair(text: Optional[str], fallback: Tuple[int, int, int]) -> Tuple
     return tuple(parts)  # type: ignore
 
 
+def normalize_track_mode(track_mode: str) -> str:
+    """
+    Ujednolica nazewnictwo trybu śledzenia.
+    Historycznie występowało "brightest", obecnie obowiązuje "brightness".
+    """
+    normalized = (track_mode or "").strip().lower()
+    if normalized == "brightest":
+        return "brightness"
+    return normalized
+
+
 def build_mask(
     roi_frame: np.ndarray,
     track_mode: str,
@@ -325,10 +338,7 @@ def build_mask(
     hsv_lower: Optional[str],
     hsv_upper: Optional[str],
 ) -> np.ndarray:
-    # Kompatybilność wsteczna: w części starszych konfiguracji pojawiało się
-    # "brightest" zamiast poprawnego "brightness".
-    if track_mode == "brightest":
-        track_mode = "brightness"
+    track_mode = normalize_track_mode(track_mode)
 
     blur = ensure_odd(blur)
 
@@ -1096,7 +1106,7 @@ def run_gui(args):
 
     mode_default = str(_cfg_value(gui_cfg, "mode", "processing")).lower()
     mode_default_idx = GUI_MODES.index(mode_default) if mode_default in GUI_MODES else 1
-    track_mode_default = str(_cfg_value(gui_cfg, "track_mode", args.track_mode)).lower()
+    track_mode_default = normalize_track_mode(str(_cfg_value(gui_cfg, "track_mode", args.track_mode)))
     color_name_default = str(_cfg_value(gui_cfg, "color_name", args.color_name)).lower()
     selection_default = str(_cfg_value(gui_cfg, "selection_mode", args.selection_mode)).lower()
 
@@ -1149,7 +1159,13 @@ def run_gui(args):
     }
 
     cv2.createTrackbar(gui_labels["mode"], "GUI", 1, 2, noop)
-    cv2.createTrackbar(gui_labels["track_mode"], "GUI", 0 if args.track_mode == "brightness" else 1, 1, noop)
+    cv2.createTrackbar(
+        gui_labels["track_mode"],
+        "GUI",
+        0 if normalize_track_mode(args.track_mode) == "brightness" else 1,
+        1,
+        noop,
+    )
     cv2.createTrackbar(gui_labels["color"], "GUI", max(0, GUI_COLOR_NAMES.index(args.color_name)), len(GUI_COLOR_NAMES) - 1, noop)
     cv2.createTrackbar(gui_labels["threshold"], "GUI", int(np.clip(args.threshold, 0, 255)), 255, noop)
     cv2.createTrackbar(gui_labels["blur"], "GUI", int(np.clip(args.blur, 1, 31)), 31, noop)
@@ -1746,6 +1762,11 @@ def normalize_legacy_argv(argv: Sequence[str]) -> List[str]:
     """
     args = list(argv)
     commands = {"calibrate", "track", "compare", "gui"}
+    if "--track_mode" in args:
+        track_mode_idx = args.index("--track_mode")
+        if track_mode_idx + 1 < len(args):
+            args[track_mode_idx + 1] = normalize_track_mode(args[track_mode_idx + 1])
+
     if not args:
         return ["gui"]
     if args[0] in commands:
@@ -1756,7 +1777,8 @@ def normalize_legacy_argv(argv: Sequence[str]) -> List[str]:
         if mode_idx + 1 < len(args):
             mode = args[mode_idx + 1]
             if mode in commands:
-                return [mode, *args[:mode_idx], *args[mode_idx + 2 :]]
+                args = [mode, *args[:mode_idx], *args[mode_idx + 2 :]]
+
     return args
 
 
@@ -1776,6 +1798,8 @@ def main():
     parser = build_parser()
     argv = normalize_legacy_argv(sys.argv[1:])
     args = parser.parse_args(argv)
+    if hasattr(args, "track_mode"):
+        args.track_mode = normalize_track_mode(args.track_mode)
 
     if args.command == "gui" and not getattr(args, "video", None):
         args.video = pick_default_gui_video()
