@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import glob
 import os
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import cv2
@@ -23,6 +25,66 @@ from .tracker_core import SimpleMultiTracker, TrackerConfig, choose_main_track
 from .types import TrackPoint
 from .video_export import export_annotated_video
 
+OUTPUT_DIR = Path("/output")
+
+
+class ConsoleStyle:
+    """Proste kody ANSI do czytelnych, kolorowych komunikatów CLI."""
+
+    RESET = "\033[0m"
+    INFO = "\033[96m"
+    OK = "\033[92m"
+    WARN = "\033[93m"
+    STAGE = "\033[95m"
+
+
+def _print_stage(message: str) -> None:
+    """Wypisuje wyróżnioną informację o etapie przetwarzania."""
+    print(f"{ConsoleStyle.STAGE}[ETAP]{ConsoleStyle.RESET} {message}")
+
+
+def _print_ok(message: str) -> None:
+    """Wypisuje potwierdzenie wykonania kroku pipeline'u."""
+    print(f"{ConsoleStyle.OK}[OK]{ConsoleStyle.RESET} {message}")
+
+
+def _ensure_output_dir() -> Path:
+    """Tworzy katalog /output, który jest jedynym miejscem zapisu wyników."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    return OUTPUT_DIR
+
+
+def _resolve_input_path(path: Optional[str]) -> Optional[str]:
+    """Rozwiązuje ścieżkę wejściową, preferując katalog /output."""
+    if not path:
+        return path
+    p = Path(path)
+    if p.is_absolute():
+        return str(p)
+    output_candidate = OUTPUT_DIR / p
+    if output_candidate.exists():
+        return str(output_candidate)
+    return str(p)
+
+
+def _resolve_output_path(path: Optional[str]) -> Optional[str]:
+    """Mapuje ścieżki wynikowe do /output (z zachowaniem ścieżek absolutnych)."""
+    if path is None:
+        return None
+    p = Path(path)
+    if p.is_absolute():
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return str(p)
+    out = _ensure_output_dir() / p
+    out.parent.mkdir(parents=True, exist_ok=True)
+    return str(out)
+
+
+def _default_measurement_name(video: str, suffix: str) -> str:
+    """Buduje spójne nazwy nowych plików pomiarowych."""
+    stem = Path(video).stem
+    return f"{stem}_measurement_{suffix}"
+
 
 @dataclass
 class PipelineConfig:
@@ -34,7 +96,7 @@ class PipelineConfig:
     interactive: bool = False
     multi_track: bool = False
     selection_mode: str = "stablest"
-    output_csv: str = "tracking_results.csv"
+    output_csv: Optional[str] = None
     trajectory_png: Optional[str] = None
     report_csv: Optional[str] = None
     report_pdf: Optional[str] = None
@@ -141,19 +203,27 @@ def _resolve_config(args_or_config) -> PipelineConfig:
     if isinstance(args_or_config, PipelineConfig):
         return args_or_config
 
+    video_input = _resolve_input_path(args_or_config.video)
+    output_csv = getattr(args_or_config, "output_csv", None) or _default_measurement_name(video_input, "main_track.csv")
+    trajectory_png = getattr(args_or_config, "trajectory_png", None)
+    report_csv = getattr(args_or_config, "report_csv", None)
+    report_pdf = getattr(args_or_config, "report_pdf", None)
+    all_tracks_csv = getattr(args_or_config, "all_tracks_csv", None)
+    annotated_video = getattr(args_or_config, "annotated_video", None)
+
     return PipelineConfig(
-        video=args_or_config.video,
-        calib_file=getattr(args_or_config, "calib_file", None),
+        video=video_input,
+        calib_file=_resolve_input_path(getattr(args_or_config, "calib_file", None)),
         display=getattr(args_or_config, "display", False),
         interactive=getattr(args_or_config, "interactive", False),
         multi_track=getattr(args_or_config, "multi_track", False),
         selection_mode=getattr(args_or_config, "selection_mode", "stablest"),
-        output_csv=getattr(args_or_config, "output_csv", "tracking_results.csv"),
-        trajectory_png=getattr(args_or_config, "trajectory_png", None),
-        report_csv=getattr(args_or_config, "report_csv", None),
-        report_pdf=getattr(args_or_config, "report_pdf", None),
-        all_tracks_csv=getattr(args_or_config, "all_tracks_csv", None),
-        annotated_video=getattr(args_or_config, "annotated_video", None),
+        output_csv=_resolve_output_path(output_csv),
+        trajectory_png=_resolve_output_path(trajectory_png or _default_measurement_name(video_input, "trajectory.png")),
+        report_csv=_resolve_output_path(report_csv or _default_measurement_name(video_input, "metrics.csv")),
+        report_pdf=_resolve_output_path(report_pdf or _default_measurement_name(video_input, "report.pdf")),
+        all_tracks_csv=_resolve_output_path(all_tracks_csv or _default_measurement_name(video_input, "all_tracks.csv")),
+        annotated_video=_resolve_output_path(annotated_video or _default_measurement_name(video_input, "annotated.mp4")),
         draw_all_tracks=getattr(args_or_config, "draw_all_tracks", False),
         use_kalman=getattr(args_or_config, "use_kalman", False),
         detector=DetectorConfig(
@@ -288,46 +358,53 @@ def track_video(args_or_config):
         interactive_track_config(args_or_config)
 
     config = _resolve_config(args_or_config)
+    _print_stage(f"Start analizy wideo: {config.video}")
+    _print_stage(f"Elementy analizy: track_mode={config.detector.track_mode}, multi_track={config.multi_track}, kalman={config.use_kalman}")
+    _print_stage(f"Katalog wynikowy: {_ensure_output_dir()}")
 
     camera_matrix = None
     dist_coeffs = None
     if config.calib_file:
+        _print_stage(f"Wczytywanie kalibracji: {config.calib_file}")
         data = np.load(config.calib_file)
         camera_matrix = data.get("camera_matrix")
         dist_coeffs = data.get("dist_coeffs")
+        _print_ok("Wczytano parametry kalibracji kamery.")
 
+    _print_stage("Przetwarzanie klatek i detekcja obiektów...")
     result = process_video_frames(config, camera_matrix=camera_matrix, dist_coeffs=dist_coeffs)
     main_points = result["main_points"]
     main_track_id = result["main_track_id"]
 
     if config.use_kalman:
+        _print_stage("Wygładzanie trajektorii filtrem Kalmana...")
         apply_kalman_to_points(
             main_points,
             process_noise=config.kalman.process_noise,
             measurement_noise=config.kalman.measurement_noise,
         )
 
-    save_track_csv(main_points, config.output_csv)
+    save_track_csv(main_points, config.output_csv or "")
+    _print_ok(f"Zapisano główną trajektorię CSV: {Path(config.output_csv or '').name}")
 
     if config.multi_track:
         finished_tracks = result["finished_tracks"]
-        print(f"[OK] Zapisano główną trajektorię do: {config.output_csv}")
-        print(f"[OK] Wybrano track_id={main_track_id} jako trajektorię główną ({config.selection_mode})")
+        _print_ok(f"Wybrano track_id={main_track_id} jako trajektorię główną ({config.selection_mode}).")
         if config.all_tracks_csv:
             save_all_tracks_csv(finished_tracks, config.all_tracks_csv)
-            print(f"[OK] Zapisano wszystkie trajektorie do: {config.all_tracks_csv}")
+            _print_ok(f"Zapisano wszystkie trajektorie CSV: {Path(config.all_tracks_csv).name}")
 
         metrics = metrics_from_points(main_points)
         extra = [f"selected_track_id: {main_track_id}", f"selection_mode: {config.selection_mode}"]
         if config.trajectory_png:
             generate_trajectory_png(main_points, config.trajectory_png, title=f"Trajektoria główna track_id={main_track_id}")
-            print(f"[OK] Zapisano wykres trajektorii: {config.trajectory_png}")
+            _print_ok(f"Zapisano wykres trajektorii PNG: {Path(config.trajectory_png).name}")
         if config.report_csv:
             save_metrics_csv(metrics, config.report_csv)
-            print(f"[OK] Zapisano raport CSV: {config.report_csv}")
+            _print_ok(f"Zapisano raport CSV: {Path(config.report_csv).name}")
         if config.report_pdf:
             save_track_report_pdf(config.report_pdf, metrics, "Raport jakości śledzenia", config.trajectory_png, extra)
-            print(f"[OK] Zapisano raport PDF: {config.report_pdf}")
+            _print_ok(f"Zapisano raport PDF: {Path(config.report_pdf).name}")
         if config.annotated_video:
             export_annotated_video(
                 input_video=config.video,
@@ -337,19 +414,18 @@ def track_video(args_or_config):
                 draw_all_tracks=config.draw_all_tracks,
                 roi=config.detector.roi,
             )
-            print(f"[OK] Zapisano wideo wynikowe: {config.annotated_video}")
+            _print_ok(f"Zapisano wideo wynikowe: {Path(config.annotated_video).name}")
     else:
-        print(f"[OK] Zapisano wyniki do: {config.output_csv}")
         metrics = metrics_from_points(main_points)
         if config.trajectory_png:
             generate_trajectory_png(main_points, config.trajectory_png)
-            print(f"[OK] Zapisano wykres trajektorii: {config.trajectory_png}")
+            _print_ok(f"Zapisano wykres trajektorii PNG: {Path(config.trajectory_png).name}")
         if config.report_csv:
             save_metrics_csv(metrics, config.report_csv)
-            print(f"[OK] Zapisano raport CSV: {config.report_csv}")
+            _print_ok(f"Zapisano raport CSV: {Path(config.report_csv).name}")
         if config.report_pdf:
             save_track_report_pdf(config.report_pdf, metrics, "Raport jakości śledzenia", config.trajectory_png)
-            print(f"[OK] Zapisano raport PDF: {config.report_pdf}")
+            _print_ok(f"Zapisano raport PDF: {Path(config.report_pdf).name}")
         if config.annotated_video:
             pseudo_tracks = {1: {"points": main_points}}
             export_annotated_video(
@@ -360,7 +436,13 @@ def track_video(args_or_config):
                 draw_all_tracks=True,
                 roi=config.detector.roi,
             )
-            print(f"[OK] Zapisano wideo wynikowe: {config.annotated_video}")
+            _print_ok(f"Zapisano wideo wynikowe: {Path(config.annotated_video).name}")
+
+    _print_stage("Analiza zakończona pomyślnie. Sygnalizacja dźwiękowa...")
+    print("\a\a", end="", flush=True)
+    time.sleep(0.12)
+    print("\a\a", end="", flush=True)
+    _print_ok("Przetwarzanie zakończone.")
 
 
 def _build_parser() -> argparse.ArgumentParser:

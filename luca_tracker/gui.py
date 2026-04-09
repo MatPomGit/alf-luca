@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -60,7 +61,7 @@ def _cfg_value(cfg: Dict[str, object], key: str, default):
     return cfg.get(key, default)
 
 
-def discover_video_files(video_dir: str = "video", preferred_video: Optional[str] = None) -> List[Path]:
+def discover_video_files(video_dir: str = "/output", preferred_video: Optional[str] = None) -> List[Path]:
     exts = {".mp4", ".avi", ".mov", ".mkv", ".m4v"}
     files: List[Path] = []
     video_path = Path(video_dir)
@@ -170,6 +171,13 @@ def _clip_slider(value: float, min_value: float, max_value: float) -> float:
 
 
 def run_gui(args):
+    # Wymuszamy nowoczesne providery SDL2 i wyciszamy wejścia MTDev, aby usunąć
+    # ostrzeżenia o deprecated pygame i brakujących /dev/input/event*.
+    os.environ.setdefault("KIVY_NO_MTDEV", "1")
+    os.environ.setdefault("KIVY_WINDOW", "sdl2")
+    os.environ.setdefault("KIVY_IMAGE", "sdl2")
+    os.environ.setdefault("KIVY_TEXT", "sdl2")
+
     try:
         from kivy.app import App
         from kivy.clock import Clock
@@ -194,11 +202,11 @@ def run_gui(args):
             "albo uruchom aplikację w środowisku z aktywnym serwerem graficznym."
         )
 
-    video_files = discover_video_files("video", args.video)
+    video_files = discover_video_files("/output", args.video)
     if not video_files:
-        raise FileNotFoundError("Nie znaleziono plików wideo. Dodaj plik do folderu 'video/' lub podaj --video.")
+        raise FileNotFoundError("Nie znaleziono plików wideo. Dodaj plik do katalogu '/output' lub podaj --video.")
 
-    output_dir = Path("output")
+    output_dir = Path("/output")
     output_dir.mkdir(parents=True, exist_ok=True)
     camera_matrix = None
     dist_coeffs = None
@@ -325,7 +333,8 @@ def run_gui(args):
             Window.minimum_height = 720
 
             root = BoxLayout(orientation="vertical", spacing=8, padding=8)
-            self.image_widget = Image(allow_stretch=True, keep_ratio=True)
+            # `fit_mode='contain'` zastępuje usunięte właściwości allow_stretch/keep_ratio.
+            self.image_widget = Image(fit_mode="contain")
             root.add_widget(self.image_widget)
 
             controls = BoxLayout(orientation="vertical", spacing=6, size_hint_y=None)

@@ -6,12 +6,12 @@ import sys
 from typing import List, Optional, Sequence
 
 DEFAULT_GUI_VIDEO_GLOB_PATTERNS = (
-    "video/*.mp4",
-    "video/*.mkv",
-    "video/*.avi",
-    "video/*.mov",
-    "video/*.m4v",
-    "video/*.webm",
+    "/output/*.mp4",
+    "/output/*.mkv",
+    "/output/*.avi",
+    "/output/*.mov",
+    "/output/*.m4v",
+    "/output/*.webm",
     "*.mp4",
     "*.mkv",
     "*.avi",
@@ -55,7 +55,7 @@ def build_parser():
     p_cal.add_argument("--output_file", default="camera_calib.npz", help="Plik wynikowy .npz")
 
     p_track = subparsers.add_parser("track", help="Śledzenie plamki")
-    p_track.add_argument("--video", required=True, help="Plik wejściowy wideo (np. MP4/MKV/AVI/MOV/WEBM)")
+    p_track.add_argument("--video", required=True, help="Plik wejściowy wideo (domyślnie szukany także w /output)")
     p_track.add_argument("--calib_file", help="Plik kalibracji .npz")
     p_track.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
     p_track.add_argument("--threshold", type=int, default=200, help="Próg jasności")
@@ -67,7 +67,7 @@ def build_parser():
     p_track.add_argument("--roi", help="Obszar ROI w formacie x,y,w,h")
     p_track.add_argument("--interactive", action="store_true", help="Interaktywny dobór parametrów")
     p_track.add_argument("--display", action="store_true", help="Podgląd śledzenia")
-    p_track.add_argument("--output_csv", default="tracking_results.csv", help="CSV głównej trajektorii")
+    p_track.add_argument("--output_csv", default=None, help="CSV głównej trajektorii (domyślnie auto-nazwa w /output)")
     p_track.add_argument("--trajectory_png", help="PNG z wykresem trajektorii")
     p_track.add_argument("--report_csv", help="CSV z raportem jakości")
     p_track.add_argument("--report_pdf", help="PDF z raportem jakości")
@@ -93,7 +93,7 @@ def build_parser():
     p_cmp.add_argument("--report_pdf", help="Opcjonalny raport PDF")
 
     p_gui = subparsers.add_parser("gui", help="GUI do strojenia parametrów i podglądu w czasie rzeczywistym")
-    p_gui.add_argument("--video", help="Opcjonalny plik wejściowy wideo (np. MP4/MKV/AVI/MOV/WEBM; domyślnie ładowane są pliki z folderu video/)")
+    p_gui.add_argument("--video", help="Opcjonalny plik wejściowy wideo (domyślnie ładowane są pliki z katalogu /output)")
     p_gui.add_argument("--calib_file", help="Plik kalibracji .npz (opcjonalnie)")
     p_gui.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
     p_gui.add_argument("--threshold", type=int, default=200)
@@ -149,7 +149,7 @@ def main():
     if args.command == "gui" and not getattr(args, "video", None):
         args.video = pick_default_gui_video()
         if not args.video:
-            parser.error("Dla trybu GUI wymagany jest plik wideo. Podaj --video lub umieść plik *.mp4/*.mkv/*.avi/*.mov/*.m4v/*.webm w katalogu ./video.")
+            parser.error("Dla trybu GUI wymagany jest plik wideo. Podaj --video lub umieść plik *.mp4/*.mkv/*.avi/*.mov/*.m4v/*.webm w katalogu /output.")
 
     if args.command == "calibrate":
         # Import lokalny ogranicza wymagania środowiskowe do użytego trybu.

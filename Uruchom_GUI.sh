@@ -12,3 +12,7 @@ else
   echo "[BLAD] Nie znaleziono interpretera Python (python3/python)." >&2
   exit 127
 fi
+
+echo -e "\033[92m[OK]\033[0m GUI zakończone. Konsola zamknie się za 5 sekund."
+printf '\a\a'
+sleep 5

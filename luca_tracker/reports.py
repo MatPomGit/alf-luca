@@ -9,7 +9,31 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 from .types import TrackPoint
-DEFAULT_EXPORT_PATH="(output/)"
+
+OUTPUT_DIR = Path("/output")
+
+
+def _resolve_input_path(path: str) -> str:
+    """Rozwiązuje wejściową ścieżkę CSV z preferencją katalogu /output."""
+    p = Path(path)
+    if p.is_absolute():
+        return str(p)
+    candidate = OUTPUT_DIR / p
+    if candidate.exists():
+        return str(candidate)
+    return str(p)
+
+
+def _resolve_output_path(path: str) -> str:
+    """Wymusza zapis raportów do katalogu /output dla ścieżek relatywnych."""
+    p = Path(path)
+    if p.is_absolute():
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return str(p)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    out = OUTPUT_DIR / p
+    out.parent.mkdir(parents=True, exist_ok=True)
+    return str(out)
 
 def compute_track_metrics(points: Sequence[TrackPoint]) -> Dict[str, float]:
     detected = [p for p in points if p.detected and p.x is not None and p.y is not None]
@@ -202,6 +226,12 @@ def load_tracking_csv(csv_path: str) -> List[TrackPoint]:
 
 
 def compare_csv(reference_csv: str, candidate_csv: str, output_csv: str, report_pdf: Optional[str] = None):
+    reference_csv = _resolve_input_path(reference_csv)
+    candidate_csv = _resolve_input_path(candidate_csv)
+    output_csv = _resolve_output_path(output_csv)
+    if report_pdf:
+        report_pdf = _resolve_output_path(report_pdf)
+
     ref = load_tracking_csv(reference_csv)
     cand = load_tracking_csv(candidate_csv)
 
