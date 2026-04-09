@@ -26,6 +26,8 @@ analyze: false
 pause: false
 auto_params: false
 speed_factor: 1.0
+# Rozmiar czcionki kontrolek GUI (px) — ustawiono większą wartość dla lepszej czytelności.
+font_size: 28
 
 # Opóźnienie odświeżania GUI (ms)
 wait_ms_running: 1
