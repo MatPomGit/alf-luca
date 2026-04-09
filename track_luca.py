@@ -94,6 +94,7 @@ COLOR_PRESETS: Dict[str, List[Tuple[Tuple[int, int, int], Tuple[int, int, int]]]
 GUI_MODES = ["calibration", "processing", "compare"]
 GUI_SELECTION_MODES = ["largest", "stablest", "longest"]
 GUI_COLOR_NAMES = list(COLOR_PRESETS.keys())
+MP4_QUALITY_TOOL_PATH = "tools/video_tool.py"
 
 
 # ----------------------------
@@ -1049,7 +1050,8 @@ def run_gui(args):
             preview = _stack_h([bright_view, color_view, mask_bgr])
             cv2.putText(preview, f"COMPARE brightness={len(det_bright)} color={len(det_color)}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
 
-        cv2.putText(preview, f"Mode={mode} Track={track_mode} Color={color_name} Sel={selection_mode}", (10, preview.shape[0] - 35), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(preview, f"Mode={mode} Track={track_mode} Color={color_name} Sel={selection_mode}", (10, preview.shape[0] - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(preview, f"MP4 QA tool: {args.mp4_tool_path} (klawisz: m)", (10, preview.shape[0] - 35), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 255, 200), 2, cv2.LINE_AA)
         cv2.putText(preview, f"Frame={frame_index} Detections={len(detections)} Blur={blur} Thr={threshold}", (10, preview.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
         cv2.imshow("GUI Preview", preview)
 
@@ -1058,6 +1060,11 @@ def run_gui(args):
             break
         if key == ord(" "):
             cv2.setTrackbarPos("Pause", "GUI Control", 0 if paused else 1)
+        if key == ord("m"):
+            print(
+                "[GUI] Narzędzie do weryfikacji MP4:",
+                f"python {args.mp4_tool_path} --input twoj_plik.mp4 --analyze-only",
+            )
 
     cap.release()
     cv2.destroyAllWindows()
@@ -1321,6 +1328,11 @@ def build_parser():
     p_gui.add_argument("--max_distance", type=float, default=40.0)
     p_gui.add_argument("--max_missed", type=int, default=10)
     p_gui.add_argument("--selection_mode", choices=GUI_SELECTION_MODES, default="stablest")
+    p_gui.add_argument(
+        "--mp4_tool_path",
+        default=MP4_QUALITY_TOOL_PATH,
+        help="Odnośnik do narzędzia QA MP4 pokazywany w GUI (domyślnie: tools/video_tool.py).",
+    )
 
     return parser
 
