@@ -4,19 +4,22 @@ Terminalowy program do:
 1) kalibracji kamery na podstawie zdjęć szachownicy,
 2) śledzenia jasnej plamki światła w pliku MP4,
 3) śledzenia plamki o konkretnym kolorze,
-4) eksportu wyników do CSV,
-5) porównywania dwóch plików CSV w celu oceny jakości śledzenia.
+4) interaktywnego wyboru kluczowych parametrów śledzenia w terminalu,
+5) eksportu wyników do CSV,
+6) generowania wykresu trajektorii plamki,
+7) generowania raportu jakości śledzenia w CSV i PDF,
+8) porównywania dwóch plików CSV w celu oceny jakości śledzenia.
 
 Przykłady:
-  python track_bright_spot_v2.py calibrate --calib_dir ./calib --rows 6 --cols 9 --output_file camera_calib.npz
+  python track_bright_spot_v3.py calibrate --calib_dir ./calib --rows 6 --cols 9 --output_file camera_calib.npz
 
-  python track_bright_spot_v2.py track --video film.mp4 --track_mode brightest --threshold 210 --output_csv wynik.csv --display
+  python track_bright_spot_v3.py track --video film.mp4 --track_mode brightest --threshold 210 --output_csv wynik.csv --display
 
-  python track_bright_spot_v2.py track --video film.mp4 --track_mode color --color_name red --output_csv wynik_color.csv
+  python track_bright_spot_v3.py track --video film.mp4 --track_mode color --color_name red --output_csv wynik_color.csv
 
-  python track_bright_spot_v2.py track --video film.mp4 --interactive --output_csv wynik.csv
+  python track_bright_spot_v3.py track --video film.mp4 --interactive --trajectory_png trajektoria.png --report_csv raport.csv --report_pdf raport.pdf
 
-  python track_bright_spot_v2.py compare --reference ref.csv --candidate test.csv --output_csv raport_porownania.csv
+  python track_bright_spot_v3.py compare --reference ref.csv --candidate test.csv --output_csv raport_porownania.csv --report_pdf raport_porownania.pdf
 """
 
 from __future__ import annotations
@@ -27,10 +30,41 @@ import glob
 import math
 import os
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
+
+try:
+    import matplotlib.pyplot as plt
+except Exception:  # pragma: no cover
+    plt = None
+
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        Image as RLImage,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+except Exception:  # pragma: no cover
+    colors = None
+    A4 = None
+    ParagraphStyle = None
+    getSampleStyleSheet = None
+    mm = None
+    RLImage = None
+    Paragraph = None
+    SimpleDocTemplate = None
+    Spacer = None
+    Table = None
+    TableStyle = None
 
 
 PRESET_HSV_RANGES = {
@@ -86,6 +120,9 @@ class TrackerConfig:
     output_csv: str
     display: bool
     roi: Optional[Tuple[int, int, int, int]] = None
+    trajectory_png: Optional[str] = None
+    report_csv: Optional[str] = None
+    report_pdf: Optional[str] = None
 
 
 def parse_hsv_triplet(value: str) -> Tuple[int, int, int]:
@@ -160,68 +197,55 @@ def ask_yes_no(prompt: str, default: bool = False) -> bool:
             return True
         if raw in {"n", "nie", "no"}:
             return False
-        print("Wpisz 't' albo 'n'.")
+        print("Wpisz t lub n.")
 
 
-def ask_optional_float(prompt: str, default: Optional[float] = None) -> Optional[float]:
-    default_txt = "" if default is None else str(default)
-    raw = ask_text(f"{prompt} (puste = brak)", default_txt).strip()
-    if raw == "":
+def parse_optional_float_text(value: str) -> Optional[float]:
+    value = value.strip()
+    if value == "":
         return None
-    try:
-        value = float(raw)
-    except ValueError:
-        print("Niepoprawna liczba. Ustawiono brak limitu.")
+    return float(value)
+
+
+def parse_optional_roi_text(value: str) -> Optional[Tuple[int, int, int, int]]:
+    value = value.strip()
+    if value == "":
         return None
-    return value
+    return parse_roi(value)
 
 
-def get_hsv_ranges_from_args_or_name(color_name: Optional[str], hsv_lower: Optional[Tuple[int, int, int]], hsv_upper: Optional[Tuple[int, int, int]]) -> List[Tuple[Tuple[int, int, int], Tuple[int, int, int]]]:
-    if hsv_lower is not None and hsv_upper is not None:
-        return [(hsv_lower, hsv_upper)]
+def get_hsv_ranges_from_args_or_name(
+    color_name: Optional[str],
+    hsv_lower: Optional[Tuple[int, int, int]],
+    hsv_upper: Optional[Tuple[int, int, int]],
+) -> List[Tuple[Tuple[int, int, int], Tuple[int, int, int]]]:
     if color_name:
-        preset = PRESET_HSV_RANGES.get(color_name.lower())
-        if preset is None:
-            valid = ", ".join(sorted(PRESET_HSV_RANGES))
-            raise ValueError(f"Nieznany preset koloru: {color_name}. Dostępne: {valid}")
-        return preset
+        return PRESET_HSV_RANGES[color_name]
+    if hsv_lower and hsv_upper:
+        return [(hsv_lower, hsv_upper)]
     return []
 
 
 def interactive_configure_track(args: argparse.Namespace) -> TrackerConfig:
-    print("\n=== Interaktywna konfiguracja śledzenia ===")
-    track_mode = ask_text("Tryb śledzenia: brightest / color", args.track_mode or "brightest").lower().strip()
-    if track_mode not in {"brightest", "color"}:
-        print("Nieznany tryb. Ustawiono 'brightest'.")
-        track_mode = "brightest"
+    print("\n=== Konfiguracja interaktywna śledzenia ===")
+    track_mode = ask_text("Tryb śledzenia (brightest/color)", args.track_mode).strip().lower()
+    while track_mode not in {"brightest", "color"}:
+        print("Dozwolone wartości: brightest albo color.")
+        track_mode = ask_text("Tryb śledzenia (brightest/color)", args.track_mode).strip().lower()
 
-    blur = ask_int("Rozmiar filtra Gaussa (nieparzysty)", args.blur, min_value=1)
-    threshold = ask_int("Próg jasności 0..255", args.threshold, min_value=0, max_value=255)
-    erode_iter = ask_int("Liczba erozji", args.erode_iter, min_value=0)
-    dilate_iter = ask_int("Liczba dylatacji", args.dilate_iter, min_value=0)
-    min_area = ask_float("Minimalna powierzchnia plamki", args.min_area, min_value=0.0)
-    max_area = ask_optional_float("Maksymalna powierzchnia plamki", args.max_area)
-
-    roi = args.roi
-    if ask_yes_no("Czy ograniczyć analizę do ROI?", default=roi is not None):
-        x = ask_int("ROI x", roi[0] if roi else 0, min_value=0)
-        y = ask_int("ROI y", roi[1] if roi else 0, min_value=0)
-        w = ask_int("ROI w", roi[2] if roi else 200, min_value=1)
-        h = ask_int("ROI h", roi[3] if roi else 200, min_value=1)
-        roi = (x, y, w, h)
-    else:
-        roi = None
-
-    color_name = args.color_name
+    color_name: Optional[str] = args.color_name
     hsv_ranges: List[Tuple[Tuple[int, int, int], Tuple[int, int, int]]] = []
+
     if track_mode == "color":
-        available = ", ".join(sorted(PRESET_HSV_RANGES))
-        print(f"Dostępne presety kolorów: {available}")
-        if ask_yes_no("Użyć presetu koloru?", default=True):
-            color_name = ask_text("Nazwa koloru", color_name or "red").lower()
-            hsv_ranges = get_hsv_ranges_from_args_or_name(color_name, None, None)
+        use_preset = ask_yes_no("Użyć presetu koloru?", default=True)
+        if use_preset:
+            print(f"Dostępne presety: {', '.join(sorted(PRESET_HSV_RANGES.keys()))}")
+            color_name = ask_text("Nazwa koloru", args.color_name or "red").strip().lower()
+            while color_name not in PRESET_HSV_RANGES:
+                print("Nieznany preset koloru.")
+                color_name = ask_text("Nazwa koloru", "red").strip().lower()
+            hsv_ranges = PRESET_HSV_RANGES[color_name]
         else:
-            print("Podaj zakres HSV dolny i górny.")
             lower = parse_hsv_triplet(ask_text("Dolny HSV", "0,80,80"))
             upper = parse_hsv_triplet(ask_text("Górny HSV", "10,255,255"))
             hsv_ranges = [(lower, upper)]
@@ -229,7 +253,31 @@ def interactive_configure_track(args: argparse.Namespace) -> TrackerConfig:
     else:
         color_name = None
 
+    blur = ask_int("Rozmiar filtra Gaussa (liczba nieparzysta)", args.blur, min_value=1)
+    threshold = ask_int("Próg jasności 0..255", args.threshold, min_value=0, max_value=255)
+    erode_iter = ask_int("Liczba iteracji erozji", args.erode_iter, min_value=0)
+    dilate_iter = ask_int("Liczba iteracji dylatacji", args.dilate_iter, min_value=0)
+    min_area = ask_float("Minimalna powierzchnia konturu", args.min_area, min_value=0.0)
+
+    default_max_area = "" if args.max_area is None else str(args.max_area)
+    max_area_raw = ask_text("Maksymalna powierzchnia konturu (puste = brak limitu)", default_max_area)
+    max_area = parse_optional_float_text(max_area_raw)
+
+    default_roi = "" if args.roi is None else ",".join(str(v) for v in args.roi)
+    roi_raw = ask_text("ROI x,y,w,h (puste = całe okno)", default_roi)
+    roi = parse_optional_roi_text(roi_raw)
+
     display = args.display or ask_yes_no("Pokazać okno podglądu podczas śledzenia?", default=args.display)
+    trajectory_png = args.trajectory_png
+    report_csv = args.report_csv
+    report_pdf = args.report_pdf
+
+    if ask_yes_no("Wygenerować wykres trajektorii?", default=bool(args.trajectory_png)):
+        trajectory_png = ask_text("Plik PNG z trajektorią", args.trajectory_png or "trajectory.png")
+    if ask_yes_no("Wygenerować raport CSV?", default=bool(args.report_csv)):
+        report_csv = ask_text("Plik CSV z raportem", args.report_csv or "tracking_report.csv")
+    if ask_yes_no("Wygenerować raport PDF?", default=bool(args.report_pdf)):
+        report_pdf = ask_text("Plik PDF z raportem", args.report_pdf or "tracking_report.pdf")
 
     return TrackerConfig(
         video=args.video,
@@ -246,6 +294,9 @@ def interactive_configure_track(args: argparse.Namespace) -> TrackerConfig:
         output_csv=args.output_csv,
         display=display,
         roi=roi,
+        trajectory_png=trajectory_png,
+        report_csv=report_csv,
+        report_pdf=report_pdf,
     )
 
 
@@ -274,6 +325,9 @@ def build_tracker_config(args: argparse.Namespace) -> TrackerConfig:
         output_csv=args.output_csv,
         display=args.display,
         roi=args.roi,
+        trajectory_png=args.trajectory_png,
+        report_csv=args.report_csv,
+        report_pdf=args.report_pdf,
     )
 
 
@@ -321,7 +375,7 @@ def calibrate_camera(
         gray_shape = gray.shape[::-1]
 
     if not objpoints or gray_shape is None:
-        print("[ERROR] Kalibracja nieudana: brak poprawnie wykrytych wzorców.")
+        print("[ERROR] Kalibracja nie powiodła się - brak poprawnych obrazów.")
         return None
 
     ok, camera_matrix, dist_coeffs, _, _ = cv2.calibrateCamera(objpoints, imgpoints, gray_shape, None, None)
@@ -330,112 +384,114 @@ def calibrate_camera(
         return None
 
     np.savez(output_file, camera_matrix=camera_matrix, dist_coeffs=dist_coeffs)
-    print(f"[INFO] Kalibracja zakończona. Zapisano: {output_file}")
-    print("[INFO] camera_matrix =")
-    print(camera_matrix)
-    print("[INFO] dist_coeffs =")
-    print(dist_coeffs)
+    print(f"[INFO] Zapisano kalibrację do: {output_file}")
     return camera_matrix, dist_coeffs
 
 
 def load_calibration(calib_file: Optional[str]) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     if not calib_file:
         return None, None
-    try:
-        data = np.load(calib_file)
-        return data["camera_matrix"], data["dist_coeffs"]
-    except Exception as exc:
-        print(f"[WARNING] Nie udało się wczytać kalibracji {calib_file}: {exc}")
-        return None, None
+    if not os.path.exists(calib_file):
+        raise FileNotFoundError(f"Nie znaleziono pliku kalibracji: {calib_file}")
+    data = np.load(calib_file)
+    return data["camera_matrix"], data["dist_coeffs"]
 
 
-def crop_roi(frame: np.ndarray, roi: Optional[Tuple[int, int, int, int]]) -> Tuple[np.ndarray, Tuple[int, int]]:
+def ensure_odd(value: int) -> int:
+    if value % 2 == 0:
+        return value + 1
+    return value
+
+
+def apply_roi(frame: np.ndarray, roi: Optional[Tuple[int, int, int, int]]) -> Tuple[np.ndarray, Tuple[int, int]]:
     if roi is None:
         return frame, (0, 0)
     x, y, w, h = roi
-    h_frame, w_frame = frame.shape[:2]
-    x2 = min(x + w, w_frame)
-    y2 = min(y + h, h_frame)
     x = max(0, x)
     y = max(0, y)
-    if x >= x2 or y >= y2:
-        return frame, (0, 0)
+    x2 = min(frame.shape[1], x + w)
+    y2 = min(frame.shape[0], y + h)
     return frame[y:y2, x:x2], (x, y)
 
 
-def build_mask(frame_bgr: np.ndarray, config: TrackerConfig) -> Tuple[np.ndarray, np.ndarray]:
-    if config.track_mode == "color":
-        hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
-        combined = np.zeros(hsv.shape[:2], dtype=np.uint8)
-        for lower, upper in config.hsv_ranges:
-            lower_np = np.array(lower, dtype=np.uint8)
-            upper_np = np.array(upper, dtype=np.uint8)
-            combined = cv2.bitwise_or(combined, cv2.inRange(hsv, lower_np, upper_np))
-        mask = combined
-        gray_for_stats = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-    else:
-        gray_for_stats = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        blur = config.blur if config.blur % 2 == 1 else config.blur + 1
-        blurred = cv2.GaussianBlur(gray_for_stats, (blur, blur), 0)
+def build_mask(frame_bgr: np.ndarray, gray: np.ndarray, config: TrackerConfig) -> np.ndarray:
+    if config.track_mode == "brightest":
+        blurred = cv2.GaussianBlur(gray, (ensure_odd(config.blur), ensure_odd(config.blur)), 0)
         _, mask = cv2.threshold(blurred, config.threshold, 255, cv2.THRESH_BINARY)
+    else:
+        hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
+        mask = np.zeros(gray.shape, dtype=np.uint8)
+        for lower, upper in config.hsv_ranges:
+            local = cv2.inRange(hsv, np.array(lower, dtype=np.uint8), np.array(upper, dtype=np.uint8))
+            mask = cv2.bitwise_or(mask, local)
+
+        if config.blur > 1:
+            blurred_mask = cv2.GaussianBlur(mask, (ensure_odd(config.blur), ensure_odd(config.blur)), 0)
+            _, mask = cv2.threshold(blurred_mask, 127, 255, cv2.THRESH_BINARY)
 
     if config.erode_iter > 0:
         mask = cv2.erode(mask, None, iterations=config.erode_iter)
     if config.dilate_iter > 0:
         mask = cv2.dilate(mask, None, iterations=config.dilate_iter)
-    return mask, gray_for_stats
+    return mask
 
 
-def select_best_contour(contours: Sequence[np.ndarray], gray: np.ndarray, config: TrackerConfig) -> Optional[np.ndarray]:
-    valid: List[Tuple[float, np.ndarray]] = []
+def contour_candidates(mask: np.ndarray) -> List[np.ndarray]:
+    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return list(contours)
+
+
+def select_best_contour(contours: Sequence[np.ndarray], config: TrackerConfig, gray: np.ndarray) -> Optional[np.ndarray]:
+    best = None
+    best_score = -1.0
+
     for contour in contours:
-        area = float(cv2.contourArea(contour))
+        area = cv2.contourArea(contour)
         if area < config.min_area:
             continue
         if config.max_area is not None and area > config.max_area:
             continue
 
-        if config.track_mode == "color":
-            score = area
-        else:
-            mask = np.zeros(gray.shape, dtype=np.uint8)
-            cv2.drawContours(mask, [contour], -1, 255, thickness=-1)
-            mean_intensity = float(cv2.mean(gray, mask=mask)[0])
-            score = mean_intensity * max(area, 1.0)
+        score = area
+        if config.track_mode == "brightest":
+            local_mask = np.zeros(gray.shape, dtype=np.uint8)
+            cv2.drawContours(local_mask, [contour], -1, 255, thickness=-1)
+            mean_gray = cv2.mean(gray, mask=local_mask)[0]
+            score = mean_gray * max(area, 1.0)
 
-        valid.append((score, contour))
-
-    if not valid:
-        return None
-    valid.sort(key=lambda item: item[0], reverse=True)
-    return valid[0][1]
+        if score > best_score:
+            best_score = score
+            best = contour
+    return best
 
 
-def contour_features(contour: np.ndarray, gray: np.ndarray, frame_bgr: np.ndarray, offset: Tuple[int, int], config: TrackerConfig) -> Dict[str, object]:
-    ox, oy = offset
+def extract_features(
+    contour: np.ndarray,
+    frame_bgr: np.ndarray,
+    gray: np.ndarray,
+    origin_xy: Tuple[int, int],
+    config: TrackerConfig,
+) -> Dict[str, object]:
+    ox, oy = origin_xy
     area = float(cv2.contourArea(contour))
     perimeter = float(cv2.arcLength(contour, True))
+    (cx0, cy0), radius = cv2.minEnclosingCircle(contour)
     x, y, w, h = cv2.boundingRect(contour)
-    (circle_center, radius) = cv2.minEnclosingCircle(contour)
+
     moments = cv2.moments(contour)
-
     if moments["m00"] != 0:
-        cx = int(moments["m10"] / moments["m00"]) + ox
-        cy = int(moments["m01"] / moments["m00"]) + oy
+        cx = float(moments["m10"] / moments["m00"]) + ox
+        cy = float(moments["m01"] / moments["m00"]) + oy
     else:
-        cx = int(circle_center[0]) + ox
-        cy = int(circle_center[1]) + oy
+        cx = float(cx0) + ox
+        cy = float(cy0) + oy
 
-    circularity = 0.0
-    if perimeter > 0:
-        circularity = float(4.0 * math.pi * area / (perimeter * perimeter))
+    circularity = float(4.0 * math.pi * area / (perimeter * perimeter)) if perimeter > 0 else 0.0
 
     local_mask = np.zeros(gray.shape, dtype=np.uint8)
     cv2.drawContours(local_mask, [contour], -1, 255, thickness=-1)
-
     mean_gray = float(cv2.mean(gray, mask=local_mask)[0])
     max_gray = float(cv2.minMaxLoc(gray, mask=local_mask)[1])
-
     mean_b, mean_g, mean_r, _ = cv2.mean(frame_bgr, mask=local_mask)
     aspect_ratio = float(w / h) if h > 0 else 0.0
     score = area if config.track_mode == "color" else mean_gray * max(area, 1.0)
@@ -489,98 +545,6 @@ def empty_features(config: TrackerConfig) -> Dict[str, object]:
     }
 
 
-def track_spot(config: TrackerConfig) -> None:
-    camera_matrix, dist_coeffs = load_calibration(config.calib_file)
-
-    cap = cv2.VideoCapture(config.video)
-    if not cap.isOpened():
-        raise RuntimeError(f"Nie można otworzyć pliku wideo: {config.video}")
-
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    fps = fps if fps and fps > 0 else 0.0
-
-    rows: List[Dict[str, object]] = []
-    frame_index = 0
-
-    print("\n=== Konfiguracja śledzenia ===")
-    print(f"video       : {config.video}")
-    print(f"track_mode  : {config.track_mode}")
-    print(f"color_name  : {config.color_name or '-'}")
-    print(f"blur        : {config.blur}")
-    print(f"threshold   : {config.threshold}")
-    print(f"erode_iter  : {config.erode_iter}")
-    print(f"dilate_iter : {config.dilate_iter}")
-    print(f"min_area    : {config.min_area}")
-    print(f"max_area    : {config.max_area}")
-    print(f"roi         : {config.roi}")
-    print(f"output_csv  : {config.output_csv}")
-    print("================================\n")
-
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-
-        if camera_matrix is not None and dist_coeffs is not None:
-            frame = cv2.undistort(frame, camera_matrix, dist_coeffs)
-
-        frame_roi, offset = crop_roi(frame, config.roi)
-        mask, gray = build_mask(frame_roi, config)
-        contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        best = select_best_contour(contours, gray, config)
-
-        row: Dict[str, object] = {
-            "frame_index": frame_index,
-            "time_sec": (frame_index / fps) if fps > 0 else float(frame_index),
-        }
-
-        if best is not None:
-            row.update(contour_features(best, gray, frame_roi, offset, config))
-            if config.display:
-                cx = int(row["center_x"])
-                cy = int(row["center_y"])
-                x = int(row["bbox_x"])
-                y = int(row["bbox_y"])
-                w = int(row["bbox_w"])
-                h = int(row["bbox_h"])
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
-        else:
-            row.update(empty_features(config))
-
-        rows.append(row)
-
-        if config.display:
-            display_mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-            if config.roi is not None:
-                x0, y0, w0, h0 = config.roi
-                cv2.rectangle(frame, (x0, y0), (x0 + w0, y0 + h0), (255, 255, 0), 1)
-            cv2.putText(frame, f"frame={frame_index}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-            cv2.putText(frame, f"mode={config.track_mode}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-            cv2.imshow("Tracking", frame)
-            cv2.imshow("Mask", display_mask)
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
-                break
-
-        frame_index += 1
-
-    cap.release()
-    if config.display:
-        cv2.destroyAllWindows()
-
-    with open(config.output_csv, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
-
-    print(f"[INFO] Zapisano CSV: {config.output_csv}")
-    print(f"[INFO] Liczba klatek: {len(rows)}")
-    detected_count = sum(int(r["detected"]) for r in rows)
-    print(f"[INFO] Wykrycia     : {detected_count}")
-
-
 def read_csv_rows(path: str) -> List[Dict[str, str]]:
     with open(path, "r", newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
@@ -604,7 +568,353 @@ def safe_int(value: object, default: int = 0) -> int:
         return default
 
 
-def compare_csv(reference: str, candidate: str, output_csv: Optional[str]) -> None:
+def compute_tracking_summary(rows: List[Dict[str, object]], video_path: str, fps: float) -> Dict[str, object]:
+    total_frames = len(rows)
+    detected_rows = [r for r in rows if safe_int(r.get("detected")) == 1]
+
+    xs = [safe_float(r.get("center_x")) for r in detected_rows]
+    ys = [safe_float(r.get("center_y")) for r in detected_rows]
+    areas = [safe_float(r.get("area")) for r in detected_rows]
+    circularities = [safe_float(r.get("circularity")) for r in detected_rows]
+    radii = [safe_float(r.get("radius")) for r in detected_rows]
+
+    detection_ratio = (len(detected_rows) / total_frames) if total_frames else 0.0
+
+    jumps: List[float] = []
+    for i in range(1, len(detected_rows)):
+        dx = safe_float(detected_rows[i].get("center_x")) - safe_float(detected_rows[i - 1].get("center_x"))
+        dy = safe_float(detected_rows[i].get("center_y")) - safe_float(detected_rows[i - 1].get("center_y"))
+        jumps.append(math.hypot(dx, dy))
+
+    gap_count = 0
+    in_gap = False
+    longest_gap = 0
+    current_gap = 0
+    for row in rows:
+        if safe_int(row.get("detected")) == 0:
+            current_gap += 1
+            if not in_gap:
+                gap_count += 1
+                in_gap = True
+        else:
+            longest_gap = max(longest_gap, current_gap)
+            current_gap = 0
+            in_gap = False
+    longest_gap = max(longest_gap, current_gap)
+
+    path_length = sum(jumps)
+    duration_sec = safe_float(rows[-1].get("time_sec")) if rows else 0.0
+    mean_speed = (path_length / duration_sec) if duration_sec > 0 else 0.0
+
+    def mean(values: List[float]) -> float:
+        return sum(values) / len(values) if values else 0.0
+
+    def stdev(values: List[float]) -> float:
+        if len(values) < 2:
+            return 0.0
+        mu = mean(values)
+        return math.sqrt(sum((v - mu) ** 2 for v in values) / len(values))
+
+    return {
+        "video": video_path,
+        "total_frames": total_frames,
+        "fps": fps,
+        "duration_sec": duration_sec,
+        "detections": len(detected_rows),
+        "detection_ratio": detection_ratio,
+        "gap_count": gap_count,
+        "longest_gap_frames": longest_gap,
+        "path_length_px": path_length,
+        "mean_jump_px": mean(jumps),
+        "max_jump_px": max(jumps) if jumps else 0.0,
+        "jump_std_px": stdev(jumps),
+        "mean_speed_px_per_sec": mean_speed,
+        "mean_x": mean(xs),
+        "mean_y": mean(ys),
+        "x_std": stdev(xs),
+        "y_std": stdev(ys),
+        "mean_area": mean(areas),
+        "area_std": stdev(areas),
+        "mean_radius": mean(radii),
+        "radius_std": stdev(radii),
+        "mean_circularity": mean(circularities),
+    }
+
+
+def save_summary_csv(summary: Dict[str, object], output_csv: str) -> None:
+    with open(output_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(summary.keys()))
+        writer.writeheader()
+        writer.writerow(summary)
+
+
+def generate_trajectory_plot(rows: List[Dict[str, object]], output_png: str, title: str = "Trajektoria plamki") -> None:
+    if plt is None:
+        print("[WARNING] matplotlib nie jest dostępny - pomijam wykres trajektorii.")
+        return
+
+    xs = [safe_float(r.get("center_x")) for r in rows if safe_int(r.get("detected")) == 1]
+    ys = [safe_float(r.get("center_y")) for r in rows if safe_int(r.get("detected")) == 1]
+    frames = [safe_int(r.get("frame_index")) for r in rows if safe_int(r.get("detected")) == 1]
+
+    if not xs or not ys:
+        print("[WARNING] Brak wykryć - nie można wygenerować trajektorii.")
+        return
+
+    plt.figure(figsize=(8, 6))
+    plt.plot(xs, ys, linewidth=1.2)
+    plt.scatter(xs[0], ys[0], s=30, label=f"start: klatka {frames[0]}")
+    plt.scatter(xs[-1], ys[-1], s=30, label=f"koniec: klatka {frames[-1]}")
+    plt.gca().invert_yaxis()
+    plt.xlabel("X [px]")
+    plt.ylabel("Y [px]")
+    plt.title(title)
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_png, dpi=180)
+    plt.close()
+
+
+def build_pdf_report(
+    title: str,
+    output_pdf: str,
+    summary: Dict[str, object],
+    config_lines: List[Tuple[str, str]],
+    trajectory_png: Optional[str] = None,
+    extra_table: Optional[List[List[str]]] = None,
+) -> None:
+    if SimpleDocTemplate is None:
+        print("[WARNING] reportlab nie jest dostępny - pomijam raport PDF.")
+        return
+
+    doc = SimpleDocTemplate(
+        output_pdf,
+        pagesize=A4,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=16 * mm,
+        bottomMargin=16 * mm,
+    )
+    styles = getSampleStyleSheet()
+    title_style = styles["Title"]
+    title_style.fontName = "Helvetica-Bold"
+    heading = ParagraphStyle(
+        "HeadingCustom",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        textColor=colors.HexColor("#1f3b5b"),
+        spaceAfter=6,
+        spaceBefore=8,
+    )
+    body = styles["BodyText"]
+
+    story = [Paragraph(title, title_style), Spacer(1, 6 * mm)]
+
+    cfg_data = [["Parametr", "Wartość"]] + [[k, v] for k, v in config_lines]
+    cfg_table = Table(cfg_data, colWidths=[55 * mm, 105 * mm])
+    cfg_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#dfe8f3")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1f3b5b")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#9fb4cc")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+
+    story += [Paragraph("Konfiguracja", heading), cfg_table, Spacer(1, 5 * mm)]
+
+    sum_rows = [["Metryka", "Wartość"]]
+    for key, value in summary.items():
+        if isinstance(value, float):
+            sum_rows.append([str(key), f"{value:.6f}"])
+        else:
+            sum_rows.append([str(key), str(value)])
+
+    sum_table = Table(sum_rows, colWidths=[70 * mm, 90 * mm])
+    sum_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e9f2e3")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#224522")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#a8c49b")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    story += [Paragraph("Podsumowanie jakości", heading), sum_table]
+
+    if trajectory_png and os.path.exists(trajectory_png):
+        story += [Spacer(1, 6 * mm), Paragraph("Trajektoria", heading)]
+        img = RLImage(trajectory_png, width=165 * mm, height=120 * mm)
+        story += [img]
+
+    if extra_table:
+        story += [Spacer(1, 6 * mm), Paragraph("Dodatkowe dane", heading)]
+        t = Table(extra_table, repeatRows=1)
+        t.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f4ead6")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#b89f6b")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
+        story += [t]
+
+    story += [Spacer(1, 5 * mm), Paragraph("Raport wygenerowany automatycznie przez program śledzący.", body)]
+    doc.build(story)
+
+
+def track_spot(config: TrackerConfig) -> None:
+    camera_matrix, dist_coeffs = load_calibration(config.calib_file)
+
+    cap = cv2.VideoCapture(config.video)
+    if not cap.isOpened():
+        raise RuntimeError(f"Nie można otworzyć pliku wideo: {config.video}")
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    fps = fps if fps and fps > 0 else 0.0
+
+    rows: List[Dict[str, object]] = []
+    frame_index = 0
+
+    print("\n=== Konfiguracja śledzenia ===")
+    print(f"video          : {config.video}")
+    print(f"track_mode     : {config.track_mode}")
+    print(f"color_name     : {config.color_name or '-'}")
+    print(f"blur           : {config.blur}")
+    print(f"threshold      : {config.threshold}")
+    print(f"erode_iter     : {config.erode_iter}")
+    print(f"dilate_iter    : {config.dilate_iter}")
+    print(f"min_area       : {config.min_area}")
+    print(f"max_area       : {config.max_area}")
+    print(f"roi            : {config.roi}")
+    print(f"output_csv     : {config.output_csv}")
+    print(f"trajectory_png : {config.trajectory_png}")
+    print(f"report_csv     : {config.report_csv}")
+    print(f"report_pdf     : {config.report_pdf}")
+    print("================================\n")
+
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+
+        if camera_matrix is not None and dist_coeffs is not None:
+            frame = cv2.undistort(frame, camera_matrix, dist_coeffs)
+
+        frame_roi, origin = apply_roi(frame, config.roi)
+        gray_roi = cv2.cvtColor(frame_roi, cv2.COLOR_BGR2GRAY)
+        mask = build_mask(frame_roi, gray_roi, config)
+        contours = contour_candidates(mask)
+        best_contour = select_best_contour(contours, config, gray_roi)
+
+        row: Dict[str, object] = {"frame_index": frame_index, "time_sec": (frame_index / fps if fps > 0 else frame_index)}
+        if best_contour is None:
+            row.update(empty_features(config))
+        else:
+            row.update(extract_features(best_contour, frame_roi, gray_roi, origin, config))
+
+        rows.append(row)
+
+        if config.display:
+            display_frame = frame.copy()
+            if config.roi is not None:
+                x, y, w, h = config.roi
+                cv2.rectangle(display_frame, (x, y), (x + w, y + h), (255, 255, 0), 1)
+
+            if safe_int(row.get("detected")) == 1:
+                cx = safe_int(row.get("center_x"))
+                cy = safe_int(row.get("center_y"))
+                bx = safe_int(row.get("bbox_x"))
+                by = safe_int(row.get("bbox_y"))
+                bw = safe_int(row.get("bbox_w"))
+                bh = safe_int(row.get("bbox_h"))
+                cv2.circle(display_frame, (cx, cy), 4, (0, 0, 255), -1)
+                cv2.rectangle(display_frame, (bx, by), (bx + bw, by + bh), (0, 255, 0), 1)
+                cv2.putText(display_frame, f"({cx},{cy})", (bx, max(20, by - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+            cv2.putText(display_frame, f"Frame: {frame_index}", (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+            cv2.imshow("Tracking", display_frame)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+
+        frame_index += 1
+
+    cap.release()
+    if config.display:
+        cv2.destroyAllWindows()
+
+    with open(config.output_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+    print(f"[INFO] Zapisano CSV: {config.output_csv}")
+    print(f"[INFO] Liczba klatek: {len(rows)}")
+    detected_count = sum(int(r["detected"]) for r in rows)
+    print(f"[INFO] Wykrycia     : {detected_count}")
+
+    summary = compute_tracking_summary(rows, config.video, fps)
+
+    if config.trajectory_png:
+        generate_trajectory_plot(rows, config.trajectory_png, title=f"Trajektoria - {os.path.basename(config.video)}")
+        print(f"[INFO] Zapisano wykres trajektorii: {config.trajectory_png}")
+
+    if config.report_csv:
+        save_summary_csv(summary, config.report_csv)
+        print(f"[INFO] Zapisano raport CSV: {config.report_csv}")
+
+    if config.report_pdf:
+        config_lines = [
+            ("Plik wideo", config.video),
+            ("Tryb śledzenia", config.track_mode),
+            ("Kolor", config.color_name or "-"),
+            ("Blur", str(config.blur)),
+            ("Threshold", str(config.threshold)),
+            ("Erode iter", str(config.erode_iter)),
+            ("Dilate iter", str(config.dilate_iter)),
+            ("Min area", str(config.min_area)),
+            ("Max area", str(config.max_area) if config.max_area is not None else "-"),
+            ("ROI", str(config.roi) if config.roi is not None else "-"),
+            ("CSV z wynikami", config.output_csv),
+        ]
+        build_pdf_report(
+            title="Raport jakości śledzenia plamki",
+            output_pdf=config.report_pdf,
+            summary=summary,
+            config_lines=config_lines,
+            trajectory_png=config.trajectory_png,
+        )
+        print(f"[INFO] Zapisano raport PDF: {config.report_pdf}")
+
+
+def compare_csv(
+    reference: str,
+    candidate: str,
+    output_csv: Optional[str],
+    report_pdf: Optional[str] = None,
+) -> None:
     ref_rows = read_csv_rows(reference)
     cand_rows = read_csv_rows(candidate)
 
@@ -660,14 +970,26 @@ def compare_csv(reference: str, candidate: str, output_csv: Optional[str]) -> No
             return 0.0
         return math.sqrt(sum(v * v for v in values) / len(values))
 
+    summary = {
+        "common_frames": len(common_frames),
+        "detection_agreement_ratio": (agreement / len(common_frames)) if common_frames else 0.0,
+        "mean_abs_dx": (sum(abs(v) for v in dx_list) / len(dx_list)) if dx_list else 0.0,
+        "mean_abs_dy": (sum(abs(v) for v in dy_list) / len(dy_list)) if dy_list else 0.0,
+        "rmse_dx": rmse(dx_list),
+        "rmse_dy": rmse(dy_list),
+        "rmse_distance": rmse(dist_list),
+        "mean_area_diff": (sum(area_diff_list) / len(area_diff_list)) if area_diff_list else 0.0,
+    }
+
     print("\n=== Raport porównania CSV ===")
-    print(f"Wspólne klatki            : {len(common_frames)}")
-    print(f"Zgodność detekcji         : {agreement / len(common_frames):.4f}")
-    print(f"RMSE X [px]               : {rmse(dx_list):.4f}")
-    print(f"RMSE Y [px]               : {rmse(dy_list):.4f}")
-    print(f"RMSE dystansu [px]        : {rmse(dist_list):.4f}")
-    print(f"Średni błąd dystansu [px] : {(sum(dist_list) / len(dist_list)) if dist_list else 0.0:.4f}")
-    print(f"Średnia różnica pola      : {(sum(area_diff_list) / len(area_diff_list)) if area_diff_list else 0.0:.4f}")
+    print(f"Wspólne klatki            : {summary['common_frames']}")
+    print(f"Zgodność wykrycia         : {summary['detection_agreement_ratio']:.4f}")
+    print(f"Średni |dx| [px]          : {summary['mean_abs_dx']:.4f}")
+    print(f"Średni |dy| [px]          : {summary['mean_abs_dy']:.4f}")
+    print(f"RMSE dx [px]              : {summary['rmse_dx']:.4f}")
+    print(f"RMSE dy [px]              : {summary['rmse_dy']:.4f}")
+    print(f"RMSE odległości [px]      : {summary['rmse_distance']:.4f}")
+    print(f"Średnia różnica pola      : {summary['mean_area_diff']:.4f}")
     print("=============================\n")
 
     if output_csv:
@@ -677,6 +999,23 @@ def compare_csv(reference: str, candidate: str, output_csv: Optional[str]) -> No
             writer.writeheader()
             writer.writerows(compared_rows)
         print(f"[INFO] Zapisano raport szczegółowy: {output_csv}")
+
+    if report_pdf:
+        cfg = [
+            ("Reference CSV", reference),
+            ("Candidate CSV", candidate),
+            ("Detail CSV", output_csv or "-"),
+        ]
+        extra = [["Metryka", "Wartość"]] + [[k, f"{v:.6f}" if isinstance(v, float) else str(v)] for k, v in summary.items()]
+        build_pdf_report(
+            title="Raport porównania wyników śledzenia",
+            output_pdf=report_pdf,
+            summary=summary,
+            config_lines=cfg,
+            trajectory_png=None,
+            extra_table=extra,
+        )
+        print(f"[INFO] Zapisano raport PDF: {report_pdf}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -707,13 +1046,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_track.add_argument("--max_area", type=float, help="Maksymalna powierzchnia konturu")
     p_track.add_argument("--roi", type=parse_roi, help="Obszar zainteresowania x,y,w,h")
     p_track.add_argument("--output_csv", default="tracking_results.csv", help="Plik CSV z wynikami")
+    p_track.add_argument("--trajectory_png", help="Plik PNG z wykresem trajektorii")
+    p_track.add_argument("--report_csv", help="Plik CSV z raportem jakości")
+    p_track.add_argument("--report_pdf", help="Plik PDF z raportem jakości")
     p_track.add_argument("--display", action="store_true", help="Pokaż podgląd na żywo")
     p_track.add_argument("--interactive", action="store_true", help="Interaktywny wybór kluczowych parametrów w terminalu")
 
     p_cmp = subparsers.add_parser("compare", help="Porównanie dwóch plików CSV")
     p_cmp.add_argument("--reference", required=True, help="CSV referencyjny")
     p_cmp.add_argument("--candidate", required=True, help="CSV porównywany")
-    p_cmp.add_argument("--output_csv", help="Szczegółowy raport porównania")
+    p_cmp.add_argument("--output_csv", help="Plik CSV z raportem szczegółowym")
+    p_cmp.add_argument("--report_pdf", help="Plik PDF z raportem porównania")
 
     return parser
 
@@ -732,7 +1075,7 @@ def main() -> None:
         return
 
     if args.command == "compare":
-        compare_csv(args.reference, args.candidate, args.output_csv)
+        compare_csv(args.reference, args.candidate, args.output_csv, args.report_pdf)
         return
 
 
