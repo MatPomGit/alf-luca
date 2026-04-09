@@ -223,10 +223,17 @@ def main():
             args.report_pdf = resolve_output_path(args.report_pdf)
         compare_csv(args.reference, args.candidate, args.output_csv, args.report_pdf)
     elif args.command == "gui":
-        from .gui import GUIEnvironmentError, run_gui
+        try:
+            from .gui import GUIEnvironmentError, run_gui
+        except ImportError as exc:
+            # Import modułu GUI może się nie udać już na etapie ładowania (np. brak cv2).
+            raise SystemExit(f"Błąd zależności GUI: {exc}") from exc
 
         try:
             run_gui(args)
+        except ImportError as exc:
+            # Wspólny komunikat dla brakujących zależności GUI (Kivy/OpenCV/backend okna).
+            raise SystemExit(f"Błąd zależności GUI: {exc}") from exc
         except GUIEnvironmentError as exc:
             # Komunikat celowo krótki i praktyczny, aby użytkownik mógł szybko naprawić środowisko.
             raise SystemExit(f"Błąd uruchamiania GUI: {exc}") from exc
