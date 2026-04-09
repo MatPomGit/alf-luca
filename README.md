@@ -57,6 +57,14 @@ python track_luca.py track \
 python track_luca.py gui --video film.mp4
 ```
 
+Możesz też uruchomić samo:
+
+```bash
+python track_luca.py
+```
+
+Wtedy program domyślnie przełączy się na tryb `gui` i spróbuje użyć pierwszego pliku `*.mp4` (najpierw z katalogu `video/`, potem z bieżącego katalogu).
+
 W GUI wyświetlany jest odnośnik do narzędzia QA MP4 (`tools/video_tool.py`).
 Możesz też nacisnąć klawisz `m`, aby wypisać w konsoli gotową komendę uruchomienia narzędzia.
 

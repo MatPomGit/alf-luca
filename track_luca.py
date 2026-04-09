@@ -99,6 +99,7 @@ GUI_MODES = ["calibration", "processing", "compare"]
 GUI_SELECTION_MODES = ["largest", "stablest", "longest"]
 GUI_COLOR_NAMES = list(COLOR_PRESETS.keys())
 MP4_QUALITY_TOOL_PATH = "tools/video_tool.py"
+DEFAULT_GUI_VIDEO_GLOB_PATTERNS = ("video/*.mp4", "*.mp4")
 
 
 # ----------------------------
@@ -1378,7 +1379,7 @@ def build_parser():
     p_cmp.add_argument("--report_pdf", help="Opcjonalny raport PDF")
 
     p_gui = subparsers.add_parser("gui", help="GUI do strojenia parametrów i podglądu w czasie rzeczywistym")
-    p_gui.add_argument("--video", required=True, help="Plik wejściowy MP4")
+    p_gui.add_argument("--video", help="Plik wejściowy MP4 (opcjonalny przy starcie bezargumentowym)")
     p_gui.add_argument("--calib_file", help="Plik kalibracji .npz (opcjonalnie)")
     p_gui.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
     p_gui.add_argument("--threshold", type=int, default=200)
@@ -1414,7 +1415,7 @@ def normalize_legacy_argv(argv: Sequence[str]) -> List[str]:
     args = list(argv)
     commands = {"calibrate", "track", "compare", "gui"}
     if not args:
-        return args
+        return ["gui"]
     if args[0] in commands:
         return args
 
@@ -1427,10 +1428,29 @@ def normalize_legacy_argv(argv: Sequence[str]) -> List[str]:
     return args
 
 
+def pick_default_gui_video() -> Optional[str]:
+    """
+    Wyszukuje domyślny plik MP4 dla trybu GUI.
+    Najpierw sprawdza katalog `video/`, a potem bieżący katalog roboczy.
+    """
+    for pattern in DEFAULT_GUI_VIDEO_GLOB_PATTERNS:
+        matches = sorted(glob.glob(pattern))
+        if matches:
+            return matches[0]
+    return None
+
+
 def main():
     parser = build_parser()
     argv = normalize_legacy_argv(sys.argv[1:])
     args = parser.parse_args(argv)
+
+    if args.command == "gui" and not getattr(args, "video", None):
+        args.video = pick_default_gui_video()
+        if not args.video:
+            parser.error(
+                "Dla trybu GUI wymagany jest plik MP4. Podaj --video lub umieść plik *.mp4 w katalogu ./video."
+            )
 
     if args.command == "calibrate":
         calibrate_camera(args.calib_dir, args.rows, args.cols, args.square_size, args.output_file)
