@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-track_bright_spot_v4.py
+track_spot.py
 
 Rozszerzona wersja programu do:
 - kalibracji kamery,
@@ -33,6 +33,11 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
+
+try:
+    from kalman_tracker import smooth_xy_sequence
+except Exception:
+    smooth_xy_sequence = None
 
 
 # ----------------------------
@@ -67,6 +72,7 @@ class TrackPoint:
     radius: Optional[float]
     track_id: Optional[int]
     rank: Optional[int] = None
+    kalman_predicted: int = 0
 
 
 # ----------------------------
@@ -386,6 +392,7 @@ class SimpleMultiTracker:
                     radius=det.radius,
                     track_id=tid,
                     rank=det.rank,
+                    kalman_predicted=0,
                 )
             )
             assigned_tracks.add(tid)
@@ -408,6 +415,7 @@ class SimpleMultiTracker:
                         radius=None,
                         track_id=tid,
                         rank=None,
+                        kalman_predicted=0,
                     )
                 )
 
@@ -433,6 +441,7 @@ class SimpleMultiTracker:
                         radius=det.radius,
                         track_id=tid,
                         rank=det.rank,
+                        kalman_predicted=0,
                     )
                 ],
             }
@@ -510,6 +519,40 @@ def choose_main_track(track_histories: Dict[int, Dict], selection_mode: str) -> 
     return scored[0][1] if scored else None
 
 
+
+# ----------------------------
+# Filtr Kalmana - integracja
+# ----------------------------
+
+def apply_kalman_to_points(
+    points: Sequence[TrackPoint],
+    process_noise: float,
+    measurement_noise: float,
+):
+    if smooth_xy_sequence is None or not points:
+        return
+
+    sequence = []
+    for p in points:
+        if p.x is None or p.y is None:
+            sequence.append(None)
+        else:
+            sequence.append((float(p.x), float(p.y)))
+
+    smoothed = smooth_xy_sequence(
+        sequence,
+        process_noise=process_noise,
+        measurement_noise=measurement_noise,
+    )
+
+    for p, result in zip(points, smoothed):
+        sx, sy, predicted = result
+        if sx is not None and sy is not None:
+            p.x = float(sx)
+            p.y = float(sy)
+        p.kalman_predicted = int(bool(predicted))
+
+
 # ----------------------------
 # Eksport CSV i raporty
 # ----------------------------
@@ -519,12 +562,12 @@ def save_track_csv(points: Sequence[TrackPoint], csv_path: str):
         writer = csv.writer(f)
         writer.writerow([
             "frame_index", "time_sec", "detected", "x", "y", "area",
-            "perimeter", "circularity", "radius", "track_id", "rank"
+            "perimeter", "circularity", "radius", "track_id", "rank", "kalman_predicted"
         ])
         for p in points:
             writer.writerow([
                 p.frame_index, p.time_sec, int(p.detected), p.x, p.y, p.area,
-                p.perimeter, p.circularity, p.radius, p.track_id, p.rank
+                p.perimeter, p.circularity, p.radius, p.track_id, p.rank, p.kalman_predicted
             ])
 
 
@@ -533,13 +576,13 @@ def save_all_tracks_csv(track_histories: Dict[int, Dict], csv_path: str):
         writer = csv.writer(f)
         writer.writerow([
             "track_id", "frame_index", "time_sec", "detected", "x", "y", "area",
-            "perimeter", "circularity", "radius", "rank"
+            "perimeter", "circularity", "radius", "rank", "kalman_predicted"
         ])
         for tid, data in sorted(track_histories.items()):
             for p in data["points"]:
                 writer.writerow([
                     tid, p.frame_index, p.time_sec, int(p.detected), p.x, p.y,
-                    p.area, p.perimeter, p.circularity, p.radius, p.rank
+                    p.area, p.perimeter, p.circularity, p.radius, p.rank, p.kalman_predicted
                 ])
 
 
@@ -665,6 +708,7 @@ def load_tracking_csv(csv_path: str) -> List[TrackPoint]:
                     radius=float(row["radius"]) if row["radius"] not in {"", "None"} else None,
                     track_id=int(row["track_id"]) if row["track_id"] not in {"", "None"} else None,
                     rank=int(row["rank"]) if row.get("rank", "") not in {"", "None"} else None,
+                    kalman_predicted=int(row.get("kalman_predicted", "0") or 0),
                 )
             )
     return points
@@ -813,6 +857,8 @@ def export_annotated_video(
             label = f"ID={p.track_id}"
             if p.rank is not None:
                 label += f" R={p.rank}"
+            if p.kalman_predicted:
+                label += " K"
             if p.track_id == main_track_id:
                 label += " MAIN"
             cv2.putText(frame, label, (cx + 6, cy - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2, cv2.LINE_AA)
@@ -1080,6 +1126,7 @@ def track_video(args):
                     radius=best.radius if best else None,
                     track_id=1 if best else None,
                     rank=best.rank if best else None,
+                    kalman_predicted=0,
                 )
             )
 
@@ -1116,6 +1163,13 @@ def track_video(args):
             raise RuntimeError("Nie udało się wybrać głównej trajektorii.")
         main_points = finished_tracks[main_track_id]["points"]
 
+        if args.use_kalman:
+            apply_kalman_to_points(
+                main_points,
+                process_noise=args.kalman_process_noise,
+                measurement_noise=args.kalman_measurement_noise,
+            )
+
         save_track_csv(main_points, args.output_csv)
         print(f"[OK] Zapisano główną trajektorię do: {args.output_csv}")
         print(f"[OK] Wybrano track_id={main_track_id} jako trajektorię główną ({args.selection_mode})")
@@ -1148,6 +1202,13 @@ def track_video(args):
             print(f"[OK] Zapisano wideo wynikowe: {args.annotated_video}")
 
     else:
+        if args.use_kalman:
+            apply_kalman_to_points(
+                single_points,
+                process_noise=args.kalman_process_noise,
+                measurement_noise=args.kalman_measurement_noise,
+            )
+
         save_track_csv(single_points, args.output_csv)
         print(f"[OK] Zapisano wyniki do: {args.output_csv}")
 
@@ -1181,7 +1242,7 @@ def track_video(args):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="Śledzenie jasnej lub kolorowej plamki światła w video MP4."
+        description="Śledzenie jasnej lub kolorowej plamki światła w video MP4. Obsługuje także opcjonalne wygładzanie filtrem Kalmana."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -1222,6 +1283,9 @@ def build_parser():
     p_track.add_argument("--all_tracks_csv", help="CSV ze wszystkimi trajektoriami")
     p_track.add_argument("--annotated_video", help="Wyjściowy MP4 z narysowanymi trajektoriami")
     p_track.add_argument("--draw_all_tracks", action="store_true", help="Na filmie wynikowym rysuj wszystkie trajektorie")
+    p_track.add_argument("--use_kalman", action="store_true", help="Wygładzanie trajektorii filtrem Kalmana")
+    p_track.add_argument("--kalman_process_noise", type=float, default=1e-2, help="Szum procesu dla filtru Kalmana")
+    p_track.add_argument("--kalman_measurement_noise", type=float, default=1e-1, help="Szum pomiaru dla filtru Kalmana")
 
     p_cmp = subparsers.add_parser("compare", help="Porównanie dwóch CSV")
     p_cmp.add_argument("--reference", required=True, help="Referencyjny CSV")
