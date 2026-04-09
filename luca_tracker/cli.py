@@ -5,7 +5,6 @@ import os
 import time
 import sys
 from typing import List, Optional, Sequence
-from pathlib import Path
 
 from .io_paths import (
     build_measurement_stem,
@@ -182,12 +181,12 @@ def main():
             base = build_measurement_stem(run_config.input.video)
             output_csv_cfg = with_default(run_config.eval.output_csv, f"{base}_track.csv")
             if output_csv_cfg == "tracking_results.csv":
-                output_csv_cfg = f"{base}_track.csv"
+                output_csv_cfg = f"{base}_tracking_results.csv"
             run_config.eval.output_csv = resolve_output_path(output_csv_cfg)
             run_config.eval.trajectory_png = resolve_output_path(
                 with_default(run_config.eval.trajectory_png, f"{base}_trajectory.png")
             )
-            run_config.eval.report_csv = resolve_output_path(with_default(run_config.eval.report_csv, f"{base}_metrics.csv"))
+            run_config.eval.report_csv = resolve_output_path(with_default(run_config.eval.report_csv, f"{base}_report.csv"))
             run_config.eval.report_pdf = resolve_output_path(with_default(run_config.eval.report_pdf, f"{base}_report.pdf"))
             if run_config.eval.all_tracks_csv:
                 run_config.eval.all_tracks_csv = resolve_output_path(run_config.eval.all_tracks_csv)
@@ -201,10 +200,10 @@ def main():
             base = build_measurement_stem(args.video)
             output_csv_value = args.output_csv
             if output_csv_value == "tracking_results.csv":
-                output_csv_value = f"{base}_track.csv"
+                output_csv_value = f"{base}_tracking_results.csv"
             args.output_csv = resolve_output_path(output_csv_value)
             args.trajectory_png = resolve_output_path(args.trajectory_png or f"{base}_trajectory.png")
-            args.report_csv = resolve_output_path(args.report_csv or f"{base}_metrics.csv")
+            args.report_csv = resolve_output_path(args.report_csv or f"{base}_report.csv")
             args.report_pdf = resolve_output_path(args.report_pdf or f"{base}_report.pdf")
             if args.all_tracks_csv:
                 args.all_tracks_csv = resolve_output_path(args.all_tracks_csv)
