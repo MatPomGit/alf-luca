@@ -8,20 +8,26 @@ from __future__ import annotations
 
 from .detectors import (
     COLOR_PRESETS,
+    DetectorConfig,
     build_mask,
     contour_to_detection,
     detect_spots,
+    detect_spots_with_config,
     ensure_odd,
     parse_hsv_pair,
     parse_roi,
 )
-from .pipeline import ask_bool, ask_value, calibrate_camera, interactive_track_config, process_video_frames, track_video
-from .postprocess import apply_kalman_to_points
-from .tracker_core import SimpleMultiTracker, choose_main_track
+from .pipeline import PipelineConfig, ask_bool, ask_value, calibrate_camera, interactive_track_config, process_video_frames, track_video
+from .postprocess import KalmanConfig, apply_kalman_to_points, smooth_xy_with_config
+from .tracker_core import SimpleMultiTracker, TrackerConfig, choose_main_track, run_tracker_with_config
 
 __all__ = [
     "COLOR_PRESETS",
+    "DetectorConfig",
+    "KalmanConfig",
+    "PipelineConfig",
     "SimpleMultiTracker",
+    "TrackerConfig",
     "apply_kalman_to_points",
     "ask_bool",
     "ask_value",
@@ -30,10 +36,13 @@ __all__ = [
     "choose_main_track",
     "contour_to_detection",
     "detect_spots",
+    "detect_spots_with_config",
     "ensure_odd",
     "interactive_track_config",
     "parse_hsv_pair",
     "parse_roi",
     "process_video_frames",
+    "run_tracker_with_config",
+    "smooth_xy_with_config",
     "track_video",
 ]

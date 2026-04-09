@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import argparse
+import json
 import math
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import cv2
@@ -19,6 +23,24 @@ COLOR_PRESETS: Dict[str, List[Tuple[Tuple[int, int, int], Tuple[int, int, int]]]
     "orange": [((8, 100, 80), (22, 255, 255))],
     "purple": [((130, 60, 60), (165, 255, 255))],
 }
+
+
+@dataclass
+class DetectorConfig:
+    """Konfiguracja detektora używana przez pipeline i tryb standalone."""
+
+    track_mode: str = "brightness"
+    blur: int = 11
+    threshold: int = 200
+    erode_iter: int = 2
+    dilate_iter: int = 4
+    min_area: float = 10.0
+    max_area: float = 0.0
+    max_spots: int = 10
+    color_name: str = "red"
+    hsv_lower: Optional[str] = None
+    hsv_upper: Optional[str] = None
+    roi: Optional[str] = None
 
 
 def parse_roi(roi_text: Optional[str], frame_shape: Tuple[int, int, int]) -> Tuple[int, int, int, int]:
@@ -108,12 +130,12 @@ def contour_to_detection(contour, offset_x: int = 0, offset_y: int = 0) -> Optio
     if area <= 0:
         return None
     perimeter = float(cv2.arcLength(contour, True))
-    M = cv2.moments(contour)
-    if M["m00"] == 0:
+    moments = cv2.moments(contour)
+    if moments["m00"] == 0:
         return None
 
-    x = float(M["m10"] / M["m00"]) + offset_x
-    y = float(M["m01"] / M["m00"]) + offset_y
+    x = float(moments["m10"] / moments["m00"]) + offset_x
+    y = float(moments["m01"] / moments["m00"]) + offset_y
     circ = float(4.0 * math.pi * area / (perimeter * perimeter)) if perimeter > 0 else 0.0
     (_, _), radius = cv2.minEnclosingCircle(contour)
     bx, by, bw, bh = cv2.boundingRect(contour)
@@ -159,7 +181,7 @@ def detect_spots(
 ) -> Tuple[List[Detection], np.ndarray, Tuple[int, int, int, int]]:
     """Wykrywa plamki na klatce i zwraca detekcje, maskę oraz użyte ROI."""
     x0, y0, w, h = parse_roi(roi, frame.shape)
-    roi_frame = frame[y0:y0 + h, x0:x0 + w]
+    roi_frame = frame[y0 : y0 + h, x0 : x0 + w]
     mask = build_mask(
         roi_frame=roi_frame,
         track_mode=track_mode,
@@ -190,3 +212,74 @@ def detect_spots(
         det.rank = idx
 
     return detections, mask, (x0, y0, w, h)
+
+
+def detect_spots_with_config(frame: np.ndarray, config: DetectorConfig):
+    """Uruchamia detekcję na podstawie obiektu konfiguracyjnego."""
+    return detect_spots(
+        frame=frame,
+        track_mode=config.track_mode,
+        blur=config.blur,
+        threshold=config.threshold,
+        erode_iter=config.erode_iter,
+        dilate_iter=config.dilate_iter,
+        min_area=config.min_area,
+        max_area=config.max_area,
+        max_spots=config.max_spots,
+        color_name=config.color_name,
+        hsv_lower=config.hsv_lower,
+        hsv_upper=config.hsv_upper,
+        roi=config.roi,
+    )
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """Tworzy parser CLI do samodzielnego uruchamiania modułu detekcji."""
+    parser = argparse.ArgumentParser(description="Standalone detector for single image.")
+    parser.add_argument("--image", required=True, help="Path to input image.")
+    parser.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
+    parser.add_argument("--threshold", type=int, default=200)
+    parser.add_argument("--blur", type=int, default=11)
+    parser.add_argument("--min_area", type=float, default=10.0)
+    parser.add_argument("--max_area", type=float, default=0.0)
+    parser.add_argument("--erode_iter", type=int, default=2)
+    parser.add_argument("--dilate_iter", type=int, default=4)
+    parser.add_argument("--max_spots", type=int, default=10)
+    parser.add_argument("--color_name", default="red")
+    parser.add_argument("--hsv_lower")
+    parser.add_argument("--hsv_upper")
+    parser.add_argument("--roi")
+    parser.add_argument("--mask_out", help="Optional path to save generated mask image.")
+    parser.add_argument("--json_out", help="Optional path to save detections as JSON.")
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Punkt wejścia standalone: wykrywa plamki na pojedynczym obrazie."""
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    image = cv2.imread(args.image)
+    if image is None:
+        raise FileNotFoundError(f"Unable to read image: {args.image}")
+
+    config = DetectorConfig(**{k: v for k, v in vars(args).items() if k in set(asdict(DetectorConfig()).keys())})
+    detections, mask, roi_box = detect_spots_with_config(image, config)
+
+    if args.mask_out:
+        cv2.imwrite(args.mask_out, mask)
+
+    payload = {
+        "roi": list(roi_box),
+        "count": len(detections),
+        "detections": [asdict(det) for det in detections],
+    }
+    if args.json_out:
+        Path(args.json_out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    print(json.dumps(payload, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
