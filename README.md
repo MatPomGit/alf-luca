@@ -238,7 +238,7 @@ Możesz też nacisnąć klawisz `m`, aby wypisać w konsoli gotową komendę uru
 
 ```bash
 python tools/video_tool.py \
-  --input luca_regal.mp4 \
+  --input sledzenie_plamki.mp4 \
   --analyze-only \
   --report-json report_mp4.json
 ```
@@ -247,7 +247,7 @@ python tools/video_tool.py \
 
 ```bash
 python tools/video_tool.py \
-  --input luca_regal.mp4 \
+  --input sledzenie_plamki.mp4 \
   --output film_fixed.mp4 \
   --target-bitrate 2500k \
   --target-fps 30 \
@@ -259,7 +259,7 @@ python tools/video_tool.py \
 
 ```bash
 python tools/video_tool.py \
-  --input luca_regal.mp4 \
+  --input sledzenie_plamki.mp4 \
   --output film_no_audio.mp4 \
   --remove-audio
 ```
