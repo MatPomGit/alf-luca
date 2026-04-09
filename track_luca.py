@@ -208,7 +208,9 @@ def ask_bool(prompt: str, default: bool) -> bool:
 
 def interactive_track_config(args):
     print("\n=== Interaktywny dobór parametrów śledzenia ===")
-    args.track_mode = ask_value("Tryb śledzenia (brightness/color)", str, args.track_mode)
+    args.track_mode = normalize_track_mode(
+        ask_value("Tryb śledzenia (brightness/color)", str, args.track_mode)
+    )
     args.blur = ask_value("Rozmiar rozmycia Gaussa (nieparzysty)", int, args.blur)
     args.threshold = ask_value("Próg jasności 0-255", int, args.threshold)
     args.min_area = ask_value("Minimalne pole plamki", float, args.min_area)
@@ -1757,6 +1759,11 @@ def normalize_legacy_argv(argv: Sequence[str]) -> List[str]:
     """
     args = list(argv)
     commands = {"calibrate", "track", "compare", "gui"}
+    if "--track_mode" in args:
+        track_mode_idx = args.index("--track_mode")
+        if track_mode_idx + 1 < len(args):
+            args[track_mode_idx + 1] = normalize_track_mode(args[track_mode_idx + 1])
+
     if not args:
         return ["gui"]
     if args[0] in commands:
@@ -1769,10 +1776,6 @@ def normalize_legacy_argv(argv: Sequence[str]) -> List[str]:
             if mode in commands:
                 args = [mode, *args[:mode_idx], *args[mode_idx + 2 :]]
 
-    if "--track_mode" in args:
-        track_mode_idx = args.index("--track_mode")
-        if track_mode_idx + 1 < len(args):
-            args[track_mode_idx + 1] = normalize_track_mode(args[track_mode_idx + 1])
     return args
 
 
