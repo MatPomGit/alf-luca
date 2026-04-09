@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import cv2
 import numpy as np
 
+from .detector_registry import available_detector_names
 from .detectors import DetectorConfig, detect_spots_with_config
 from .postprocess import KalmanConfig, apply_kalman_to_points
 from .reports import (
@@ -83,8 +84,9 @@ def ask_bool(prompt: str, default: bool) -> bool:
 
 def interactive_track_config(args):
     """Umożliwia ręczne strojenie parametrów śledzenia przed startem."""
+    supported_modes = "/".join(available_detector_names())
     print("\n=== Interaktywny dobór parametrów śledzenia ===")
-    args.track_mode = ask_value("Tryb śledzenia (brightness/color)", str, args.track_mode)
+    args.track_mode = ask_value(f"Tryb śledzenia ({supported_modes})", str, args.track_mode)
     args.blur = ask_value("Rozmiar rozmycia Gaussa (nieparzysty)", int, args.blur)
     args.threshold = ask_value("Próg jasności 0-255", int, args.threshold)
     args.min_area = ask_value("Minimalne pole plamki", float, args.min_area)
@@ -395,10 +397,11 @@ def track_video(args_or_config):
 
 def _build_parser() -> argparse.ArgumentParser:
     """Tworzy lekki parser standalone dla modułu pipeline."""
+    detector_names = available_detector_names()
     parser = argparse.ArgumentParser(description="Standalone tracking pipeline runner.")
     parser.add_argument("--video", required=True)
     parser.add_argument("--output_csv", default="tracking_results.csv")
-    parser.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
+    parser.add_argument("--track_mode", choices=detector_names, default="brightness")
     parser.add_argument("--threshold", type=int, default=200)
     parser.add_argument("--blur", type=int, default=11)
     parser.add_argument("--min_area", type=float, default=10.0)

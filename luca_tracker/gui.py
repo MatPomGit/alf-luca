@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import os
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -45,15 +46,47 @@ def _validate_gui_runtime_environment() -> None:
     # "Unable to find any valuable Window provider" przy braku aktywnego displaya.
     if os.name != "posix":
         return
-    has_x11 = bool(os.environ.get("DISPLAY"))
-    has_wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
-    if has_x11 or has_wayland:
+    display = os.environ.get("DISPLAY", "").strip()
+    wayland_display = os.environ.get("WAYLAND_DISPLAY", "").strip()
+    if _is_display_endpoint_reachable(display, wayland_display):
         return
     raise GUIEnvironmentError(
         "Brak aktywnego serwera graficznego (DISPLAY/WAYLAND_DISPLAY). "
         "Uruchom aplikację w sesji desktopowej lub skonfiguruj X11/Wayland, "
         "a następnie powtórz uruchomienie z logowaniem debug (np. `python track_luca.py gui -d`)."
     )
+
+
+def _is_display_endpoint_reachable(display: str, wayland_display: str) -> bool:
+    """Sprawdza, czy wskazany endpoint X11/Wayland wygląda na realnie dostępny.
+
+    Samo ustawienie zmiennych DISPLAY/WAYLAND_DISPLAY bywa mylące (np. w kontenerach),
+    dlatego weryfikujemy także obecność odpowiedniego gniazda Unix.
+    """
+    # Wayland: najpierw sprawdzamy wskazanie bezwzględne, a potem domyślne katalogi runtime.
+    if wayland_display:
+        wayland_path = Path(wayland_display)
+        if wayland_path.is_absolute() and wayland_path.exists():
+            return True
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+        candidates = []
+        if runtime_dir:
+            candidates.append(Path(runtime_dir) / wayland_display)
+        candidates.append(Path(f"/run/user/{os.getuid()}") / wayland_display)
+        if any(path.exists() for path in candidates):
+            return True
+
+    # X11: sprawdzamy socket /tmp/.X11-unix/X<N> na bazie numeru ekranu z DISPLAY.
+    if display:
+        match = re.match(r"^(?:[^:]*:)?(?P<num>\d+)(?:\.\d+)?$", display)
+        if match:
+            socket_path = Path("/tmp/.X11-unix") / f"X{match.group('num')}"
+            if socket_path.exists():
+                return True
+        # Fallback: gdy format DISPLAY jest niestandardowy, akceptujemy tylko localhost/TCP.
+        if display.startswith("localhost:") or display.startswith("127.0.0.1:"):
+            return True
+    return False
 
 
 def _parse_yaml_scalar(raw: str):

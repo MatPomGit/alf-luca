@@ -165,6 +165,136 @@ python track_luca.py track \
   --report_pdf output/tracking_calib_report.pdf
 ```
 
+### 2b. Pełny proces end-to-end: od wideo do porównania wyników
+
+Poniżej znajdziesz kompletne, gotowe scenariusze do uruchomienia „krok po kroku”.
+Każdy wariant obejmuje:
+
+1. wczytanie pliku wideo,
+2. śledzenie punktu/plamki,
+3. eksport wyników,
+4. ponowne wczytanie wyników i ich porównanie.
+
+> Przykłady zakładają, że pracujesz z katalogu głównego repozytorium.
+
+#### Wariant A — podstawowy (bez zapisu wideo z nałożeniem)
+
+```bash
+# 1) Pomiar referencyjny
+python track_luca.py track \
+  --video video/luca_regal.mp4 \
+  --track_mode brightness \
+  --output_csv output/luca_regal_ref.csv \
+  --trajectory_png output/luca_regal_ref.png \
+  --report_csv output/luca_regal_ref_report.csv \
+  --report_pdf output/luca_regal_ref_report.pdf
+
+# 2) Pomiar porównawczy (inne parametry detekcji)
+python track_luca.py track \
+  --video video/luca_regal.mp4 \
+  --track_mode brightness \
+  --threshold 185 \
+  --blur 9 \
+  --min_area 8 \
+  --output_csv output/luca_regal_test.csv \
+  --trajectory_png output/luca_regal_test.png \
+  --report_csv output/luca_regal_test_report.csv \
+  --report_pdf output/luca_regal_test_report.pdf
+
+# 3) Porównanie dwóch wyników CSV
+python track_luca.py compare \
+  --reference output/luca_regal_ref.csv \
+  --candidate output/luca_regal_test.csv \
+  --output_csv output/luca_regal_diff.csv \
+  --report_pdf output/luca_regal_diff_report.pdf
+```
+
+#### Wariant B — z dodatkowym zapisem wideo z nałożonym śledzonym punktem
+
+```bash
+# 1) Pomiar referencyjny + wideo z nałożoną trajektorią
+python track_luca.py track \
+  --video video/sledzenie_plamki.mp4 \
+  --track_mode brightness \
+  --multi_track \
+  --selection_mode longest \
+  --output_csv output/sledzenie_ref.csv \
+  --all_tracks_csv output/sledzenie_ref_all_tracks.csv \
+  --annotated_video output/sledzenie_ref_annotated.mp4 \
+  --trajectory_png output/sledzenie_ref_traj.png \
+  --report_csv output/sledzenie_ref_report.csv
+
+# 2) Pomiar porównawczy + druga wersja filmu wynikowego
+python track_luca.py track \
+  --video video/sledzenie_plamki.mp4 \
+  --track_mode brightness \
+  --multi_track \
+  --selection_mode stablest \
+  --max_distance 30 \
+  --max_missed 6 \
+  --output_csv output/sledzenie_test.csv \
+  --all_tracks_csv output/sledzenie_test_all_tracks.csv \
+  --annotated_video output/sledzenie_test_annotated.mp4 \
+  --trajectory_png output/sledzenie_test_traj.png \
+  --report_csv output/sledzenie_test_report.csv
+
+# 3) Porównanie wyników CSV
+python track_luca.py compare \
+  --reference output/sledzenie_ref.csv \
+  --candidate output/sledzenie_test.csv \
+  --output_csv output/sledzenie_diff.csv \
+  --report_pdf output/sledzenie_diff_report.pdf
+```
+
+#### Wariant C — z kalibracją kamery + porównanie (bez zapisu wideo)
+
+```bash
+# 0) (Jednorazowo) kalibracja kamery
+python track_luca.py calibrate \
+  --calib_dir ./images_calib \
+  --rows 6 \
+  --cols 9 \
+  --square_size 1.0 \
+  --output_file camera_calib.npz
+
+# 1) Pomiar referencyjny z kalibracją
+python track_luca.py track \
+  --video video/regal_plamka.mp4 \
+  --track_mode brightness \
+  --calib_file camera_calib.npz \
+  --output_csv output/regal_ref_calib.csv \
+  --trajectory_png output/regal_ref_calib.png
+
+# 2) Pomiar porównawczy z kalibracją i innym ROI
+python track_luca.py track \
+  --video video/regal_plamka.mp4 \
+  --track_mode brightness \
+  --calib_file camera_calib.npz \
+  --roi 150,100,950,700 \
+  --output_csv output/regal_test_calib.csv \
+  --trajectory_png output/regal_test_calib.png
+
+# 3) Porównanie trajektorii po kalibracji
+python track_luca.py compare \
+  --reference output/regal_ref_calib.csv \
+  --candidate output/regal_test_calib.csv \
+  --output_csv output/regal_calib_diff.csv
+```
+
+#### Dodatkowy krok: szybkie porównanie większej liczby pomiarów i wykresów
+
+Po wygenerowaniu kilku CSV możesz od razu zestawić je na wykresach:
+
+```bash
+python tools/data.py \
+  output/luca_regal_ref.csv \
+  output/luca_regal_test.csv \
+  output/sledzenie_ref.csv \
+  --x-col frame \
+  --y-cols x y speed \
+  --output-dir output/compare_plots
+```
+
 ### 3. GUI do strojenia parametrów
 
 ```bash
