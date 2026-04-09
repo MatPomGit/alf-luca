@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import math
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Sequence, Union
 
@@ -9,11 +13,22 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 
+from . import __version__ as APP_VERSION
 from .types import TrackPoint
 DEFAULT_EXPORT_PATH="(output/)"
 
 MetricProfile = Literal["basic", "extended", "research"]
 MetricValue = Union[float, str]
+RunMetadata = Dict[str, str]
+
+RUN_METADATA_FIELDS = (
+    "run_id",
+    "video_file",
+    "detector_name",
+    "smoother_name",
+    "config_hash",
+    "app_version",
+)
 
 PROFILE_METRICS = {
     "basic": (
@@ -106,33 +121,83 @@ def compute_track_metrics(points: Sequence[TrackPoint]) -> Dict[str, float]:
     return metrics
 
 
-def save_track_csv(points: Sequence[TrackPoint], csv_path: str):
+def build_run_metadata(
+    video_file: str,
+    detector_name: str,
+    smoother_name: str,
+    config_payload: Dict[str, object],
+    run_id: Optional[str] = None,
+    app_version: Optional[str] = None,
+) -> RunMetadata:
+    """Buduje minimalny, wspólny zestaw metadanych dla pojedynczego uruchomienia."""
+    payload_json = json.dumps(config_payload, sort_keys=True, ensure_ascii=False)
+    config_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()[:12]
+    normalized_run_id = run_id or f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+    return {
+        "run_id": normalized_run_id,
+        "video_file": str(video_file),
+        "detector_name": str(detector_name),
+        "smoother_name": str(smoother_name),
+        "config_hash": config_hash,
+        "app_version": str(app_version or APP_VERSION),
+    }
+
+
+def _metadata_json_path(csv_path: str) -> Path:
+    """Wyznacza ścieżkę pliku metadanych obok CSV w formacie `*.run.json`."""
+    csv_file = Path(csv_path)
+    return csv_file.with_suffix(".run.json")
+
+
+def save_run_metadata(metadata: RunMetadata, csv_path: str) -> None:
+    """Zapisuje metadane uruchomienia do pliku JSON obok CSV."""
+    payload = {
+        **{field: metadata.get(field, "") for field in RUN_METADATA_FIELDS},
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    json_path = _metadata_json_path(csv_path)
+    with json_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+
+def _row_with_metadata(row: List[object], metadata: Optional[RunMetadata]) -> List[object]:
+    """Dokleja metadane runu do pojedynczego rekordu CSV."""
+    if not metadata:
+        return row
+    return [*row, *[metadata.get(field, "") for field in RUN_METADATA_FIELDS]]
+
+
+def save_track_csv(points: Sequence[TrackPoint], csv_path: str, run_metadata: Optional[RunMetadata] = None):
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
             "frame_index", "time_sec", "detected", "x", "y", "area",
             "perimeter", "circularity", "radius", "track_id", "rank", "kalman_predicted"
-        ])
+        ] + list(RUN_METADATA_FIELDS))
         for p in points:
-            writer.writerow([
+            writer.writerow(_row_with_metadata([
                 p.frame_index, p.time_sec, int(p.detected), p.x, p.y, p.area,
                 p.perimeter, p.circularity, p.radius, p.track_id, p.rank, p.kalman_predicted
-            ])
+            ], run_metadata))
+    if run_metadata:
+        save_run_metadata(run_metadata, csv_path)
 
 
-def save_all_tracks_csv(track_histories: Dict[int, Dict], csv_path: str):
+def save_all_tracks_csv(track_histories: Dict[int, Dict], csv_path: str, run_metadata: Optional[RunMetadata] = None):
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
             "track_id", "frame_index", "time_sec", "detected", "x", "y", "area",
             "perimeter", "circularity", "radius", "rank", "kalman_predicted"
-        ])
+        ] + list(RUN_METADATA_FIELDS))
         for tid, data in sorted(track_histories.items()):
             for p in data["points"]:
-                writer.writerow([
+                writer.writerow(_row_with_metadata([
                     tid, p.frame_index, p.time_sec, int(p.detected), p.x, p.y,
                     p.area, p.perimeter, p.circularity, p.radius, p.rank, p.kalman_predicted
-                ])
+                ], run_metadata))
+    if run_metadata:
+        save_run_metadata(run_metadata, csv_path)
 
 
 def generate_trajectory_png(points: Sequence[TrackPoint], png_path: str, title: str = "Trajektoria plamki"):

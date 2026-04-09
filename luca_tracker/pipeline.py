@@ -13,6 +13,7 @@ from .detector_registry import available_detector_names
 from .detectors import DetectorConfig, detect_spots_with_config
 from .postprocess import KalmanConfig, apply_kalman_to_points
 from .reports import (
+    build_run_metadata,
     generate_trajectory_png,
     metrics_from_points,
     save_all_tracks_csv,
@@ -329,6 +330,21 @@ def track_video(args_or_config):
     result = process_video_frames(config, camera_matrix=camera_matrix, dist_coeffs=dist_coeffs)
     main_points = result["main_points"]
     main_track_id = result["main_track_id"]
+    # Wspólny zestaw metadanych zapisujemy zarówno do CSV, jak i do pliku `*.run.json`.
+    run_metadata = build_run_metadata(
+        video_file=config.video,
+        detector_name=config.detector.track_mode,
+        smoother_name="kalman" if config.use_kalman else "none",
+        config_payload={
+            "video": config.video,
+            "calib_file": config.calib_file,
+            "multi_track": config.multi_track,
+            "selection_mode": config.selection_mode,
+            "detector": vars(config.detector),
+            "tracker": vars(config.tracker),
+            "kalman": vars(config.kalman),
+        },
+    )
 
     if config.use_kalman:
         apply_kalman_to_points(
@@ -338,14 +354,14 @@ def track_video(args_or_config):
         )
         _log_stage("OK", "Zastosowano filtrację Kalmana.", "yellow")
 
-    save_track_csv(main_points, config.output_csv)
+    save_track_csv(main_points, config.output_csv, run_metadata=run_metadata)
     _log_stage("OK", f"Zapisano CSV pomiarowy: {config.output_csv}", "green")
 
     if config.multi_track:
         finished_tracks = result["finished_tracks"]
         _log_stage("OK", f"Wybrano track_id={main_track_id} jako trajektorię główną ({config.selection_mode})", "green")
         if config.all_tracks_csv:
-            save_all_tracks_csv(finished_tracks, config.all_tracks_csv)
+            save_all_tracks_csv(finished_tracks, config.all_tracks_csv, run_metadata=run_metadata)
             _log_stage("OK", f"Zapisano wszystkie trajektorie: {config.all_tracks_csv}", "green")
 
         metrics = metrics_from_points(main_points)
