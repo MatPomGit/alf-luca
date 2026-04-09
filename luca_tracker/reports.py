@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 from .types import TrackPoint
-
+DEFAULT_EXPORT_PATH="(output/)"
 
 def compute_track_metrics(points: Sequence[TrackPoint]) -> Dict[str, float]:
     detected = [p for p in points if p.detected and p.x is not None and p.y is not None]
