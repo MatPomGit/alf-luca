@@ -50,6 +50,70 @@ python track_luca.py calibrate \
   --output_file camera_calib.npz
 ```
 
+### 1a. Wyodrębnianie zdjęć do kalibracji z wideo (`extract_calibration_images.py`)
+
+Skrypt `tools/extract_calibration_images.py` automatycznie:
+
+1. czyta plik `.mp4` lub `.mkv`,
+2. wykrywa klatki z tablicą szachownicy,
+3. wybiera możliwie zróżnicowane i ostre ujęcia,
+4. zapisuje gotowe obrazy PNG do katalogu kalibracyjnego.
+
+#### Podstawowe użycie
+
+```bash
+python tools/extract_calibration_images.py video/kalibracja.mp4
+```
+
+Domyślnie obrazy trafią do `./images_calib`, a liczba zapisanych klatek to `25`.
+
+#### Przykład z własnym katalogiem i liczbą zdjęć
+
+```bash
+python tools/extract_calibration_images.py video/kalibracja.mkv \
+  --output-dir ./images_calib_custom \
+  --count 40
+```
+
+#### Przykład dla innego wzorca szachownicy
+
+```bash
+python tools/extract_calibration_images.py video/kalibracja.mp4 \
+  --pattern-cols 10 \
+  --pattern-rows 7 \
+  --sample-step 2
+```
+
+- `--pattern-cols` i `--pattern-rows` oznaczają liczbę **wewnętrznych** narożników szachownicy.
+- `--sample-step` określa, co ile klatek wykonywana jest detekcja (mniejsza wartość = dokładniej, ale wolniej).
+
+#### Gotowy workflow: od wideo do pliku kalibracji
+
+```bash
+# 1) Wytnij obrazy kalibracyjne z nagrania szachownicy
+python tools/extract_calibration_images.py video/kalibracja.mp4 \
+  --output-dir ./images_calib \
+  --count 30 \
+  --pattern-cols 9 \
+  --pattern-rows 6
+
+# 2) Na podstawie obrazów policz kalibrację kamery
+python track_luca.py calibrate \
+  --calib_dir ./images_calib \
+  --rows 6 \
+  --cols 9 \
+  --square_size 1.0 \
+  --output_file camera_calib.npz
+
+# 3) Użyj kalibracji podczas śledzenia
+python track_luca.py track \
+  --video video/luca_regal.mp4 \
+  --track_mode brightness \
+  --calib_file camera_calib.npz \
+  --output_csv output/tracking_with_calib.csv \
+  --trajectory_png output/trajectory_with_calib.png
+```
+
 ### 2. Śledzenie plamki (tryb klasyczny)
 
 ```bash
@@ -60,6 +124,45 @@ python track_luca.py track \
   --trajectory_png trajectory.png \
   --report_csv report.csv \
   --report_pdf report.pdf
+```
+
+### 2a. Więcej gotowych przykładów śledzenia (kopiuj-wklej)
+
+#### Śledzenie z ROI i zakresem klatek
+
+```bash
+python track_luca.py track \
+  --video video/luca_regal.mp4 \
+  --track_mode brightness \
+  --roi 220,120,900,650 \
+  --start_frame 0 \
+  --end_frame 1200 \
+  --output_csv output/tracking_roi.csv \
+  --trajectory_png output/trajectory_roi.png
+```
+
+#### Śledzenie wieloobiektowe z wyborem trajektorii głównej
+
+```bash
+python track_luca.py track \
+  --video video/sledzenie_plamki.mp4 \
+  --multi_track \
+  --selection_mode longest \
+  --output_csv output/tracking_multi.csv \
+  --annotated_video output/tracking_multi.mp4 \
+  --report_csv output/tracking_multi_report.csv
+```
+
+#### Śledzenie z kalibracją + raport PDF
+
+```bash
+python track_luca.py track \
+  --video video/luca_regal.mp4 \
+  --track_mode brightness \
+  --calib_file camera_calib.npz \
+  --output_csv output/tracking_calib.csv \
+  --report_csv output/tracking_calib_report.csv \
+  --report_pdf output/tracking_calib_report.pdf
 ```
 
 ### 3. GUI do strojenia parametrów
@@ -173,6 +276,28 @@ python tools/data.py \
 ```
 
 Skrypt zapisuje wykresy porównawcze i różnicowe (`*.png`) dla wybranych kolumn.
+
+### 8. Gotowe przykłady poleceń QA wideo (kopiuj-wklej)
+
+#### Szybka analiza kilku plików pod rząd (Linux/macOS)
+
+```bash
+python tools/video_tool.py --input video/luca_regal.mp4 --analyze-only --report-json output/qa_luca_regal.json
+python tools/video_tool.py --input video/regal_plamka.mp4 --analyze-only --report-json output/qa_regal_plamka.json
+python tools/video_tool.py --input video/sledzenie_plamki.mp4 --analyze-only --report-json output/qa_sledzenie_plamki.json
+```
+
+#### Normalizacja materiału przed śledzeniem
+
+```bash
+python tools/video_tool.py \
+  --input video/sledzenie_plamki.mkv \
+  --output output/sledzenie_plamki_fixed.mp4 \
+  --target-bitrate 3000k \
+  --target-fps 30 \
+  --crf 21 \
+  --preset medium
+```
 
 ## Wyniki i artefakty
 
