@@ -34,6 +34,28 @@ class GUIEnvironmentError(RuntimeError):
     """Błąd środowiska uniemożliwiający uruchomienie interfejsu Kivy."""
 
 
+def _validate_gui_runtime_environment() -> None:
+    """Weryfikuje podstawowe wymagania środowiska graficznego przed startem Kivy.
+
+    Na Linuksie Kivy zwykle wymaga aktywnej sesji X11 (`DISPLAY`) albo Wayland
+    (`WAYLAND_DISPLAY`). W środowiskach headless komunikat Kivy bywa mało czytelny,
+    dlatego zwracamy konkretną podpowiedź wcześniej.
+    """
+    # Sprawdzenie dotyczy głównie Linuksa, bo tam najczęściej pojawia się błąd
+    # "Unable to find any valuable Window provider" przy braku aktywnego displaya.
+    if os.name != "posix":
+        return
+    has_x11 = bool(os.environ.get("DISPLAY"))
+    has_wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
+    if has_x11 or has_wayland:
+        return
+    raise GUIEnvironmentError(
+        "Brak aktywnego serwera graficznego (DISPLAY/WAYLAND_DISPLAY). "
+        "Uruchom aplikację w sesji desktopowej lub skonfiguruj X11/Wayland, "
+        "a następnie powtórz uruchomienie z logowaniem debug (np. `python track_luca.py gui -d`)."
+    )
+
+
 def _parse_yaml_scalar(raw: str):
     value = raw.strip()
     lower = value.lower()
@@ -190,6 +212,7 @@ def run_gui(args):
     os.environ.setdefault("KIVY_IMAGE", "sdl2,pil")
     os.environ.setdefault("KIVY_WINDOW", "sdl2")
     os.environ.setdefault("KIVY_NO_MTDEV", "1")
+    _validate_gui_runtime_environment()
     try:
         from kivy.app import App
         from kivy.clock import Clock
@@ -204,7 +227,10 @@ def run_gui(args):
         from kivy.uix.spinner import Spinner
         from kivy.uix.togglebutton import ToggleButton
     except ImportError as exc:
-        raise ImportError("Tryb GUI wymaga biblioteki kivy. Zainstaluj: pip install kivy") from exc
+        raise ImportError(
+            "Tryb GUI wymaga bibliotek Kivy/OpenCV oraz backendu okna. "
+            "Zainstaluj: pip install kivy opencv-python, a na Linuksie doinstaluj zależności SDL2/X11."
+        ) from exc
     # Kivy może się zaimportować, ale bez providera okna `Window` bywa `None`.
     # Wtedy zamiast późniejszego `AttributeError` zwracamy jasny komunikat o przyczynie.
     if Window is None:
