@@ -301,9 +301,14 @@ python tools/data.py \
 python track_luca.py gui
 ```
 
-Na Windows możesz też uruchomić GUI przez dwuklik w plik `Uruchom_GUI.bat` (z katalogu repozytorium).
-Na Linux (Ubuntu/Fedora) użyj `Uruchom_GUI.sh` (najpierw nadaj uprawnienia: `chmod +x Uruchom_GUI.sh`),
-a następnie uruchom skrypt (np. dwuklik i opcja **Run**, zależnie od menedżera plików).
+Na Windows możesz też uruchomić GUI przez dwuklik w plik `_Uruchom_GUI.bat` (z katalogu repozytorium).
+Na Linux (Ubuntu/Fedora) użyj `scripts/run_gui.sh` (najpierw nadaj uprawnienia: `chmod +x scripts/run_gui.sh`),
+a następnie uruchom skrypt (`./scripts/run_gui.sh`).
+
+Pozostałe automatyczne skrypty uruchomieniowe znajdują się w katalogu `scripts/`:
+
+- `scripts/run_cli.sh` — przykładowe uruchomienie trybu `track`,
+- `scripts/run_analysis.sh` — szybkie porównanie danych przez `tools/data.py`.
 
 Możesz też uruchomić samo:
 
