@@ -1,0 +1,16 @@
+track_mode: brightest
+threshold: 200
+blur: 11
+erode_iter: 2
+dilate_iter: 4
+min_area: 20.0
+max_area:
+roi:
+color_name:
+# hsv_lower: [0, 80, 80]
+# hsv_upper: [10, 255, 255]
+output_csv: tracking_results.csv
+trajectory_png:
+report_csv:
+report_pdf:
+display: false
