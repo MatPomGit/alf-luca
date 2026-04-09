@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Narzędzie do weryfikacji jakości plików MP4/MKV i opcjonalnej naprawy.
+Narzędzie do weryfikacji jakości plików wideo i opcjonalnej naprawy.
 
 Funkcje:
 - odczyt metadanych przez ffprobe,
@@ -122,11 +122,12 @@ def ffprobe_json(input_file: Path) -> Dict[str, Any]:
         raise RuntimeError("Nie udało się sparsować odpowiedzi ffprobe jako JSON.") from exc
 
 
-ALLOWED_INPUT_EXTENSIONS = {".mp4", ".mkv"}
+ALLOWED_INPUT_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".m4v", ".webm"}
+FASTSTART_EXTENSIONS = {".mp4", ".m4v", ".mov"}
 
 
 def analyze_video(input_file: Path) -> AnalysisResult:
-    # Funkcja analizuje metadane kontenera i strumieni dla wspieranych formatów (MP4/MKV).
+    # Funkcja analizuje metadane kontenera i strumieni dla wspieranych formatów.
     payload = ffprobe_json(input_file)
     streams = payload.get("streams", [])
     fmt = payload.get("format", {})
@@ -156,7 +157,7 @@ def analyze_video(input_file: Path) -> AnalysisResult:
             Issue(
                 "warning",
                 "unsupported_extension",
-                "Rozszerzenie pliku nie jest wspierane (obsługiwane: .mp4, .mkv).",
+                "Rozszerzenie pliku nie jest wspierane (obsługiwane: .mp4, .mkv, .avi, .mov, .m4v, .webm).",
             )
         )
     if not video_stream:
@@ -193,12 +194,12 @@ def analyze_video(input_file: Path) -> AnalysisResult:
     if duration_sec is None or duration_sec <= 0:
         issues.append(Issue("error", "invalid_duration", "Nieprawidłowa długość nagrania."))
 
-    if format_name and not any(name in format_name for name in ("mp4", "matroska", "webm")):
+    if format_name and not any(name in format_name for name in ("mp4", "matroska", "webm", "avi", "mov")):
         issues.append(
             Issue(
                 "warning",
                 "uncommon_container",
-                f"Kontener to: {format_name} (oczekiwany MP4 lub Matroska/WebM).",
+                f"Kontener to: {format_name} (oczekiwany MP4/MKV/AVI/MOV/WEBM).",
             )
         )
 
@@ -258,12 +259,15 @@ def build_ffmpeg_command(
     else:
         cmd += ["-map", "0:a?", "-c:a", "aac", "-b:a", audio_bitrate]
 
-    cmd += ["-movflags", "+faststart", str(output_file)]
+    # Flaga faststart ma sens głównie dla kontenerów opartych o ISO BMFF.
+    if output_file.suffix.lower() in FASTSTART_EXTENSIONS:
+        cmd += ["-movflags", "+faststart"]
+    cmd += [str(output_file)]
     return cmd
 
 
 def print_analysis(result: AnalysisResult) -> None:
-    print("\n=== Analiza wideo (MP4/MKV) ===")
+    print("\n=== Analiza wideo (MP4/MKV/AVI/MOV/WEBM) ===")
     print(f"Plik: {result.input_file}")
     print(f"Kontener: {result.format_name}")
     print(f"Czas trwania: {result.duration_sec}")
@@ -290,7 +294,7 @@ def save_report(path: Path, result: AnalysisResult) -> None:
 
 def format_analysis(result: AnalysisResult) -> str:
     lines = [
-        "=== Analiza wideo (MP4/MKV) ===",
+        "=== Analiza wideo (MP4/MKV/AVI/MOV/WEBM) ===",
         f"Plik: {result.input_file}",
         f"Kontener: {result.format_name}",
         f"Czas trwania: {result.duration_sec}",
@@ -314,7 +318,7 @@ def format_analysis(result: AnalysisResult) -> str:
 class VideoToolGUI:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("Video Tool - analiza i naprawa MP4/MKV")
+        self.root.title("Video Tool - analiza i naprawa plików wideo")
         self.root.geometry("840x580")
 
         self.selected_file: Optional[Path] = None
@@ -332,7 +336,7 @@ class VideoToolGUI:
         ttk.Label(top, text="Plik wejściowy:").grid(row=0, column=0, sticky="w")
         ttk.Label(top, textvariable=self.file_var, width=80).grid(row=0, column=1, columnspan=4, sticky="w")
 
-        btn_pick = ttk.Button(top, text="Wybierz plik MP4/MKV", command=self.pick_file)
+        btn_pick = ttk.Button(top, text="Wybierz plik wideo", command=self.pick_file)
         btn_pick.grid(row=1, column=0, pady=(8, 0), sticky="w")
 
         btn_analyze = ttk.Button(top, text="Analizuj", command=self.analyze_current_file)
@@ -356,8 +360,17 @@ class VideoToolGUI:
 
     def pick_file(self) -> None:
         path = filedialog.askopenfilename(
-            title="Wybierz plik MP4/MKV",
-            filetypes=[("Pliki wideo", "*.mp4 *.mkv"), ("Pliki MP4", "*.mp4"), ("Pliki MKV", "*.mkv"), ("Wszystkie pliki", "*.*")],
+            title="Wybierz plik wideo",
+            filetypes=[
+                ("Pliki wideo", "*.mp4 *.mkv *.avi *.mov *.m4v *.webm"),
+                ("Pliki MP4", "*.mp4"),
+                ("Pliki MKV", "*.mkv"),
+                ("Pliki AVI", "*.avi"),
+                ("Pliki MOV", "*.mov"),
+                ("Pliki M4V", "*.m4v"),
+                ("Pliki WEBM", "*.webm"),
+                ("Wszystkie pliki", "*.*"),
+            ],
         )
         if not path:
             return
@@ -406,7 +419,14 @@ class VideoToolGUI:
         path = filedialog.asksaveasfilename(
             title="Zapisz naprawiony plik",
             defaultextension=".mp4",
-            filetypes=[("Pliki MP4", "*.mp4"), ("Pliki MKV", "*.mkv")],
+            filetypes=[
+                ("Pliki MP4", "*.mp4"),
+                ("Pliki MKV", "*.mkv"),
+                ("Pliki AVI", "*.avi"),
+                ("Pliki MOV", "*.mov"),
+                ("Pliki M4V", "*.m4v"),
+                ("Pliki WEBM", "*.webm"),
+            ],
         )
         if not path:
             return
@@ -455,7 +475,7 @@ class VideoToolGUI:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Weryfikacja i normalizacja plików MP4/MKV. "
+            "Weryfikacja i normalizacja plików wideo (MP4/MKV/AVI/MOV/M4V/WEBM). "
             "Program analizuje plik i opcjonalnie naprawia go przez ponowne kodowanie."
         )
     )

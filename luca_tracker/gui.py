@@ -382,10 +382,10 @@ def run_gui(args):
             btn_restart.bind(on_press=lambda *_: self._restart_video())
             row_action.add_widget(btn_restart)
 
-            btn_mp4 = Button(text="Pokaż komendę MP4/MKV QA")
+            btn_mp4 = Button(text="Pokaż komendę QA wideo")
             btn_mp4.bind(
                 on_press=lambda *_: print(
-                    "[GUI] Narzędzie do weryfikacji MP4/MKV:",
+                    "[GUI] Narzędzie do weryfikacji wideo:",
                     f"python {args.mp4_tool_path} --input twoj_plik.mkv --analyze-only",
                 )
             )
@@ -450,7 +450,7 @@ def run_gui(args):
                 return True
             if key == 109:
                 print(
-                    "[GUI] Narzędzie do weryfikacji MP4/MKV:",
+                    "[GUI] Narzędzie do weryfikacji wideo:",
                     f"python {args.mp4_tool_path} --input twoj_plik.mkv --analyze-only",
                 )
                 return True
