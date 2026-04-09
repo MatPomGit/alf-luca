@@ -30,6 +30,7 @@ import glob
 import math
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import cv2
@@ -469,6 +470,42 @@ def build_tracker_config(args: argparse.Namespace) -> TrackerConfig:
         report_csv=merged.get("report_csv"),  # type: ignore[arg-type]
         report_pdf=merged.get("report_pdf"),  # type: ignore[arg-type]
     )
+
+
+def resolve_video_inputs(args: argparse.Namespace) -> List[str]:
+    video = getattr(args, "video", None)
+    video_dir = getattr(args, "video_dir", None)
+    video_glob = getattr(args, "video_glob", "*.mp4,*.mov,*.avi")
+    recursive = bool(getattr(args, "recursive", False))
+
+    if video:
+        return [video]
+
+    if not video_dir:
+        raise ValueError("Podaj --video albo --video_dir.")
+
+    root = Path(video_dir)
+    if not root.exists():
+        raise FileNotFoundError(f"Nie znaleziono katalogu wideo: {video_dir}")
+    if not root.is_dir():
+        raise NotADirectoryError(f"Ścieżka nie jest katalogiem: {video_dir}")
+
+    patterns = [p.strip() for p in video_glob.split(",") if p.strip()]
+    if not patterns:
+        patterns = ["*.mp4", "*.mov", "*.avi"]
+
+    files: List[Path] = []
+    for pattern in patterns:
+        iterator = root.rglob(pattern) if recursive else root.glob(pattern)
+        files.extend(path for path in iterator if path.is_file())
+
+    unique_sorted = sorted({path.resolve() for path in files})
+    if not unique_sorted:
+        raise ValueError(
+            f"Katalog istnieje, ale brak plików pasujących do wzorców ({video_glob}): {video_dir}"
+        )
+
+    return [str(path) for path in unique_sorted]
 
 
 def calibrate_camera(
@@ -1261,11 +1298,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_track = subparsers.add_parser("track", help="Śledzenie plamki")
     p_track.add_argument("--video", required=True, help="Plik MP4")
+    p_track.add_argument("--video_dir", help="Katalog z plikami wideo (np. video)")
+    p_track.add_argument("--video_glob", default="*.mp4,*.mov,*.avi", help="Wzorce plików oddzielone przecinkami")
+    p_track.add_argument("--recursive", action="store_true", help="Szukaj plików rekurencyjnie w --video_dir")
     p_track.add_argument(
         "--calib_file",
         default="config/camera_calibration.yaml",
         help="Plik kalibracji kamery (.npz/.yaml/.yml)",
-    )
     p_track.add_argument("--track_mode", choices=["brightest", "color"], default="brightest", help="Tryb śledzenia")
     p_track.add_argument("--config", default="config/settings.yaml", help="Plik YAML z ustawieniami")
     p_track.add_argument("--color_name", choices=sorted(PRESET_HSV_RANGES.keys()), help="Preset koloru dla track_mode=color")
@@ -1303,8 +1342,12 @@ def main() -> None:
         return
 
     if args.command == "track":
-        config = build_tracker_config(args)
-        track_spot(config)
+        videos = resolve_video_inputs(args)
+        for video_path in videos:
+            run_args = argparse.Namespace(**vars(args))
+            run_args.video = video_path
+            config = build_tracker_config(run_args)
+            track_spot(config)
         return
 
     if args.command == "compare":
