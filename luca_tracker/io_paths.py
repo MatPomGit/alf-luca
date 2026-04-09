@@ -1,19 +1,42 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
 OUTPUT_DIR = Path("/output")
+LOCAL_OUTPUT_DIR = Path.cwd() / "output"
+ENV_OUTPUT_DIR = "LUCA_OUTPUT_DIR"
 
 
 def ensure_output_dir() -> Path:
-    """Zapewnia istnienie globalnego katalogu artefaktów `/output`."""
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    return OUTPUT_DIR
+    """Zapewnia istnienie katalogu artefaktów i zwraca jego ścieżkę.
+
+    Kolejność wyboru:
+    1) katalog zdefiniowany w `LUCA_OUTPUT_DIR` (jeśli podano),
+    2) `/output` (dotychczasowe zachowanie),
+    3) lokalny `./output` jako bezpieczny fallback bez uprawnień roota.
+    """
+    # Umożliwiamy wymuszenie katalogu przez zmienną środowiskową.
+    env_output = os.getenv(ENV_OUTPUT_DIR)
+    if env_output:
+        configured = Path(env_output).expanduser().resolve()
+        configured.mkdir(parents=True, exist_ok=True)
+        return configured
+
+    # Najpierw próbujemy historycznej lokalizacji `/output`.
+    try:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        return OUTPUT_DIR
+    except OSError:
+        # Jeśli nie mamy dostępu do `/output` (np. brak uprawnień lub read-only FS),
+        # używamy lokalnego katalogu projektu.
+        LOCAL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        return LOCAL_OUTPUT_DIR
 
 
 def resolve_output_path(path_value: str) -> str:
-    """Mapuje ścieżkę wyjściową do `/output`, jeśli podano ścieżkę względną."""
+    """Mapuje ścieżkę wyjściową do aktywnego katalogu artefaktów dla ścieżek względnych."""
     path = Path(path_value)
     if path.is_absolute():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -24,7 +47,7 @@ def resolve_output_path(path_value: str) -> str:
 
 
 def resolve_analysis_input(path_value: str) -> str:
-    """Szukaj plików wejściowych najpierw w `/output`, potem w podanej ścieżce."""
+    """Szukaj plików wejściowych najpierw w katalogu artefaktów, potem w podanej ścieżce."""
     path = Path(path_value)
     if path.is_absolute():
         return str(path)
