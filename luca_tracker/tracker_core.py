@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 from dataclasses import asdict, dataclass
+from collections import deque
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -19,17 +20,78 @@ class TrackerConfig:
     max_distance: float = 40.0
     max_missed: int = 10
     selection_mode: str = "stablest"
+    distance_weight: float = 1.0
+    area_weight: float = 0.35
+    circularity_weight: float = 0.2
+    brightness_weight: float = 0.0
+    min_match_score: float = 1.0
+    speed_gate_gain: float = 1.5
+    error_gate_gain: float = 1.0
+    min_dynamic_distance: float = 12.0
+    max_dynamic_distance: float = 150.0
 
 
 class SimpleMultiTracker:
     """Prosty tracker wieloobiektowy oparty o najbliższego sąsiada."""
 
-    def __init__(self, max_distance: float = 40.0, max_missed: int = 10):
+    def __init__(
+        self,
+        max_distance: float = 40.0,
+        max_missed: int = 10,
+        distance_weight: float = 1.0,
+        area_weight: float = 0.35,
+        circularity_weight: float = 0.2,
+        brightness_weight: float = 0.0,
+        min_match_score: float = 1.0,
+        speed_gate_gain: float = 1.5,
+        error_gate_gain: float = 1.0,
+        min_dynamic_distance: float = 12.0,
+        max_dynamic_distance: float = 150.0,
+    ):
         # Parametry sterują zasięgiem dopasowania i żywotnością torów.
         self.max_distance = max_distance
         self.max_missed = max_missed
+        self.distance_weight = max(0.0, float(distance_weight))
+        self.area_weight = max(0.0, float(area_weight))
+        self.circularity_weight = max(0.0, float(circularity_weight))
+        self.brightness_weight = max(0.0, float(brightness_weight))
+        self.min_match_score = max(0.0, float(min_match_score))
+        self.speed_gate_gain = max(0.0, float(speed_gate_gain))
+        self.error_gate_gain = max(0.0, float(error_gate_gain))
+        self.min_dynamic_distance = max(1.0, float(min_dynamic_distance))
+        self.max_dynamic_distance = max(self.min_dynamic_distance, float(max_dynamic_distance))
         self.next_id = 1
         self.tracks: Dict[int, Dict] = {}
+
+    @staticmethod
+    def _safe_rel_diff(a: Optional[float], b: Optional[float]) -> float:
+        """Liczy względną różnicę dwóch wartości z ochroną przed zerem/brakiem danych."""
+        if a is None or b is None:
+            return 0.0
+        denom = max(abs(a), abs(b), 1e-6)
+        return abs(float(a) - float(b)) / denom
+
+    def _compute_dynamic_gate(self, track: Dict) -> float:
+        """Wyznacza bramkę dystansu zależną od ruchu toru i jakości ostatnich dopasowań."""
+        speed = float(track.get("speed", 0.0))
+        errors = track.get("match_errors")
+        avg_error = float(sum(errors) / len(errors)) if errors else 0.0
+        gate = self.max_distance + self.speed_gate_gain * speed + self.error_gate_gain * avg_error
+        return max(self.min_dynamic_distance, min(self.max_dynamic_distance, gate))
+
+    def _compute_match_score(self, track: Dict, det: Detection, dist: float, gate: float) -> float:
+        """Składa końcowy score dopasowania track-detection z wielu cech opisowych."""
+        # Składowa dystansu jest normalizowana przez dynamiczną bramkę toru.
+        dist_norm = dist / max(gate, 1e-6)
+        area_diff = self._safe_rel_diff(track.get("last_area"), det.area)
+        circ_diff = self._safe_rel_diff(track.get("last_circularity"), det.circularity)
+        brightness_diff = self._safe_rel_diff(track.get("last_brightness"), det.mean_brightness)
+        return (
+            self.distance_weight * dist_norm
+            + self.area_weight * area_diff
+            + self.circularity_weight * circ_diff
+            + self.brightness_weight * brightness_diff
+        )
 
     @staticmethod
     def _distance(a: Tuple[float, float], b: Tuple[float, float]) -> float:
@@ -43,19 +105,28 @@ class SimpleMultiTracker:
         pairs = []
         for tid, track in self.tracks.items():
             last_xy = track["last_xy"]
+            dynamic_gate = self._compute_dynamic_gate(track)
             for j, det in enumerate(detections):
                 dist = self._distance(last_xy, (det.x, det.y))
-                pairs.append((dist, tid, j))
+                score = self._compute_match_score(track, det, dist, dynamic_gate)
+                pairs.append((score, dist, dynamic_gate, tid, j))
         pairs.sort(key=lambda x: x[0])
 
-        for dist, tid, j in pairs:
-            if dist > self.max_distance:
+        for score, dist, dynamic_gate, tid, j in pairs:
+            # Odrzucamy pary poza bramką lub z wynikiem poniżej jakości akceptowalnej.
+            if dist > dynamic_gate or score > self.min_match_score:
                 continue
             if tid in assigned_tracks or j in assigned_detections:
                 continue
             track = self.tracks[tid]
             det = detections[j]
+            prev_xy = track["last_xy"]
+            track["speed"] = self._distance(prev_xy, (det.x, det.y))
+            track["match_errors"].append(float(dist))
             track["last_xy"] = (det.x, det.y)
+            track["last_area"] = float(det.area)
+            track["last_circularity"] = float(det.circularity)
+            track["last_brightness"] = det.mean_brightness
             track["missed"] = 0
             track["points"].append(
                 TrackPoint(
@@ -79,6 +150,8 @@ class SimpleMultiTracker:
         for tid, track in list(self.tracks.items()):
             if tid not in assigned_tracks:
                 track["missed"] += 1
+                # Przy braku pomiaru stopniowo wygaszamy prędkość, aby nie pompować bramki bez końca.
+                track["speed"] = float(track.get("speed", 0.0)) * 0.8
                 track["points"].append(
                     TrackPoint(
                         frame_index=frame_index,
@@ -103,6 +176,11 @@ class SimpleMultiTracker:
             self.next_id += 1
             self.tracks[tid] = {
                 "last_xy": (det.x, det.y),
+                "last_area": float(det.area),
+                "last_circularity": float(det.circularity),
+                "last_brightness": det.mean_brightness,
+                "speed": 0.0,
+                "match_errors": deque(maxlen=12),
                 "missed": 0,
                 "points": [
                     TrackPoint(
@@ -317,7 +395,19 @@ def run_tracker_with_config(
     config: TrackerConfig,
 ) -> Dict[str, object]:
     """Uruchamia tracker dla listy detekcji per klatka i zwraca zunifikowany wynik."""
-    tracker = SimpleMultiTracker(max_distance=config.max_distance, max_missed=config.max_missed)
+    tracker = SimpleMultiTracker(
+        max_distance=config.max_distance,
+        max_missed=config.max_missed,
+        distance_weight=config.distance_weight,
+        area_weight=config.area_weight,
+        circularity_weight=config.circularity_weight,
+        brightness_weight=config.brightness_weight,
+        min_match_score=config.min_match_score,
+        speed_gate_gain=config.speed_gate_gain,
+        error_gate_gain=config.error_gate_gain,
+        min_dynamic_distance=config.min_dynamic_distance,
+        max_dynamic_distance=config.max_dynamic_distance,
+    )
     finished_tracks: Dict[int, Dict] = {}
 
     for frame_index, detections in enumerate(frames):

@@ -4,6 +4,7 @@ set -euo pipefail
 # Wyznaczamy katalog repozytorium niezależnie od miejsca uruchomienia skryptu.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+OUTPUT_ROOT="$REPO_ROOT/output/manual"
 
 run_python() {
   # Uruchamiamy wskazany moduł poleceniem python3, a gdy brak – python.

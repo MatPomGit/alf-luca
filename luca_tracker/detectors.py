@@ -250,7 +250,12 @@ def get_default_params_for_mode(track_mode: str) -> Dict[str, object]:
     return detector_cls.default_params()
 
 
-def contour_to_detection(contour: np.ndarray, offset_x: int = 0, offset_y: int = 0) -> Optional[Detection]:
+def contour_to_detection(
+    contour: np.ndarray,
+    offset_x: int = 0,
+    offset_y: int = 0,
+    mean_brightness: Optional[float] = None,
+) -> Optional[Detection]:
     """Przekształca pojedynczy kontur OpenCV do struktury Detection."""
     area = float(cv2.contourArea(contour))
     if area <= 0:
@@ -287,7 +292,34 @@ def contour_to_detection(contour: np.ndarray, offset_x: int = 0, offset_y: int =
         ellipse_center=ellipse_center,
         ellipse_axes=ellipse_axes,
         ellipse_angle=ellipse_angle,
+        mean_brightness=mean_brightness,
     )
+
+
+def _contour_peak_intensity(gray_roi: np.ndarray, contour: np.ndarray) -> float:
+    """Zwraca lokalne maksimum jasności (0..255) wewnątrz konturu."""
+    local_mask = np.zeros(gray_roi.shape, dtype=np.uint8)
+    cv2.drawContours(local_mask, [contour], contourIdx=-1, color=255, thickness=-1)
+    _, max_val, _, _ = cv2.minMaxLoc(gray_roi, mask=local_mask)
+    return float(max_val)
+
+
+def _contour_solidity(contour: np.ndarray, contour_area: float) -> float:
+    """Oblicza zwartość konturu jako stosunek pola do pola otoczki wypukłej."""
+    hull = cv2.convexHull(contour)
+    hull_area = float(cv2.contourArea(hull))
+    if hull_area <= 0:
+        return 0.0
+    return float(contour_area / hull_area)
+
+
+def _detection_score(det: Detection, peak_intensity: float, max_area_ref: float) -> float:
+    """Łączy cechy jakości detekcji do jednego score (większy = lepszy kandydat)."""
+    area_norm = float(np.clip(det.area / max(max_area_ref, 1.0), 0.0, 1.0))
+    circularity_norm = float(np.clip(det.circularity, 0.0, 1.0))
+    peak_norm = float(np.clip(peak_intensity / 255.0, 0.0, 1.0))
+    # Wagi premiują duże, koliste i wyraźnie jasne plamki.
+    return (0.45 * area_norm) + (0.35 * circularity_norm) + (0.20 * peak_norm)
 
 
 def build_mask(
@@ -352,11 +384,16 @@ def detect_spots(
     roi: Optional[str],
     opening_kernel: int = 0,
     closing_kernel: int = 0,
+    min_circularity: float = 0.0,
+    max_aspect_ratio: float = 6.0,
+    min_peak_intensity: float = 0.0,
+    min_solidity: Optional[float] = None,
     temporal_filter: Optional[TemporalMaskFilter] = None,
 ) -> Tuple[List[Detection], np.ndarray, Tuple[int, int, int, int]]:
     """Wykrywa plamki na klatce i zwraca detekcje, maskę oraz użyte ROI."""
     x0, y0, w, h = parse_roi(roi, frame.shape)
     roi_frame = frame[y0 : y0 + h, x0 : x0 + w]
+    roi_gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
     detector_cls = _resolve_detector_class(track_mode)
     detector_config = DetectorConfig(
         track_mode=track_mode,
@@ -379,20 +416,46 @@ def detect_spots(
         # Filtr temporalny działa wyłącznie na wycinku ROI, żeby nie "przenosić" szumu spoza obszaru zainteresowania.
         mask_roi = temporal_filter.apply(mask_roi)
     mask = _embed_mask_in_frame(mask_roi, frame.shape, (x0, y0, w, h))
+    gray_roi = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
     contours, _ = cv2.findContours(mask_roi.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    detections: List[Detection] = []
+    scored_detections: List[Tuple[float, Detection]] = []
+    effective_max_aspect_ratio = max(1.0, float(max_aspect_ratio))
     for contour in contours:
-        det = contour_to_detection(contour, offset_x=x0, offset_y=y0)
+        # Średnią jasność liczymy tylko wewnątrz konturu, aby cecha była odporna na tło ROI.
+        contour_mask = np.zeros(roi_gray.shape, dtype=np.uint8)
+        cv2.drawContours(contour_mask, [contour], contourIdx=-1, color=255, thickness=-1)
+        brightness = float(cv2.mean(roi_gray, mask=contour_mask)[0])
+        det = contour_to_detection(contour, offset_x=x0, offset_y=y0, mean_brightness=brightness)
         if det is None:
             continue
         if det.area < min_area:
             continue
         if max_area > 0 and det.area > max_area:
             continue
-        detections.append(det)
+        if det.circularity < float(min_circularity):
+            continue
+        if det.bbox_w <= 0 or det.bbox_h <= 0:
+            continue
+        aspect_ratio = max(det.bbox_w / det.bbox_h, det.bbox_h / det.bbox_w)
+        if aspect_ratio > effective_max_aspect_ratio:
+            continue
+        peak_intensity = _contour_peak_intensity(gray_roi, contour)
+        if peak_intensity < float(min_peak_intensity):
+            continue
+        if min_solidity is not None:
+            solidity = _contour_solidity(contour, det.area)
+            if solidity < float(min_solidity):
+                continue
+        score = _detection_score(
+            det,
+            peak_intensity=peak_intensity,
+            max_area_ref=max_area if max_area > 0 else (w * h),
+        )
+        scored_detections.append((score, det))
 
-    detections.sort(key=lambda d: d.area, reverse=True)
+    scored_detections.sort(key=lambda item: item[0], reverse=True)
+    detections = [det for _, det in scored_detections]
     detections = detections[:max_spots]
     for idx, det in enumerate(detections, start=1):
         det.rank = idx
@@ -422,6 +485,10 @@ def detect_spots_with_config(
         min_area=config.min_area,
         max_area=config.max_area,
         max_spots=config.max_spots,
+        min_circularity=config.min_circularity,
+        max_aspect_ratio=config.max_aspect_ratio,
+        min_peak_intensity=config.min_peak_intensity,
+        min_solidity=config.min_solidity,
         color_name=config.color_name,
         hsv_lower=config.hsv_lower,
         hsv_upper=config.hsv_upper,
@@ -445,6 +512,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--blur", type=int, default=11)
     parser.add_argument("--min_area", type=float, default=10.0)
     parser.add_argument("--max_area", type=float, default=0.0)
+    parser.add_argument("--min_circularity", type=float, default=0.0)
+    parser.add_argument("--max_aspect_ratio", type=float, default=6.0)
+    parser.add_argument("--min_peak_intensity", type=float, default=0.0)
+    parser.add_argument("--min_solidity", type=float, default=None)
     parser.add_argument("--erode_iter", type=int, default=2)
     parser.add_argument("--dilate_iter", type=int, default=4)
     parser.add_argument("--opening_kernel", type=int, default=0, help="Rozmiar jądra opening (0/1 = wyłączone)")

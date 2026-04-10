@@ -19,6 +19,7 @@ class Detection:
     ellipse_center: Optional[Tuple[float, float]] = None
     ellipse_axes: Optional[Tuple[float, float]] = None
     ellipse_angle: Optional[float] = None
+    mean_brightness: Optional[float] = None
     rank: int = 0
 
 

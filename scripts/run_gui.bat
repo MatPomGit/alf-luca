@@ -2,13 +2,13 @@
 setlocal
 
 set "SCRIPT_DIR=%~dp0"
-pushd "%SCRIPT_DIR%"
+pushd "%SCRIPT_DIR%\.."
 
 where py >nul 2>&1
 if %errorlevel%==0 (
-    py -3 track_luca.py gui
+    py -3 -m luca_tracker gui
 ) else (
-    python track_luca.py gui
+    python -m luca_tracker gui
 )
 
 set "EXIT_CODE=%errorlevel%"

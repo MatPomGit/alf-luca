@@ -24,7 +24,7 @@ from .reports import (
     save_track_csv,
     save_track_report_pdf,
 )
-from .tracker_core import SimpleMultiTracker, TrackerConfig, choose_main_track
+from .tracker_core import SimpleMultiTracker, SingleObjectEKFTracker, TrackerConfig, choose_main_track
 from .types import TrackPoint
 from .video_export import export_annotated_video
 
@@ -33,7 +33,9 @@ from .video_export import export_annotated_video
 class PipelineConfig:
     """Pełna konfiguracja pipeline'u umożliwiająca uruchamianie niezależne od CLI."""
 
-    video: str
+    video: Any
+    source_label: str = ""
+    is_live_source: bool = False
     calib_file: Optional[str] = None
     display: bool = False
     interactive: bool = False
@@ -227,10 +229,14 @@ def calibrate_camera(calib_dir: str, rows: int, cols: int, square_size: float, o
 def _resolve_config(args_or_config) -> PipelineConfig:
     """Mapuje obiekt CLI args lub PipelineConfig na spójny model konfiguracji."""
     if isinstance(args_or_config, PipelineConfig):
+        if not args_or_config.source_label:
+            args_or_config.source_label = str(args_or_config.video)
         return args_or_config
 
     return PipelineConfig(
         video=args_or_config.video,
+        source_label=getattr(args_or_config, "source_label", str(args_or_config.video)),
+        is_live_source=getattr(args_or_config, "is_live_source", False),
         calib_file=getattr(args_or_config, "calib_file", None),
         display=getattr(args_or_config, "display", False),
         interactive=getattr(args_or_config, "interactive", False),
@@ -261,6 +267,10 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             closing_kernel=getattr(args_or_config, "closing_kernel", 0),
             min_area=getattr(args_or_config, "min_area", 10.0),
             max_area=getattr(args_or_config, "max_area", 0.0),
+            min_circularity=getattr(args_or_config, "min_circularity", 0.0),
+            max_aspect_ratio=getattr(args_or_config, "max_aspect_ratio", 6.0),
+            min_peak_intensity=getattr(args_or_config, "min_peak_intensity", 0.0),
+            min_solidity=getattr(args_or_config, "min_solidity", None),
             max_spots=getattr(args_or_config, "max_spots", 10),
             color_name=getattr(args_or_config, "color_name", "red"),
             hsv_lower=getattr(args_or_config, "hsv_lower", None),
@@ -274,6 +284,15 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             max_distance=getattr(args_or_config, "max_distance", 40.0),
             max_missed=getattr(args_or_config, "max_missed", 10),
             selection_mode=getattr(args_or_config, "selection_mode", "stablest"),
+            distance_weight=getattr(args_or_config, "distance_weight", 1.0),
+            area_weight=getattr(args_or_config, "area_weight", 0.35),
+            circularity_weight=getattr(args_or_config, "circularity_weight", 0.2),
+            brightness_weight=getattr(args_or_config, "brightness_weight", 0.0),
+            min_match_score=getattr(args_or_config, "min_match_score", 1.0),
+            speed_gate_gain=getattr(args_or_config, "speed_gate_gain", 1.5),
+            error_gate_gain=getattr(args_or_config, "error_gate_gain", 1.0),
+            min_dynamic_distance=getattr(args_or_config, "min_dynamic_distance", 12.0),
+            max_dynamic_distance=getattr(args_or_config, "max_dynamic_distance", 150.0),
         ),
         kalman=KalmanConfig(
             process_noise=getattr(args_or_config, "kalman_process_noise", 1e-2),
@@ -388,7 +407,7 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
     config = _resolve_config(args_or_config)
     cap = cv2.VideoCapture(config.video)
     if not cap.isOpened():
-        raise FileNotFoundError(f"Nie udało się otworzyć pliku video: {config.video}")
+        raise FileNotFoundError(f"Nie udało się otworzyć źródła wejściowego: {config.source_label}")
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
     fps = fps if fps > 0 else 1.0
@@ -401,7 +420,17 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
     tracker = SimpleMultiTracker(
         max_distance=config.tracker.max_distance,
         max_missed=config.tracker.max_missed,
+        distance_weight=config.tracker.distance_weight,
+        area_weight=config.tracker.area_weight,
+        circularity_weight=config.tracker.circularity_weight,
+        brightness_weight=config.tracker.brightness_weight,
+        min_match_score=config.tracker.min_match_score,
+        speed_gate_gain=config.tracker.speed_gate_gain,
+        error_gate_gain=config.tracker.error_gate_gain,
+        min_dynamic_distance=config.tracker.min_dynamic_distance,
+        max_dynamic_distance=config.tracker.max_dynamic_distance,
     )
+    single_tracker = SingleObjectEKFTracker(gating_distance=config.tracker.max_distance)
     finished_tracks: Dict[int, Dict] = {}
     single_points: List[TrackPoint] = []
 
@@ -430,21 +459,26 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
             ended = tracker.update(detections, frame_index, time_sec)
             finished_tracks.update(ended)
         else:
+            # W trybie single-object korzystamy z EKF, aby lepiej odrzucać artefakty chwilowych detekcji.
+            ekf_state = single_tracker.update(detections)
             best = detections[0] if detections else None
+            predicted_only = bool(ekf_state.get("predicted_only", True))
+            x_value = ekf_state.get("x")
+            y_value = ekf_state.get("y")
             single_points.append(
                 TrackPoint(
                     frame_index=frame_index,
                     time_sec=time_sec,
-                    detected=best is not None,
-                    x=best.x if best else None,
-                    y=best.y if best else None,
+                    detected=(x_value is not None and y_value is not None),
+                    x=x_value,
+                    y=y_value,
                     area=best.area if best else None,
                     perimeter=best.perimeter if best else None,
                     circularity=best.circularity if best else None,
                     radius=best.radius if best else None,
-                    track_id=1 if best else None,
+                    track_id=1 if (x_value is not None and y_value is not None) else None,
                     rank=best.rank if best else None,
-                    kalman_predicted=0,
+                    kalman_predicted=1 if predicted_only else 0,
                 )
             )
 
@@ -510,11 +544,14 @@ def track_video(args_or_config):
         (
             f"Start analizy | mode={config.detector.track_mode}, "
             f"multi_track={config.multi_track}, use_kalman={config.use_kalman}, "
-            f"selection_mode={config.selection_mode}"
+            f"selection_mode={config.selection_mode}, live={config.is_live_source}"
         ),
         "magenta",
     )
-    _log_stage("OK", f"Wczytywanie pliku do analizy: {config.video}", "yellow")
+    _log_stage("OK", f"Źródło analizy: {config.source_label}", "yellow")
+
+    if config.is_live_source and config.annotated_video:
+        raise ValueError("Eksport `--annotated_video` nie jest obsługiwany dla kamery na żywo.")
 
     camera_matrix = None
     dist_coeffs = None
@@ -529,11 +566,12 @@ def track_video(args_or_config):
     main_track_id = result["main_track_id"]
     # Wspólny zestaw metadanych zapisujemy zarówno do CSV, jak i do pliku `*.run.json`.
     run_metadata = build_run_metadata(
-        video_file=config.video,
+        input_source=config.source_label,
         detector_name=config.detector.track_mode,
         smoother_name="kalman" if config.use_kalman else "none",
         config_payload={
-            "video": config.video,
+            "input_source": config.source_label,
+            "is_live_source": config.is_live_source,
             "calib_file": config.calib_file,
             "multi_track": config.multi_track,
             "selection_mode": config.selection_mode,
@@ -632,7 +670,9 @@ def _build_parser() -> argparse.ArgumentParser:
     """Tworzy lekki parser standalone dla modułu pipeline."""
     detector_names = available_detector_names()
     parser = argparse.ArgumentParser(description="Standalone tracking pipeline runner.")
-    parser.add_argument("--video", required=True)
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--video")
+    source_group.add_argument("--camera", help="Kamera na żywo: indeks OpenCV albo ścieżka urządzenia")
     parser.add_argument("--output_csv", default="tracking_results.csv")
     parser.add_argument("--track_mode", choices=detector_names, default="brightness")
     parser.add_argument("--threshold", type=int, default=200)
@@ -654,6 +694,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_spots", type=int, default=10)
     parser.add_argument("--max_distance", type=float, default=40.0)
     parser.add_argument("--max_missed", type=int, default=10)
+    parser.add_argument("--distance_weight", type=float, default=1.0)
+    parser.add_argument("--area_weight", type=float, default=0.35)
+    parser.add_argument("--circularity_weight", type=float, default=0.2)
+    parser.add_argument("--brightness_weight", type=float, default=0.0)
+    parser.add_argument("--min_match_score", type=float, default=1.0)
+    parser.add_argument("--speed_gate_gain", type=float, default=1.5)
+    parser.add_argument("--error_gate_gain", type=float, default=1.0)
+    parser.add_argument("--min_dynamic_distance", type=float, default=12.0)
+    parser.add_argument("--max_dynamic_distance", type=float, default=150.0)
     parser.add_argument("--selection_mode", choices=["largest", "stablest", "longest"], default="stablest")
     parser.add_argument("--pnp_object_points", help="Punkty 3D świata: X,Y,Z;X,Y,Z;... (min. 4)")
     parser.add_argument("--pnp_image_points", help="Punkty 2D obrazu: x,y;x,y;... (min. 4)")
@@ -664,6 +713,15 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     """Punkt wejścia standalone: uruchamia pełny pipeline bez warstwy CLI aplikacji."""
     args = _build_parser().parse_args(argv)
+    if args.camera:
+        from .io_paths import parse_camera_source
+
+        args.video = parse_camera_source(args.camera)
+        args.source_label = f"camera:{args.camera}"
+        args.is_live_source = True
+    else:
+        args.source_label = str(args.video)
+        args.is_live_source = False
     track_video(args)
     return 0
 

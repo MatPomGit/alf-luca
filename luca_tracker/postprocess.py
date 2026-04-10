@@ -9,7 +9,7 @@ from typing import List, Optional, Sequence, Tuple
 from .types import TrackPoint
 
 try:
-    from kalman_tracker import smooth_xy_sequence
+    from .kalman import smooth_xy_sequence
 except Exception:
     smooth_xy_sequence = None
 
@@ -54,7 +54,7 @@ def smooth_xy_with_config(
 ) -> Sequence[Tuple[Optional[float], Optional[float], bool]]:
     """Wygładza surową sekwencję XY poza modelem TrackPoint."""
     if smooth_xy_sequence is None:
-        raise RuntimeError("Kalman backend is unavailable (missing kalman_tracker dependency).")
+        raise RuntimeError("Kalman backend is unavailable (missing luca_tracker.kalman dependency).")
     return smooth_xy_sequence(
         sequence,
         process_noise=config.process_noise,
