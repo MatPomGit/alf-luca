@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+from pathlib import Path
+import importlib
+import sys
+import warnings
+
+import types
+
+# Stub OpenCV dla środowisk CI bez biblioteki systemowej libGL.
+sys.modules.setdefault("cv2", types.ModuleType("cv2"))
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+
+# Najczęstsze legacy importy modułowe, które muszą się ładować.
+def test_legacy_module_import_mapping() -> None:
+    legacy_modules = [
+        "luca_tracker.tracking",
+        "luca_tracker.detectors",
+        "luca_tracker.tracker_core",
+    ]
+
+    for legacy_name in legacy_modules:
+        legacy_module = importlib.import_module(legacy_name)
+        assert legacy_module is not None
+
+
+# Weryfikujemy, że odczyt symboli legacy emituje DeprecationWarning
+# oraz deleguje import do nowego modułu publicznego API.
+def test_package_level_legacy_symbol_warns(monkeypatch) -> None:
+    import luca_tracker
+
+    fake_module = types.SimpleNamespace(track_video=lambda *args, **kwargs: None)
+    monkeypatch.setattr(luca_tracker, "import_module", lambda _name: fake_module)
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always", DeprecationWarning)
+        symbol = luca_tracker.track_video
+        assert callable(symbol)
+
+    assert any(item.category is DeprecationWarning for item in recorded)
+
+
+# Sprawdzamy to samo dla popularnego importu z `luca_tracker.tracking`.
+def test_tracking_legacy_symbol_warns(monkeypatch) -> None:
+    import luca_tracker.tracking as legacy_tracking
+
+    fake_module = types.SimpleNamespace(detect_spots=lambda *args, **kwargs: [])
+    monkeypatch.setattr(legacy_tracking, "import_module", lambda _name: fake_module)
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always", DeprecationWarning)
+        symbol = legacy_tracking.detect_spots
+        assert callable(symbol)
+
+    assert any(item.category is DeprecationWarning for item in recorded)

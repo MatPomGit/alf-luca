@@ -1,4 +1,72 @@
-"""Warstwa kompatybilności: re-eksport API z `luca_tracking.tracking`."""
+"""Warstwa kompatybilności dla legacy importów z `luca_tracker.tracking`.
 
-# Ten moduł zachowuje stare ścieżki importu dla klientów `luca_tracker`.
-from luca_tracking.tracking import *  # noqa: F401,F403
+Moduł pozostaje fasadą, ale każdy eksport emituje ostrzeżenie deprecacyjne
+z planowanym terminem usunięcia.
+"""
+
+from __future__ import annotations
+
+import warnings
+from importlib import import_module
+from typing import Any
+
+# Data docelowego usunięcia eksportów legacy po 1-2 wydaniach.
+LEGACY_REMOVAL_TARGET = "2026-09-30"
+
+# Lista publicznego API modułu `luca_tracking.tracking` utrzymywana jawnie,
+# aby uniknąć ciężkich importów (np. OpenCV) podczas samego importu fasady.
+_PUBLIC_EXPORTS = (
+    "COLOR_PRESETS",
+    "DetectorConfig",
+    "Detection",
+    "TrackPoint",
+    "SimpleMultiTracker",
+    "SingleObjectEKFTracker",
+    "apply_kalman_to_points",
+    "build_mask",
+    "calibrate_camera",
+    "choose_main_track",
+    "compute_track_metrics",
+    "contour_to_detection",
+    "detect_spots",
+    "detect_spots_with_config",
+    "ensure_odd",
+    "export_annotated_video",
+    "generate_trajectory_png",
+    "metrics_from_points",
+    "parse_hsv_pair",
+    "parse_roi",
+    "save_all_tracks_csv",
+    "save_metrics_csv",
+    "save_track_csv",
+    "save_track_report_pdf",
+    "track_video",
+)
+
+# Utrzymujemy historyczne `from luca_tracker.tracking import *`.
+__all__ = list(_PUBLIC_EXPORTS)
+
+
+def _warn_deprecated(name: str) -> None:
+    """Emituje standardowe ostrzeżenie deprecacyjne dla pojedynczego symbolu."""
+    warnings.warn(
+        (
+            f"`luca_tracker.tracking.{name}` is deprecated and will be removed after {LEGACY_REMOVAL_TARGET}. "
+            f"Use `luca_tracking.tracking.{name}` instead."
+        ),
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
+def __getattr__(name: str) -> Any:
+    """Leniwie przekazuje eksporty legacy do nowego modułu publicznego API."""
+    if name in _PUBLIC_EXPORTS:
+        _warn_deprecated(name)
+        return getattr(import_module("luca_tracking.tracking"), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Zapewnia kompletne podpowiedzi IDE dla utrzymywanych eksportów."""
+    return sorted(set(globals()) | set(_PUBLIC_EXPORTS))
