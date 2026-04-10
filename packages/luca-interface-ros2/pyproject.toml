@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "luca-interface-ros2"
+version = "0.1.0"
+description = "Interfejs ROS2 dla usług aplikacyjnych LUCA"
+requires-python = ">=3.10"
+dependencies = [
+  "luca-tracking",
+  "luca-tracker",
+]
+
+[project.scripts]
+luca-ros2 = "luca_interface_ros2.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

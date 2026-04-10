@@ -7,5 +7,8 @@ members = [
   "packages/luca-tracking",
   "packages/luca-reporting",
   "packages/luca-publishing",
+  "packages/luca-interface-cli",
+  "packages/luca-interface-gui",
+  "packages/luca-interface-ros2",
   "luca_tracker",
 ]

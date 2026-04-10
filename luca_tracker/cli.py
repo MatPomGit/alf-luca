@@ -7,14 +7,6 @@ import time
 from typing import List, Optional
 
 from . import __version__
-from .io_paths import (
-    build_measurement_stem,
-    ensure_output_dir,
-    parse_camera_source,
-    resolve_analysis_input,
-    resolve_output_path,
-    with_default,
-)
 
 DEFAULT_GUI_VIDEO_GLOB_PATTERNS = (
     "video/*.mp4",
@@ -308,75 +300,20 @@ def main():
             parser.error("Dla trybu GUI wymagany jest plik wideo. Podaj --video lub umieść plik *.mp4/*.mkv/*.avi/*.mov/*.m4v/*.webm w katalogu ./video.")
 
     if args.command == "calibrate":
-        ensure_output_dir()
-        args.output_file = resolve_output_path(args.output_file)
-        # Import lokalny ogranicza wymagania środowiskowe do użytego trybu.
-        from .tracking import calibrate_camera
+        from luca_tracking.application_services import run_calibrate
 
-        calibrate_camera(args.calib_dir, args.rows, args.cols, args.square_size, args.output_file)
+        run_calibrate(args.calib_dir, args.rows, args.cols, args.square_size, args.output_file)
     elif args.command == "track":
-        from .config_model import load_run_config, run_config_to_pipeline_config
-        from .tracking import track_video
+        from luca_tracking.application_services import run_tracking
 
-        ensure_output_dir()
-        if args.config:
-            run_config = load_run_config(args.config)
-            if bool(run_config.input.video) == bool(run_config.input.camera):
-                parser.error("Plik konfiguracyjny musi wskazywać dokładnie jedno źródło: `input.video` albo `input.camera`.")
-            source_label = run_config.input.video or f"camera:{run_config.input.camera}"
-            if run_config.input.video:
-                run_config.input.video = resolve_analysis_input(run_config.input.video)
-            base = build_measurement_stem(source_label)
-            output_csv_cfg = with_default(run_config.eval.output_csv, f"{base}_track.csv")
-            if output_csv_cfg == "tracking_results.csv":
-                output_csv_cfg = f"{base}_tracking_results.csv"
-            run_config.eval.output_csv = resolve_output_path(output_csv_cfg)
-            run_config.eval.trajectory_png = resolve_output_path(
-                with_default(run_config.eval.trajectory_png, f"{base}_trajectory.png")
-            )
-            run_config.eval.report_csv = resolve_output_path(with_default(run_config.eval.report_csv, f"{base}_report.csv"))
-            run_config.eval.report_pdf = resolve_output_path(with_default(run_config.eval.report_pdf, f"{base}_report.pdf"))
-            if run_config.eval.all_tracks_csv:
-                run_config.eval.all_tracks_csv = resolve_output_path(run_config.eval.all_tracks_csv)
-            if run_config.eval.annotated_video:
-                run_config.eval.annotated_video = resolve_output_path(run_config.eval.annotated_video)
-            track_video(run_config_to_pipeline_config(run_config))
-        else:
-            if not args.video and not args.camera:
-                parser.error("Dla trybu track wymagane jest jedno źródło: --video albo --camera.")
-            if args.video:
-                args.video = resolve_analysis_input(args.video)
-                args.source_label = args.video
-                args.is_live_source = False
-            else:
-                args.video = parse_camera_source(args.camera)
-                args.source_label = f"camera:{args.camera}"
-                args.is_live_source = True
-            base = build_measurement_stem(args.source_label)
-            output_csv_value = args.output_csv
-            if output_csv_value == "tracking_results.csv":
-                output_csv_value = f"{base}_tracking_results.csv"
-            args.output_csv = resolve_output_path(output_csv_value)
-            args.trajectory_png = resolve_output_path(args.trajectory_png or f"{base}_trajectory.png")
-            args.report_csv = resolve_output_path(args.report_csv or f"{base}_report.csv")
-            args.report_pdf = resolve_output_path(args.report_pdf or f"{base}_report.pdf")
-            if args.all_tracks_csv:
-                args.all_tracks_csv = resolve_output_path(args.all_tracks_csv)
-            if args.annotated_video:
-                args.annotated_video = resolve_output_path(args.annotated_video)
-            if args.calib_file:
-                args.calib_file = resolve_analysis_input(args.calib_file)
-            track_video(args)
+        try:
+            run_tracking(args)
+        except ValueError as exc:
+            parser.error(str(exc))
     elif args.command == "compare":
-        from .reports import compare_csv
+        from luca_tracking.application_services import run_compare
 
-        ensure_output_dir()
-        args.reference = resolve_analysis_input(args.reference)
-        args.candidate = resolve_analysis_input(args.candidate)
-        args.output_csv = resolve_output_path(args.output_csv)
-        if args.report_pdf:
-            args.report_pdf = resolve_output_path(args.report_pdf)
-        compare_csv(args.reference, args.candidate, args.output_csv, args.report_pdf)
+        run_compare(args.reference, args.candidate, args.output_csv, args.report_pdf)
     elif args.command == "gui":
         try:
             from .gui import GUIEnvironmentError, run_gui
@@ -393,11 +330,9 @@ def main():
             # Komunikat celowo krótki i praktyczny, aby użytkownik mógł szybko naprawić środowisko.
             raise SystemExit(f"Błąd uruchamiania GUI: {exc}") from exc
     elif args.command == "ros2":
-        from .ros2_node import run_ros2_tracker_node
+        from luca_tracking.application_services import run_ros2
 
-        if getattr(args, "calib_file", None):
-            args.calib_file = resolve_analysis_input(args.calib_file)
-        run_ros2_tracker_node(args)
+        run_ros2(args)
     else:
         parser.print_help()
 
