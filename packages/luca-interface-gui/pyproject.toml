@@ -9,6 +9,7 @@ description = "Interfejs GUI dla usług aplikacyjnych LUCA"
 requires-python = ">=3.10"
 dependencies = [
   "luca-tracking",
+  "luca-input",
 ]
 
 [project.scripts]

@@ -1,0 +1,27 @@
+name: Dependency Guard
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  undeclared-dependencies:
+    name: Undeclared dependency check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install checker dependencies
+        run: python -m pip install --upgrade pip tomli
+
+      - name: Validate pyproject dependencies against imports
+        run: python tools/check_declared_dependencies.py
