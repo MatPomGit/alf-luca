@@ -127,6 +127,43 @@ jobs:
       - name: Build package
         run: python -m build ./${{ matrix.package.path }}
 
+      - name: Generate sdist/wheel content manifest
+        env:
+          DIST_DIR: ./${{ matrix.package.path }}/dist
+          PACKAGE_NAME: ${{ matrix.package.name }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import tarfile
+          import zipfile
+          import os
+
+          dist_dir = Path(os.environ["DIST_DIR"])
+          package_name = os.environ["PACKAGE_NAME"]
+          manifest_path = dist_dir / "content-manifest.txt"
+
+          lines: list[str] = []
+          lines.append(f"# Manifest zawartości artefaktów dla: {package_name}")
+
+          # Iterujemy po artefaktach, aby wymusić jawny spis plików w sdist i wheel.
+          for artifact_path in sorted(dist_dir.iterdir()):
+              if artifact_path.name == manifest_path.name:
+                  continue
+              lines.append("")
+              lines.append(f"## {artifact_path.name}")
+              if artifact_path.suffix == ".whl":
+                  with zipfile.ZipFile(artifact_path) as wheel_file:
+                      lines.extend(sorted(wheel_file.namelist()))
+              elif artifact_path.name.endswith(".tar.gz"):
+                  with tarfile.open(artifact_path, mode="r:gz") as sdist_file:
+                      lines.extend(sorted(member.name for member in sdist_file.getmembers()))
+              else:
+                  lines.append(f"(pominięto nierozpoznany format: {artifact_path.name})")
+
+          manifest_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print(f"Wygenerowano manifest: {manifest_path}")
+          PY
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
