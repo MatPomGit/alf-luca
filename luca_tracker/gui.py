@@ -16,9 +16,11 @@ from .config_model import (
     DetectorConfig as RunDetectorConfig,
     EvalConfig,
     InputConfig,
+    PoseConfig,
     PostprocessConfig,
     RunConfig,
     TrackerConfig as RunTrackerConfig,
+    load_run_config,
     save_run_config,
 )
 from .reports import RUN_METADATA_FIELDS, build_run_metadata, save_run_metadata
@@ -399,6 +401,8 @@ def run_gui(args):
             self.recording_annotated_writer = None
             self.recording_binary_writer = None
             self.recording_base_path: Optional[Path] = None
+            # Mapa kontrolek formularza RunConfig używana do pełnego importu/eksportu ustawień.
+            self.run_config_fields: Dict[str, TextInput] = {}
 
         def _open_video(self, idx: int):
             cap = cv2.VideoCapture(str(self.video_files[idx]))
@@ -504,6 +508,16 @@ def run_gui(args):
                 max_prediction_frames=max(15, int(args.max_missed) * 3),
             )
             self.single_track_history = []
+            if self.run_config_fields:
+                current_video = str(self.video_files[self.current_video_idx])
+                stem = self.video_files[self.current_video_idx].stem
+                self.run_config_fields["input.video"].text = current_video
+                self.run_config_fields["eval.output_csv"].text = str(self.output_dir / f"{stem}_tracking.csv")
+                self.run_config_fields["eval.trajectory_png"].text = str(self.output_dir / f"{stem}_trajectory.png")
+                self.run_config_fields["eval.report_csv"].text = str(self.output_dir / f"{stem}_report.csv")
+                self.run_config_fields["eval.report_pdf"].text = str(self.output_dir / f"{stem}_report.pdf")
+                self.run_config_fields["eval.all_tracks_csv"].text = str(self.output_dir / f"{stem}_all_tracks.csv")
+                self.run_config_fields["eval.annotated_video"].text = str(self.output_dir / f"{stem}_annotated.mp4")
 
         def _make_slider(self, label: str, min_v: float, max_v: float, value: float, step: float, on_change):
             # Buduje jeden wiersz suwaka i zwraca referencję do kontrolki, aby obsłużyć nawigację klawiaturą/myszką.
@@ -701,6 +715,20 @@ def run_gui(args):
             container.add_widget(row)
             return inp
 
+        def _build_section_header(self, container: BoxLayout, title: str) -> None:
+            """Dodaje nagłówek sekcji formularza zgodnej z RunConfig."""
+            header = Label(
+                text=f"[b]{title}[/b]",
+                markup=True,
+                size_hint_y=None,
+                height=max(28, int(self.gui_font_size * 1.4)),
+                halign="left",
+                valign="middle",
+                font_size=max(16, int(self.gui_font_size * 0.8)),
+            )
+            header.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+            container.add_widget(header)
+
         def _parse_required(self, raw: str, name: str) -> str:
             """Waliduje pole wymagane i zwraca oczyszczoną wartość."""
             val = raw.strip()
@@ -763,6 +791,104 @@ def run_gui(args):
                 default = "" if action.default is None else str(action.default)
                 fields.append((action.dest, action.option_strings[0], default))
             return fields
+
+        def _parse_optional_text(self, raw: str) -> Optional[str]:
+            """Zwraca `None` dla pustego pola tekstowego, aby poprawnie mapować wartości opcjonalne."""
+            cleaned = raw.strip()
+            return cleaned or None
+
+        def _parse_bool_field(self, raw: str, name: str) -> bool:
+            """Parsuje wartość logiczną z pola tekstowego."""
+            lowered = raw.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                return True
+            if lowered in {"0", "false", "no", "off"}:
+                return False
+            raise ValueError(f"Pole '{name}' musi mieć wartość bool (true/false).")
+
+        def _validate_run_config(self, cfg: RunConfig) -> None:
+            """Weryfikuje zakresy i zależności pomiędzy kontrolkami formularza RunConfig."""
+            if bool(cfg.input.video) == bool(cfg.input.camera):
+                raise ValueError("Sekcja input wymaga dokładnie jednego źródła: `video` albo `camera`.")
+            if cfg.detector.blur < 1 or cfg.detector.blur % 2 == 0:
+                raise ValueError("`detector.blur` musi być nieparzyste i >= 1.")
+            if cfg.detector.adaptive_block_size < 3 or cfg.detector.adaptive_block_size % 2 == 0:
+                raise ValueError("`detector.adaptive_block_size` musi być nieparzyste i >= 3.")
+            if cfg.detector.max_area > 0 and cfg.detector.max_area < cfg.detector.min_area:
+                raise ValueError("`detector.max_area` musi być 0 (bez limitu) albo >= `detector.min_area`.")
+            if cfg.detector.temporal_window < 1:
+                raise ValueError("`detector.temporal_window` musi być >= 1.")
+            if cfg.detector.hsv_lower and not cfg.detector.hsv_upper:
+                raise ValueError("Dla HSV custom wymagane są jednocześnie `hsv_lower` i `hsv_upper`.")
+            if cfg.detector.hsv_upper and not cfg.detector.hsv_lower:
+                raise ValueError("Dla HSV custom wymagane są jednocześnie `hsv_lower` i `hsv_upper`.")
+            if cfg.tracker.max_dynamic_distance < cfg.tracker.min_dynamic_distance:
+                raise ValueError("`tracker.max_dynamic_distance` musi być >= `tracker.min_dynamic_distance`.")
+            if cfg.pose.pnp_object_points and not cfg.pose.pnp_image_points:
+                raise ValueError("Dla rekonstrukcji PnP wymagane są oba pola: `pnp_object_points` i `pnp_image_points`.")
+            if cfg.pose.pnp_image_points and not cfg.pose.pnp_object_points:
+                raise ValueError("Dla rekonstrukcji PnP wymagane są oba pola: `pnp_object_points` i `pnp_image_points`.")
+
+        def _populate_run_config_form(self, cfg: RunConfig) -> None:
+            """Wypełnia formularz GUI na podstawie kompletnego modelu RunConfig."""
+            fields = self.run_config_fields
+            fields["input.video"].text = cfg.input.video or ""
+            fields["input.camera"].text = cfg.input.camera or ""
+            fields["input.calib_file"].text = cfg.input.calib_file or ""
+            fields["input.display"].text = str(cfg.input.display).lower()
+            fields["input.interactive"].text = str(cfg.input.interactive).lower()
+            fields["detector.track_mode"].text = cfg.detector.track_mode
+            fields["detector.blur"].text = str(cfg.detector.blur)
+            fields["detector.threshold"].text = str(cfg.detector.threshold)
+            fields["detector.threshold_mode"].text = cfg.detector.threshold_mode
+            fields["detector.adaptive_block_size"].text = str(cfg.detector.adaptive_block_size)
+            fields["detector.adaptive_c"].text = str(cfg.detector.adaptive_c)
+            fields["detector.use_clahe"].text = str(cfg.detector.use_clahe).lower()
+            fields["detector.erode_iter"].text = str(cfg.detector.erode_iter)
+            fields["detector.dilate_iter"].text = str(cfg.detector.dilate_iter)
+            fields["detector.opening_kernel"].text = str(cfg.detector.opening_kernel)
+            fields["detector.closing_kernel"].text = str(cfg.detector.closing_kernel)
+            fields["detector.min_area"].text = str(cfg.detector.min_area)
+            fields["detector.max_area"].text = str(cfg.detector.max_area)
+            fields["detector.min_circularity"].text = str(cfg.detector.min_circularity)
+            fields["detector.max_aspect_ratio"].text = str(cfg.detector.max_aspect_ratio)
+            fields["detector.min_peak_intensity"].text = str(cfg.detector.min_peak_intensity)
+            fields["detector.min_solidity"].text = "" if cfg.detector.min_solidity is None else str(cfg.detector.min_solidity)
+            fields["detector.max_spots"].text = str(cfg.detector.max_spots)
+            fields["detector.color_name"].text = cfg.detector.color_name
+            fields["detector.hsv_lower"].text = cfg.detector.hsv_lower or ""
+            fields["detector.hsv_upper"].text = cfg.detector.hsv_upper or ""
+            fields["detector.roi"].text = cfg.detector.roi or ""
+            fields["detector.temporal_stabilization"].text = str(cfg.detector.temporal_stabilization).lower()
+            fields["detector.temporal_window"].text = str(cfg.detector.temporal_window)
+            fields["detector.temporal_mode"].text = cfg.detector.temporal_mode
+            fields["tracker.multi_track"].text = str(cfg.tracker.multi_track).lower()
+            fields["tracker.use_single_object_ekf"].text = str(cfg.tracker.use_single_object_ekf).lower()
+            fields["tracker.max_distance"].text = str(cfg.tracker.max_distance)
+            fields["tracker.max_missed"].text = str(cfg.tracker.max_missed)
+            fields["tracker.selection_mode"].text = cfg.tracker.selection_mode
+            fields["tracker.distance_weight"].text = str(cfg.tracker.distance_weight)
+            fields["tracker.area_weight"].text = str(cfg.tracker.area_weight)
+            fields["tracker.circularity_weight"].text = str(cfg.tracker.circularity_weight)
+            fields["tracker.brightness_weight"].text = str(cfg.tracker.brightness_weight)
+            fields["tracker.min_match_score"].text = str(cfg.tracker.min_match_score)
+            fields["tracker.speed_gate_gain"].text = str(cfg.tracker.speed_gate_gain)
+            fields["tracker.error_gate_gain"].text = str(cfg.tracker.error_gate_gain)
+            fields["tracker.min_dynamic_distance"].text = str(cfg.tracker.min_dynamic_distance)
+            fields["tracker.max_dynamic_distance"].text = str(cfg.tracker.max_dynamic_distance)
+            fields["postprocess.use_kalman"].text = str(cfg.postprocess.use_kalman).lower()
+            fields["postprocess.kalman_process_noise"].text = str(cfg.postprocess.kalman_process_noise)
+            fields["postprocess.kalman_measurement_noise"].text = str(cfg.postprocess.kalman_measurement_noise)
+            fields["postprocess.draw_all_tracks"].text = str(cfg.postprocess.draw_all_tracks).lower()
+            fields["pose.pnp_object_points"].text = cfg.pose.pnp_object_points or ""
+            fields["pose.pnp_image_points"].text = cfg.pose.pnp_image_points or ""
+            fields["pose.pnp_world_plane_z"].text = str(cfg.pose.pnp_world_plane_z)
+            fields["eval.output_csv"].text = cfg.eval.output_csv
+            fields["eval.trajectory_png"].text = cfg.eval.trajectory_png or ""
+            fields["eval.report_csv"].text = cfg.eval.report_csv or ""
+            fields["eval.report_pdf"].text = cfg.eval.report_pdf or ""
+            fields["eval.all_tracks_csv"].text = cfg.eval.all_tracks_csv or ""
+            fields["eval.annotated_video"].text = cfg.eval.annotated_video or ""
 
         def build(self):
             # Dodatkowe zabezpieczenie: jeśli provider okna zniknie w trakcie startu,
@@ -833,6 +959,94 @@ def run_gui(args):
                     ("Speed", self.speed_spinner),
                 ]
             )
+
+            self._build_section_header(controls, "RunConfig / input")
+            self.run_config_fields["input.video"] = self._build_labeled_input(controls, "input.video", str(self.video_files[self.current_video_idx]))
+            self.run_config_fields["input.camera"] = self._build_labeled_input(controls, "input.camera", "")
+            self.run_config_fields["input.calib_file"] = self._build_labeled_input(controls, "input.calib_file", args.calib_file or "")
+            self.run_config_fields["input.display"] = self._build_labeled_input(controls, "input.display", "false")
+            self.run_config_fields["input.interactive"] = self._build_labeled_input(controls, "input.interactive", "false")
+
+            self._build_section_header(controls, "RunConfig / detector")
+            detector_defaults = {
+                "detector.track_mode": self.track_mode,
+                "detector.blur": str(self.blur),
+                "detector.threshold": str(self.threshold),
+                "detector.threshold_mode": self.threshold_mode,
+                "detector.adaptive_block_size": str(self.adaptive_block_size),
+                "detector.adaptive_c": str(self.adaptive_c),
+                "detector.use_clahe": str(self.use_clahe).lower(),
+                "detector.erode_iter": str(self.erode_iter),
+                "detector.dilate_iter": str(self.dilate_iter),
+                "detector.opening_kernel": "0",
+                "detector.closing_kernel": "0",
+                "detector.min_area": str(self.min_area),
+                "detector.max_area": str(self.max_area),
+                "detector.min_circularity": str(self.min_circularity),
+                "detector.max_aspect_ratio": str(self.max_aspect_ratio),
+                "detector.min_peak_intensity": str(self.min_peak_intensity),
+                "detector.min_solidity": str(self.min_solidity),
+                "detector.max_spots": str(self.max_spots),
+                "detector.color_name": self.color_name,
+                "detector.hsv_lower": "",
+                "detector.hsv_upper": "",
+                "detector.roi": args.roi or "",
+                "detector.temporal_stabilization": "false",
+                "detector.temporal_window": "3",
+                "detector.temporal_mode": "majority",
+            }
+            for key, value in detector_defaults.items():
+                self.run_config_fields[key] = self._build_labeled_input(controls, key, value)
+
+            self._build_section_header(controls, "RunConfig / tracker")
+            tracker_defaults = {
+                "tracker.multi_track": str(self.multi_track).lower(),
+                "tracker.use_single_object_ekf": "true",
+                "tracker.max_distance": str(args.max_distance),
+                "tracker.max_missed": str(args.max_missed),
+                "tracker.selection_mode": self.selection_mode,
+                "tracker.distance_weight": "1.0",
+                "tracker.area_weight": "0.35",
+                "tracker.circularity_weight": "0.2",
+                "tracker.brightness_weight": "0.0",
+                "tracker.min_match_score": "0.5",
+                "tracker.speed_gate_gain": "1.5",
+                "tracker.error_gate_gain": "1.0",
+                "tracker.min_dynamic_distance": "12.0",
+                "tracker.max_dynamic_distance": "150.0",
+            }
+            for key, value in tracker_defaults.items():
+                self.run_config_fields[key] = self._build_labeled_input(controls, key, value)
+
+            self._build_section_header(controls, "RunConfig / postprocess")
+            for key, value in {
+                "postprocess.use_kalman": "false",
+                "postprocess.kalman_process_noise": "0.03",
+                "postprocess.kalman_measurement_noise": "0.05",
+                "postprocess.draw_all_tracks": "false",
+            }.items():
+                self.run_config_fields[key] = self._build_labeled_input(controls, key, value)
+
+            self._build_section_header(controls, "RunConfig / pose")
+            for key, value in {
+                "pose.pnp_object_points": "",
+                "pose.pnp_image_points": "",
+                "pose.pnp_world_plane_z": "0.0",
+            }.items():
+                self.run_config_fields[key] = self._build_labeled_input(controls, key, value)
+
+            self._build_section_header(controls, "RunConfig / eval")
+            video_stem = self.video_files[self.current_video_idx].stem
+            eval_defaults = {
+                "eval.output_csv": str(self.output_dir / f"{video_stem}_tracking.csv"),
+                "eval.trajectory_png": str(self.output_dir / f"{video_stem}_trajectory.png"),
+                "eval.report_csv": str(self.output_dir / f"{video_stem}_report.csv"),
+                "eval.report_pdf": str(self.output_dir / f"{video_stem}_report.pdf"),
+                "eval.all_tracks_csv": str(self.output_dir / f"{video_stem}_all_tracks.csv"),
+                "eval.annotated_video": str(self.output_dir / f"{video_stem}_annotated.mp4"),
+            }
+            for key, value in eval_defaults.items():
+                self.run_config_fields[key] = self._build_labeled_input(controls, key, value)
 
             slider_rows = [
                 ("Threshold", 0, 255, self.threshold, 1, lambda v: setattr(self, "threshold", int(v))),
@@ -914,6 +1128,10 @@ def run_gui(args):
             btn_export_cfg.bind(on_press=lambda *_: self._export_run_config())
             row_action.add_widget(btn_export_cfg)
 
+            btn_load_cfg = Button(text="Wczytaj run config")
+            btn_load_cfg.bind(on_press=lambda *_: self._load_run_config_from_path())
+            row_action.add_widget(btn_load_cfg)
+
             btn_run_tracking = Button(text="Uruchom tracking")
             btn_run_tracking.bind(on_press=lambda *_: self._run_tracking_pipeline())
             row_action.add_widget(btn_run_tracking)
@@ -932,6 +1150,7 @@ def run_gui(args):
                     ("Prev video", btn_prev_video),
                     ("Next video", btn_next_video),
                     ("Restart video", btn_restart),
+                    ("Wczytaj run config", btn_load_cfg),
                     ("Uruchom tracking", btn_run_tracking),
                     ("QA video", btn_mp4),
                 ]
@@ -1055,7 +1274,11 @@ def run_gui(args):
             if not self.video_files:
                 self._set_status("error", "Brak dostępnych plików wideo do uruchomienia trackingu.")
                 return
-            cfg = self._build_current_run_config()
+            try:
+                cfg = self._build_current_run_config()
+            except ValueError as exc:
+                self._set_status("error", str(exc))
+                return
             self._set_status("info", "Uruchamianie track_video w tle...")
             self._run_background_task(
                 "Tracking",
@@ -1185,60 +1408,103 @@ def run_gui(args):
 
         def _build_current_run_config(self) -> RunConfig:
             """Buduje pełny model konfiguracji z aktualnego stanu kontrolek GUI."""
-            return RunConfig(
+            fields = self.run_config_fields
+            cfg = RunConfig(
                 input=InputConfig(
-                    video=str(self.video_files[self.current_video_idx]),
-                    calib_file=args.calib_file,
-                    display=False,
-                    interactive=False,
+                    video=self._parse_optional_text(fields["input.video"].text),
+                    camera=self._parse_optional_text(fields["input.camera"].text),
+                    calib_file=self._parse_optional_text(fields["input.calib_file"].text),
+                    display=self._parse_bool_field(fields["input.display"].text, "input.display"),
+                    interactive=self._parse_bool_field(fields["input.interactive"].text, "input.interactive"),
                 ),
                 detector=RunDetectorConfig(
-                    track_mode=self.track_mode,
-                    blur=ensure_odd(max(1, int(self.blur))),
-                    threshold=int(self.threshold),
-                    threshold_mode=self.threshold_mode,
-                    adaptive_block_size=int(self.adaptive_block_size),
-                    adaptive_c=float(self.adaptive_c),
-                    use_clahe=bool(self.use_clahe),
-                    erode_iter=int(self.erode_iter),
-                    dilate_iter=int(self.dilate_iter),
-                    min_area=float(self.min_area),
-                    max_area=float(self.max_area),
-                    min_circularity=float(self.min_circularity),
-                    max_aspect_ratio=float(self.max_aspect_ratio),
-                    min_peak_intensity=float(self.min_peak_intensity),
-                    min_solidity=float(self.min_solidity),
-                    max_spots=max(1, int(self.max_spots)),
-                    color_name=self.color_name,
-                    hsv_lower=None,
-                    hsv_upper=None,
-                    roi=args.roi,
+                    track_mode=self._parse_required(fields["detector.track_mode"].text, "detector.track_mode"),
+                    blur=self._parse_int(fields["detector.blur"].text, "detector.blur", min_value=1),
+                    threshold=self._parse_int(fields["detector.threshold"].text, "detector.threshold", min_value=0),
+                    threshold_mode=self._parse_required(fields["detector.threshold_mode"].text, "detector.threshold_mode"),
+                    adaptive_block_size=self._parse_int(fields["detector.adaptive_block_size"].text, "detector.adaptive_block_size", min_value=3),
+                    adaptive_c=self._parse_float(fields["detector.adaptive_c"].text, "detector.adaptive_c"),
+                    use_clahe=self._parse_bool_field(fields["detector.use_clahe"].text, "detector.use_clahe"),
+                    erode_iter=self._parse_int(fields["detector.erode_iter"].text, "detector.erode_iter", min_value=0),
+                    dilate_iter=self._parse_int(fields["detector.dilate_iter"].text, "detector.dilate_iter", min_value=0),
+                    opening_kernel=self._parse_int(fields["detector.opening_kernel"].text, "detector.opening_kernel", min_value=0),
+                    closing_kernel=self._parse_int(fields["detector.closing_kernel"].text, "detector.closing_kernel", min_value=0),
+                    min_area=self._parse_float(fields["detector.min_area"].text, "detector.min_area", min_value=0),
+                    max_area=self._parse_float(fields["detector.max_area"].text, "detector.max_area", min_value=0),
+                    min_circularity=self._parse_float(fields["detector.min_circularity"].text, "detector.min_circularity", min_value=0),
+                    max_aspect_ratio=self._parse_float(fields["detector.max_aspect_ratio"].text, "detector.max_aspect_ratio", min_value=1),
+                    min_peak_intensity=self._parse_float(fields["detector.min_peak_intensity"].text, "detector.min_peak_intensity", min_value=0),
+                    min_solidity=self._parse_float(fields["detector.min_solidity"].text, "detector.min_solidity", min_value=0) if fields["detector.min_solidity"].text.strip() else None,
+                    max_spots=self._parse_int(fields["detector.max_spots"].text, "detector.max_spots", min_value=1),
+                    color_name=self._parse_required(fields["detector.color_name"].text, "detector.color_name"),
+                    hsv_lower=self._parse_optional_text(fields["detector.hsv_lower"].text),
+                    hsv_upper=self._parse_optional_text(fields["detector.hsv_upper"].text),
+                    roi=self._parse_optional_text(fields["detector.roi"].text),
+                    temporal_stabilization=self._parse_bool_field(fields["detector.temporal_stabilization"].text, "detector.temporal_stabilization"),
+                    temporal_window=self._parse_int(fields["detector.temporal_window"].text, "detector.temporal_window", min_value=1),
+                    temporal_mode=self._parse_required(fields["detector.temporal_mode"].text, "detector.temporal_mode"),
                 ),
                 tracker=RunTrackerConfig(
-                    multi_track=bool(self.multi_track),
-                    max_distance=float(args.max_distance),
-                    max_missed=int(args.max_missed),
-                    selection_mode=self.selection_mode,
+                    multi_track=self._parse_bool_field(fields["tracker.multi_track"].text, "tracker.multi_track"),
+                    use_single_object_ekf=self._parse_bool_field(fields["tracker.use_single_object_ekf"].text, "tracker.use_single_object_ekf"),
+                    max_distance=self._parse_float(fields["tracker.max_distance"].text, "tracker.max_distance", min_value=0),
+                    max_missed=self._parse_int(fields["tracker.max_missed"].text, "tracker.max_missed", min_value=0),
+                    selection_mode=self._parse_required(fields["tracker.selection_mode"].text, "tracker.selection_mode"),
+                    distance_weight=self._parse_float(fields["tracker.distance_weight"].text, "tracker.distance_weight", min_value=0),
+                    area_weight=self._parse_float(fields["tracker.area_weight"].text, "tracker.area_weight", min_value=0),
+                    circularity_weight=self._parse_float(fields["tracker.circularity_weight"].text, "tracker.circularity_weight", min_value=0),
+                    brightness_weight=self._parse_float(fields["tracker.brightness_weight"].text, "tracker.brightness_weight", min_value=0),
+                    min_match_score=self._parse_float(fields["tracker.min_match_score"].text, "tracker.min_match_score", min_value=0),
+                    speed_gate_gain=self._parse_float(fields["tracker.speed_gate_gain"].text, "tracker.speed_gate_gain", min_value=0),
+                    error_gate_gain=self._parse_float(fields["tracker.error_gate_gain"].text, "tracker.error_gate_gain", min_value=0),
+                    min_dynamic_distance=self._parse_float(fields["tracker.min_dynamic_distance"].text, "tracker.min_dynamic_distance", min_value=0),
+                    max_dynamic_distance=self._parse_float(fields["tracker.max_dynamic_distance"].text, "tracker.max_dynamic_distance", min_value=0),
                 ),
                 postprocess=PostprocessConfig(
-                    use_kalman=False,
-                    kalman_process_noise=1e-2,
-                    kalman_measurement_noise=1e-1,
-                    draw_all_tracks=False,
+                    use_kalman=self._parse_bool_field(fields["postprocess.use_kalman"].text, "postprocess.use_kalman"),
+                    kalman_process_noise=self._parse_float(fields["postprocess.kalman_process_noise"].text, "postprocess.kalman_process_noise", min_value=0),
+                    kalman_measurement_noise=self._parse_float(fields["postprocess.kalman_measurement_noise"].text, "postprocess.kalman_measurement_noise", min_value=0),
+                    draw_all_tracks=self._parse_bool_field(fields["postprocess.draw_all_tracks"].text, "postprocess.draw_all_tracks"),
+                ),
+                pose=PoseConfig(
+                    pnp_object_points=self._parse_optional_text(fields["pose.pnp_object_points"].text),
+                    pnp_image_points=self._parse_optional_text(fields["pose.pnp_image_points"].text),
+                    pnp_world_plane_z=self._parse_float(fields["pose.pnp_world_plane_z"].text, "pose.pnp_world_plane_z"),
                 ),
                 eval=EvalConfig(
-                    output_csv=str(self.output_dir / f"{self.video_files[self.current_video_idx].stem}_tracking.csv"),
-                    trajectory_png=str(self.output_dir / f"{self.video_files[self.current_video_idx].stem}_trajectory.png"),
-                    report_csv=str(self.output_dir / f"{self.video_files[self.current_video_idx].stem}_report.csv"),
-                    report_pdf=str(self.output_dir / f"{self.video_files[self.current_video_idx].stem}_report.pdf"),
-                    all_tracks_csv=str(self.output_dir / f"{self.video_files[self.current_video_idx].stem}_all_tracks.csv"),
-                    annotated_video=str(self.output_dir / f"{self.video_files[self.current_video_idx].stem}_annotated.mp4"),
+                    output_csv=self._parse_required(fields["eval.output_csv"].text, "eval.output_csv"),
+                    trajectory_png=self._parse_optional_text(fields["eval.trajectory_png"].text),
+                    report_csv=self._parse_optional_text(fields["eval.report_csv"].text),
+                    report_pdf=self._parse_optional_text(fields["eval.report_pdf"].text),
+                    all_tracks_csv=self._parse_optional_text(fields["eval.all_tracks_csv"].text),
+                    annotated_video=self._parse_optional_text(fields["eval.annotated_video"].text),
                 ),
             )
+            self._validate_run_config(cfg)
+            return cfg
+
+        def _load_run_config_from_path(self) -> None:
+            """Wczytuje plik run config i mapuje jego stan do wszystkich kontrolek formularza."""
+            default_path = self.output_dir / f"{self.video_files[self.current_video_idx].stem}_run_config.yaml"
+            candidate_path = Path(default_path)
+            if not candidate_path.exists():
+                json_path = self.output_dir / f"{self.video_files[self.current_video_idx].stem}_run_config.json"
+                candidate_path = json_path if json_path.exists() else candidate_path
+            try:
+                cfg = load_run_config(candidate_path)
+                self._validate_run_config(cfg)
+                self._populate_run_config_form(cfg)
+                self._set_status("success", f"Wczytano run config: {candidate_path}")
+            except Exception as exc:  # noqa: BLE001
+                self._set_status("error", f"Nie udało się wczytać run config: {exc}")
 
         def _export_run_config(self):
             """Eksportuje bieżące ustawienia GUI do pliku run config (preferowany YAML, fallback JSON)."""
-            cfg = self._build_current_run_config()
+            try:
+                cfg = self._build_current_run_config()
+            except ValueError as exc:
+                self._set_status("error", str(exc))
+                return
             export_path = self.output_dir / f"{self.video_files[self.current_video_idx].stem}_run_config.yaml"
             try:
                 save_run_config(cfg, export_path)
