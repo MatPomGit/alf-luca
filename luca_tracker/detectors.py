@@ -345,6 +345,8 @@ def _compute_detection_confidence(
 
     confidence = 0.45 * shape_score + 0.35 * brightness_score + 0.20 * size_stability_score
     return _clip01(confidence)
+
+
 def _contour_peak_intensity(gray_roi: np.ndarray, contour: np.ndarray) -> float:
     """Zwraca lokalne maksimum jasności (0..255) wewnątrz konturu."""
     local_mask = np.zeros(gray_roi.shape, dtype=np.uint8)
@@ -362,9 +364,9 @@ def _contour_solidity(contour: np.ndarray, contour_area: float) -> float:
     return float(contour_area / hull_area)
 
 
-def _detection_score(det: Detection, peak_intensity: float, max_area_ref: float) -> float:
+def _detection_score(det: Detection, peak_intensity: float, area_ref: float) -> float:
     """Łączy cechy jakości detekcji do jednego score (większy = lepszy kandydat)."""
-    area_norm = float(np.clip(det.area / max(max_area_ref, 1.0), 0.0, 1.0))
+    area_norm = float(np.clip(det.area / max(area_ref, 1.0), 0.0, 1.0))
     circularity_norm = float(np.clip(det.circularity, 0.0, 1.0))
     peak_norm = float(np.clip(peak_intensity / 255.0, 0.0, 1.0))
     # Wagi premiują duże, koliste i wyraźnie jasne plamki.
@@ -468,7 +470,7 @@ def detect_spots(
     gray_roi = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
     contours, _ = cv2.findContours(mask_roi.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    candidates: List[Tuple[Detection, np.ndarray]] = []
+    candidates: List[Tuple[Detection, np.ndarray, float]] = []
     scored_detections: List[Tuple[float, Detection]] = []
     effective_max_aspect_ratio = max(1.0, float(max_aspect_ratio))
     for contour in contours:
@@ -483,18 +485,11 @@ def detect_spots(
             continue
         if max_area > 0 and det.area > max_area:
             continue
-        candidates.append((det, contour))
+        # Dla tego samego konturu liczymy peak raz, aby użyć go zarówno do filtrowania,
+        # jak i późniejszego score rankingu kandydatów.
+        peak_intensity = _contour_peak_intensity(gray_roi, contour)
 
-    area_reference = float(np.median([det.area for det, _ in candidates])) if candidates else 0.0
-    detections: List[Detection] = []
-    for det, contour in candidates:
-        det.confidence = _compute_detection_confidence(
-            contour=contour,
-            detection=det,
-            roi_frame=roi_frame,
-            area_reference=area_reference,
-        )
-        detections.append(det)
+        # Progi jakościowe ograniczają fałszywe trafienia już na etapie budowania listy kandydatów.
         if det.circularity < float(min_circularity):
             continue
         if det.bbox_w <= 0 or det.bbox_h <= 0:
@@ -502,17 +497,28 @@ def detect_spots(
         aspect_ratio = max(det.bbox_w / det.bbox_h, det.bbox_h / det.bbox_w)
         if aspect_ratio > effective_max_aspect_ratio:
             continue
-        peak_intensity = _contour_peak_intensity(gray_roi, contour)
         if peak_intensity < float(min_peak_intensity):
             continue
         if min_solidity is not None:
             solidity = _contour_solidity(contour, det.area)
             if solidity < float(min_solidity):
                 continue
+        candidates.append((det, contour, peak_intensity))
+
+    area_reference = float(np.median([det.area for det, _, _ in candidates])) if candidates else 0.0
+    detections: List[Detection] = []
+    for det, contour, peak_intensity in candidates:
+        det.confidence = _compute_detection_confidence(
+            contour=contour,
+            detection=det,
+            roi_frame=roi_frame,
+            area_reference=area_reference,
+        )
+        detections.append(det)
         score = _detection_score(
             det,
             peak_intensity=peak_intensity,
-            max_area_ref=max_area if max_area > 0 else (w * h),
+            area_ref=area_reference if area_reference > 0 else (max_area if max_area > 0 else (w * h)),
         )
         scored_detections.append((score, det))
 

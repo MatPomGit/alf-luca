@@ -19,6 +19,10 @@ detector:
   closing_kernel: 0
   min_area: 20.0
   max_area: 0.0
+  min_circularity: 0.0
+  max_aspect_ratio: 6.0
+  min_peak_intensity: 0.0
+  min_solidity:
   max_spots: 10
   color_name: red
   hsv_lower:
