@@ -1,0 +1,28 @@
+# Katalog scenariuszy benchmarku jakości śledzenia
+
+Ten katalog zawiera **lekki zestaw scenariuszy testowych** do porównywania jakości pipeline'u
+przed/po zmianach konfiguracyjnych lub modyfikacjach kodu.
+
+## Cele scenariuszy
+
+Scenariusze zostały dobrane tak, aby pokryć częste trudne przypadki:
+
+- **refleksy** — wiele jasnych odbić może powodować fałszywe detekcje,
+- **migotanie** — niestabilna jasność utrudnia utrzymanie ciągłego toru,
+- **tło dynamiczne** — ruch w tle może zwiększać liczbę przełączeń `track_id`.
+
+## Plik manifestu
+
+Plik `scenarios.json` przechowuje listę przypadków testowych oraz metadane.
+Każdy wpis zawiera:
+
+- `name` — krótki identyfikator scenariusza,
+- `video` — ścieżkę do pliku wideo,
+- `tags` — etykiety opisujące typ trudności,
+- `notes` — krótki opis kontekstu testu.
+
+## Dobre praktyki rozbudowy zestawu
+
+1. Dodawaj nowe scenariusze jako osobne wpisy JSON (bez usuwania starych).
+2. Utrzymuj spójne nazewnictwo w `name` (np. `reflections_*`, `flicker_*`, `dynamic_bg_*`).
+3. W `notes` zapisuj, czego oczekujesz po algorytmie (np. „niski udział predykcji Kalmana”).
