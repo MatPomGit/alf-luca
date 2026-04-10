@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "luca-suite"
+version = "0.1.0"
+description = "Metapakiet spinający kompatybilne wersje modułów LUCA"
+requires-python = ">=3.10"
+dependencies = [
+  "luca-types>=0.1.0,<0.2.0",
+  "luca-input>=0.1.0,<0.2.0",
+  "luca-camera>=0.1.0,<0.2.0",
+  "luca-processing>=0.1.0,<0.2.0",
+  "luca-tracking>=0.1.0,<0.2.0",
+  "luca-reporting>=0.1.0,<0.2.0",
+  "luca-publishing>=0.1.0,<0.2.0",
+  "luca-interface-cli>=0.1.0,<0.2.0",
+  "luca-interface-gui>=0.1.0,<0.2.0",
+  "luca-interface-ros2>=0.1.0,<0.2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

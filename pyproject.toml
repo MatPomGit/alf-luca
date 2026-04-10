@@ -10,5 +10,6 @@ members = [
   "packages/luca-interface-cli",
   "packages/luca-interface-gui",
   "packages/luca-interface-ros2",
+  "packages/luca-suite",
   "luca_tracker",
 ]
