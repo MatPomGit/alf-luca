@@ -73,6 +73,20 @@ def build_parser():
     p_track.add_argument("--calib_file", help="Plik kalibracji .npz")
     p_track.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
     p_track.add_argument("--threshold", type=int, default=200, help="Próg jasności")
+    p_track.add_argument(
+        "--threshold_mode",
+        choices=["fixed", "otsu", "adaptive"],
+        default="fixed",
+        help="Tryb progowania dla detektora jasności.",
+    )
+    p_track.add_argument(
+        "--adaptive_block_size",
+        type=int,
+        default=31,
+        help="Rozmiar okna dla progowania adaptacyjnego (nieparzysty, >=3).",
+    )
+    p_track.add_argument("--adaptive_c", type=float, default=5.0, help="Stała C odejmowana w progu adaptacyjnym.")
+    p_track.add_argument("--use_clahe", action="store_true", help="Włącz CLAHE przed progowaniem (normalizacja lokalnego kontrastu).")
     p_track.add_argument("--blur", type=int, default=11, help="Rozmiar filtra Gaussa")
     p_track.add_argument("--min_area", type=float, default=10.0, help="Minimalne pole plamki")
     p_track.add_argument("--max_area", type=float, default=0.0, help="Maksymalne pole plamki, 0 = brak")
@@ -147,6 +161,10 @@ def build_parser():
     p_gui.add_argument("--calib_file", help="Plik kalibracji .npz (opcjonalnie)")
     p_gui.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
     p_gui.add_argument("--threshold", type=int, default=200)
+    p_gui.add_argument("--threshold_mode", choices=["fixed", "otsu", "adaptive"], default="fixed")
+    p_gui.add_argument("--adaptive_block_size", type=int, default=31)
+    p_gui.add_argument("--adaptive_c", type=float, default=5.0)
+    p_gui.add_argument("--use_clahe", action="store_true")
     p_gui.add_argument("--blur", type=int, default=11)
     p_gui.add_argument("--min_area", type=float, default=10.0)
     p_gui.add_argument("--max_area", type=float, default=0.0)
@@ -214,6 +232,20 @@ def build_parser():
     p_ros2.add_argument("--turtle_search_angular_speed", type=float, default=0.0, help="(Legacy) nieużywane: przy braku detekcji turtle zatrzymuje się")
     p_ros2.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
     p_ros2.add_argument("--threshold", type=int, default=200, help="Próg jasności")
+    p_ros2.add_argument(
+        "--threshold_mode",
+        choices=["fixed", "otsu", "adaptive"],
+        default="fixed",
+        help="Tryb progowania dla detektora jasności.",
+    )
+    p_ros2.add_argument(
+        "--adaptive_block_size",
+        type=int,
+        default=31,
+        help="Rozmiar okna dla progowania adaptacyjnego (nieparzysty, >=3).",
+    )
+    p_ros2.add_argument("--adaptive_c", type=float, default=5.0, help="Stała C odejmowana w progu adaptacyjnym.")
+    p_ros2.add_argument("--use_clahe", action="store_true", help="Włącz CLAHE przed progowaniem (normalizacja lokalnego kontrastu).")
     p_ros2.add_argument("--blur", type=int, default=11, help="Rozmiar filtra Gaussa")
     p_ros2.add_argument("--min_area", type=float, default=10.0, help="Minimalne pole plamki")
     p_ros2.add_argument("--max_area", type=float, default=0.0, help="Maksymalne pole plamki, 0 = brak")
