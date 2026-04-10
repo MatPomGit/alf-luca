@@ -363,10 +363,14 @@ def run_gui(args):
             self.blur = int(np.clip(args.blur, 1, 31))
             self.min_area = float(args.min_area)
             self.max_area = float(args.max_area)
+            # Wyższy próg kolistości redukuje fałszywe trafienia o nieregularnym obrysie.
             self.min_circularity = float(np.clip(args.min_circularity, 0.0, 1.0))
+            # Niższy limit ratio bbox tłumi bardzo wydłużone kontury (np. smugi i odbicia liniowe).
             self.max_aspect_ratio = float(max(1.0, args.max_aspect_ratio))
+            # Minimalny peak jasności odcina słabe refleksy, które często są niestabilne między klatkami.
             self.min_peak_intensity = float(np.clip(args.min_peak_intensity, 0.0, 255.0))
             raw_min_solidity = 0.0 if args.min_solidity is None else float(args.min_solidity)
+            # Zwartość (solidity) pomaga wyciąć postrzępione/wklęsłe artefakty segmentacji.
             self.min_solidity = float(np.clip(raw_min_solidity, 0.0, 1.0))
             self.erode_iter = int(np.clip(args.erode_iter, 0, 10))
             self.dilate_iter = int(np.clip(args.dilate_iter, 0, 10))

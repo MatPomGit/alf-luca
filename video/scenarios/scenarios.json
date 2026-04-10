@@ -1,0 +1,22 @@
+{
+  "scenarios": [
+    {
+      "name": "reflections_regal_plamka",
+      "video": "video/regal_plamka.mp4",
+      "tags": ["reflections"],
+      "notes": "Scena z wieloma odbiciami światła od powierzchni regału."
+    },
+    {
+      "name": "flicker_sledzenie_plamki",
+      "video": "video/sledzenie_plamki.mp4",
+      "tags": ["flicker"],
+      "notes": "Materiał z lokalnymi zmianami jasności i niestabilnością progu."
+    },
+    {
+      "name": "dynamic_bg_luca_regal",
+      "video": "video/luca_regal.mp4",
+      "tags": ["dynamic_background"],
+      "notes": "Dynamiczne tło oraz jasne elementy konkurujące z plamką."
+    }
+  ]
+}
