@@ -28,7 +28,11 @@ RUN_METADATA_FIELDS = (
     "smoother_name",
     "config_hash",
     "app_version",
+    "author",
 )
+
+# Domyślny autor wpisywany do metadanych uruchomień.
+DEFAULT_RUN_AUTHOR = "J2S"
 
 PROFILE_METRICS = {
     "basic": (
@@ -157,6 +161,7 @@ def build_run_metadata(
     config_payload: Dict[str, object],
     run_id: Optional[str] = None,
     app_version: Optional[str] = None,
+    author: Optional[str] = None,
 ) -> RunMetadata:
     """Buduje minimalny, wspólny zestaw metadanych dla pojedynczego uruchomienia."""
     payload_json = json.dumps(config_payload, sort_keys=True, ensure_ascii=False)
@@ -169,6 +174,8 @@ def build_run_metadata(
         "smoother_name": str(smoother_name),
         "config_hash": config_hash,
         "app_version": str(app_version or APP_VERSION),
+        # Pole autora ułatwia audyt artefaktów oraz identyfikację właściciela analiz.
+        "author": str(author or DEFAULT_RUN_AUTHOR),
     }
 
 
