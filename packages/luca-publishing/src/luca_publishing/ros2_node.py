@@ -14,6 +14,28 @@ from luca_processing.detector_interfaces import DetectorConfig
 from luca_processing.detectors import detect_spots_with_config
 
 ROS2_MESSAGE_SCHEMA_DEFAULT = "luca_tracker.ros2.tracking.v1"
+ROS2_BASE_PAYLOAD_KEYS: tuple[str, ...] = (
+    "schema",
+    "stamp_sec",
+    "stamp_nanosec",
+    "frame_index",
+    "time_sec",
+    "source",
+    "track_mode",
+    "spot_id",
+    "detected",
+    "roi",
+    "detections_count",
+    "x",
+    "y",
+    "x_world",
+    "y_world",
+    "z_world",
+    "area",
+    "radius",
+    "rank",
+    "run_metadata",
+)
 
 # Dokumentacja pól payloadu publikowanego na topicu ROS2.
 # Słownik utrzymujemy blisko kodu produkcyjnego, aby łatwo synchronizować kontrakt.
@@ -57,26 +79,21 @@ class Ros2TrackerConfig:
     frame_width: int = 0
     frame_height: int = 0
     display: bool = False
-    turtle_follow: bool = False
-    turtle_cmd_topic: str = "/turtle1/cmd_vel"
-    turtle_linear_speed: float = 1.0
-    turtle_min_linear_speed: float = 0.05
-    turtle_angular_gain: float = 1.2
-    turtle_angular_d_gain: float = 0.35
-    turtle_max_angular_speed: float = 1.6
-    turtle_center_deadband: float = 0.04
-    turtle_turn_in_place_threshold: float = 0.65
-    turtle_target_radius_px: float = 110.0
-    turtle_radius_arrived_px: float = 130.0
-    turtle_tracking_alpha: float = 0.25
-    turtle_cmd_alpha: float = 0.35
-    turtle_linear_accel_limit: float = 1.2
-    turtle_angular_accel_limit: float = 2.2
-    turtle_log_every_n_frames: int = 10
-    turtle_search_angular_speed: float = 0.0
     run_metadata_json: Optional[str] = None
     message_schema: str = ROS2_MESSAGE_SCHEMA_DEFAULT
     detector: DetectorConfig = field(default_factory=DetectorConfig)
+
+
+@dataclass(frozen=True)
+class Ros2TopicContract:
+    """Kontrakt komunikacji publikowanej na topicu ROS2.
+
+    Ta klasa grupuje nazwy pól payloadu i pozwala łatwo rozszerzać
+    kontrakt bez szukania kluczy po całym kodzie runtime.
+    """
+
+    schema: str = ROS2_MESSAGE_SCHEMA_DEFAULT
+    base_keys: tuple[str, ...] = ROS2_BASE_PAYLOAD_KEYS
 
 
 def _resolve_ros2_config(args_or_config: Any) -> Ros2TrackerConfig:
@@ -104,23 +121,6 @@ def _resolve_ros2_config(args_or_config: Any) -> Ros2TrackerConfig:
         frame_width=int(getattr(args_or_config, "frame_width", 0) or 0),
         frame_height=int(getattr(args_or_config, "frame_height", 0) or 0),
         display=bool(getattr(args_or_config, "display", False)),
-        turtle_follow=bool(getattr(args_or_config, "turtle_follow", False)),
-        turtle_cmd_topic=getattr(args_or_config, "turtle_cmd_topic", "/turtle1/cmd_vel"),
-        turtle_linear_speed=float(getattr(args_or_config, "turtle_linear_speed", 1.0)),
-        turtle_min_linear_speed=float(getattr(args_or_config, "turtle_min_linear_speed", 0.05)),
-        turtle_angular_gain=float(getattr(args_or_config, "turtle_angular_gain", 1.2)),
-        turtle_angular_d_gain=float(getattr(args_or_config, "turtle_angular_d_gain", 0.35)),
-        turtle_max_angular_speed=float(getattr(args_or_config, "turtle_max_angular_speed", 1.6)),
-        turtle_center_deadband=float(getattr(args_or_config, "turtle_center_deadband", 0.04)),
-        turtle_turn_in_place_threshold=float(getattr(args_or_config, "turtle_turn_in_place_threshold", 0.65)),
-        turtle_target_radius_px=float(getattr(args_or_config, "turtle_target_radius_px", 110.0)),
-        turtle_radius_arrived_px=float(getattr(args_or_config, "turtle_radius_arrived_px", 130.0)),
-        turtle_tracking_alpha=float(getattr(args_or_config, "turtle_tracking_alpha", 0.25)),
-        turtle_cmd_alpha=float(getattr(args_or_config, "turtle_cmd_alpha", 0.35)),
-        turtle_linear_accel_limit=float(getattr(args_or_config, "turtle_linear_accel_limit", 1.2)),
-        turtle_angular_accel_limit=float(getattr(args_or_config, "turtle_angular_accel_limit", 2.2)),
-        turtle_log_every_n_frames=int(getattr(args_or_config, "turtle_log_every_n_frames", 10)),
-        turtle_search_angular_speed=float(getattr(args_or_config, "turtle_search_angular_speed", 0.0)),
         run_metadata_json=getattr(args_or_config, "run_metadata_json", None),
         message_schema=str(getattr(args_or_config, "message_schema", ROS2_MESSAGE_SCHEMA_DEFAULT)),
         detector=DetectorConfig(
@@ -255,27 +255,21 @@ def _pixel_to_world_on_plane(
 class _Ros2TrackerRuntime:
     """Warstwa runtime spinana z obiektem Node, publikująca dane per klatka."""
 
-    def __init__(self, node, publisher, message_cls, config: Ros2TrackerConfig, turtle_cmd_publisher=None, twist_cls=None) -> None:
+    def __init__(self, node, publisher, message_cls, config: Ros2TrackerConfig) -> None:
         self.node = node
         self.publisher = publisher
         self.message_cls = message_cls
-        self.turtle_cmd_publisher = turtle_cmd_publisher
-        self.twist_cls = twist_cls
         self.config = config
         self.frame_index = 0
         self.start_time = time.monotonic()
         self._warned_capture_failure = False
-        self._filtered_x: Optional[float] = None
-        self._filtered_y: Optional[float] = None
-        self._filtered_radius: Optional[float] = None
-        self._prev_error_norm_x = 0.0
-        self._prev_linear_cmd = 0.0
-        self._prev_angular_cmd = 0.0
         self._camera_matrix: Optional[np.ndarray] = None
         self._dist_coeffs: Optional[np.ndarray] = None
         self._pnp_rvec: Optional[np.ndarray] = None
         self._pnp_tvec: Optional[np.ndarray] = None
         self._run_metadata = _load_run_metadata_json(config.run_metadata_json)
+        # Jedno źródło prawdy dla kontraktu JSON publikowanego do ROS2.
+        self._topic_contract = Ros2TopicContract(schema=config.message_schema)
         self.cap = cv2.VideoCapture(config.video_source)
 
         if not self.cap.isOpened():
@@ -295,27 +289,6 @@ class _Ros2TrackerRuntime:
                 f"topic={config.topic}, fps={config.fps:0.1f}, mode={config.detector.track_mode}"
             )
         )
-        if self.config.turtle_follow and self.turtle_cmd_publisher is not None:
-            node.get_logger().info(f"Turtle follow enabled | cmd_topic={self.config.turtle_cmd_topic}")
-            node.get_logger().info(
-                (
-                    "Turtle params | "
-                    f"v_max={self.config.turtle_linear_speed}, "
-                    f"v_min={self.config.turtle_min_linear_speed}, "
-                    f"k_ang={self.config.turtle_angular_gain}, "
-                    f"k_ang_d={self.config.turtle_angular_d_gain}, "
-                    f"w_max={self.config.turtle_max_angular_speed}, "
-                    f"deadband={self.config.turtle_center_deadband}, "
-                    f"turn_in_place_th={self.config.turtle_turn_in_place_threshold}, "
-                    f"target_r={self.config.turtle_target_radius_px}, "
-                    f"arrived_r={self.config.turtle_radius_arrived_px}, "
-                    f"track_alpha={self.config.turtle_tracking_alpha}, "
-                    f"cmd_alpha={self.config.turtle_cmd_alpha}, "
-                    f"a_lin_max={self.config.turtle_linear_accel_limit}, "
-                    f"a_ang_max={self.config.turtle_angular_accel_limit}, "
-                    f"log_N={self.config.turtle_log_every_n_frames}"
-            )
-        )
         if self._run_metadata:
             node.get_logger().info(
                 f"Wczytano metadane publikacji z JSON: {self.config.run_metadata_json}"
@@ -332,10 +305,6 @@ class _Ros2TrackerRuntime:
         x_world: Optional[float],
         y_world: Optional[float],
         z_world: Optional[float],
-        turtle_linear_cmd: float,
-        turtle_angular_cmd: float,
-        turtle_target_reached: bool,
-        turtle_debug: dict,
     ) -> dict[str, object]:
         """Buduje pojedynczy payload JSON publikowany na topicu ROS2.
 
@@ -344,8 +313,8 @@ class _Ros2TrackerRuntime:
         - pola niedostępne przy danej konfiguracji mają wartość `None`,
         - metadane runu są osadzane jako obiekt `run_metadata` bez modyfikacji kluczy.
         """
-        return {
-            "schema": self.config.message_schema,
+        payload = {
+            "schema": self._topic_contract.schema,
             "stamp_sec": int(stamp.sec),
             "stamp_nanosec": int(stamp.nanosec),
             "frame_index": self.frame_index,
@@ -364,20 +333,22 @@ class _Ros2TrackerRuntime:
             "area": float(best.area) if best else None,
             "radius": float(best.radius) if best else None,
             "rank": int(best.rank) if best and best.rank is not None else None,
-            "turtle_follow": self.config.turtle_follow,
-            "turtle_linear_cmd": turtle_linear_cmd if self.config.turtle_follow else None,
-            "turtle_angular_cmd": turtle_angular_cmd if self.config.turtle_follow else None,
-            "turtle_target_reached": turtle_target_reached if self.config.turtle_follow else None,
-            "turtle_reason": turtle_debug["reason"] if self.config.turtle_follow else None,
-            "turtle_error_norm": turtle_debug["error_norm"] if self.config.turtle_follow else None,
-            "turtle_error_norm_y": turtle_debug["error_norm_y"] if self.config.turtle_follow else None,
-            "turtle_distance_scale": turtle_debug["distance_scale"] if self.config.turtle_follow else None,
-            "x_filtered": turtle_debug["filt_x"] if self.config.turtle_follow else None,
-            "y_filtered": turtle_debug["filt_y"] if self.config.turtle_follow else None,
-            "radius_filtered": turtle_debug["filt_radius"] if self.config.turtle_follow else None,
             # Metadane są opcjonalne i pochodzą z wcześniej przygotowanego pliku `*.run.json`.
             "run_metadata": self._run_metadata or None,
         }
+        self._validate_payload_contract(payload)
+        return payload
+
+    def _validate_payload_contract(self, payload: dict[str, object]) -> None:
+        """Waliduje, czy payload zawiera pełny zestaw kluczy kontraktu.
+
+        Kontrola jest lekka i wykonywana lokalnie, aby szybciej wykryć
+        regresje przy modyfikacji formatu wiadomości ROS2.
+        """
+        required_keys = set(self._topic_contract.base_keys)
+        missing = required_keys.difference(payload.keys())
+        if missing:
+            raise RuntimeError(f"Payload ROS2 niekompletny. Brakujące pola: {sorted(missing)}")
 
     def _init_world_projection(self) -> None:
         """Ładuje kalibrację i przygotowuje estymację PnP do publikacji XYZ."""
@@ -423,142 +394,6 @@ class _Ros2TrackerRuntime:
             return None, None, None
         return world
 
-    @staticmethod
-    def _clamp(value: float, vmin: float, vmax: float) -> float:
-        return max(vmin, min(vmax, value))
-
-    def _apply_ema(self, current: Optional[float], previous: Optional[float], alpha: float) -> Optional[float]:
-        if current is None:
-            return previous
-        if previous is None:
-            return current
-        return (alpha * current) + ((1.0 - alpha) * previous)
-
-    def _publish_turtle_cmd(self, best, frame_width: int, frame_height: int) -> tuple[float, float, bool, dict]:
-        if not self.config.turtle_follow or self.turtle_cmd_publisher is None or self.twist_cls is None:
-            return 0.0, 0.0, False, {"reason": "follow_disabled", "error_norm": None, "radius_px": None, "distance_scale": None}
-
-        cmd = self.twist_cls()
-        target_reached = False
-        debug = {
-            "reason": "no_detection",
-            "error_norm": None,
-            "error_norm_y": None,
-            "radius_px": None,
-            "distance_scale": None,
-            "raw_x": None,
-            "raw_y": None,
-            "filt_x": None,
-            "filt_y": None,
-            "filt_radius": None,
-            "cmd_linear_target": 0.0,
-            "cmd_angular_target": 0.0,
-        }
-        if best is None:
-            cmd.linear.x = 0.0
-            # Brak plamki: zatrzymanie żółwia.
-            cmd.angular.z = 0.0
-            self._prev_linear_cmd = 0.0
-            self._prev_angular_cmd = 0.0
-            self._filtered_x = None
-            self._filtered_y = None
-            self._filtered_radius = None
-            self._prev_error_norm_x = 0.0
-        else:
-            raw_x = float(best.x)
-            raw_y = float(best.y)
-            raw_radius = float(best.radius)
-            alpha_track = self._clamp(self.config.turtle_tracking_alpha, 0.01, 1.0)
-            self._filtered_x = self._apply_ema(raw_x, self._filtered_x, alpha_track)
-            self._filtered_y = self._apply_ema(raw_y, self._filtered_y, alpha_track)
-            self._filtered_radius = self._apply_ema(raw_radius, self._filtered_radius, alpha_track)
-
-            fx = float(self._filtered_x if self._filtered_x is not None else raw_x)
-            fy = float(self._filtered_y if self._filtered_y is not None else raw_y)
-            fr = float(self._filtered_radius if self._filtered_radius is not None else raw_radius)
-
-            center_x = frame_width * 0.5
-            center_y = frame_height * 0.5
-            error_norm = 0.0
-            error_norm_y = 0.0
-            if center_x > 1e-6:
-                error_norm = (fx - center_x) / center_x
-                error_norm = max(-1.0, min(1.0, error_norm))
-            if center_y > 1e-6:
-                error_norm_y = (fy - center_y) / center_y
-                error_norm_y = max(-1.0, min(1.0, error_norm_y))
-
-            dt = 1.0 / max(self.config.fps, 1.0)
-            error_rate = (error_norm - self._prev_error_norm_x) / max(dt, 1e-6)
-            self._prev_error_norm_x = error_norm
-
-            angular_cmd = (-self.config.turtle_angular_gain * error_norm) + (-self.config.turtle_angular_d_gain * error_rate)
-            angular_cmd = self._clamp(angular_cmd, -self.config.turtle_max_angular_speed, self.config.turtle_max_angular_speed)
-            abs_error = math.fabs(error_norm)
-            radius_px = fr
-            target_reached = radius_px >= self.config.turtle_radius_arrived_px
-            debug["error_norm"] = float(error_norm)
-            debug["error_norm_y"] = float(error_norm_y)
-            debug["radius_px"] = float(radius_px)
-            debug["raw_x"] = raw_x
-            debug["raw_y"] = raw_y
-            debug["filt_x"] = fx
-            debug["filt_y"] = fy
-            debug["filt_radius"] = fr
-
-            if target_reached:
-                linear_target = 0.0
-                angular_target = 0.0
-                debug["reason"] = "target_reached"
-                debug["distance_scale"] = 0.0
-            else:
-                # Im mniejsza plamka, tym obiekt dalej: zwiększamy prędkość liniową.
-                radius_error = max(0.0, self.config.turtle_target_radius_px - radius_px)
-                distance_scale = min(1.0, radius_error / max(self.config.turtle_target_radius_px, 1e-6))
-                debug["distance_scale"] = float(distance_scale)
-
-                if abs_error > self.config.turtle_turn_in_place_threshold:
-                    # Duży błąd kierunku: najpierw obrót w miejscu jak robot mobilny.
-                    linear_target = 0.0
-                    debug["reason"] = "turn_in_place"
-                else:
-                    # Ruch do przodu zależny od dystansu i wyrównania kierunku.
-                    linear_target = self.config.turtle_min_linear_speed + (
-                        self.config.turtle_linear_speed - self.config.turtle_min_linear_speed
-                    ) * distance_scale
-                    alignment_scale = max(0.0, 1.0 - (abs_error / max(self.config.turtle_turn_in_place_threshold, 1e-6)))
-                    linear_target *= alignment_scale
-                    debug["reason"] = "drive_to_target"
-
-                if abs_error <= self.config.turtle_center_deadband:
-                    angular_cmd = 0.0
-
-                angular_target = angular_cmd
-
-            # Wygładzanie i ograniczenie przyspieszeń komend (kompensacja ruchu kamery/robota).
-            alpha_cmd = self._clamp(self.config.turtle_cmd_alpha, 0.01, 1.0)
-            linear_smoothed = (alpha_cmd * linear_target) + ((1.0 - alpha_cmd) * self._prev_linear_cmd)
-            angular_smoothed = (alpha_cmd * angular_target) + ((1.0 - alpha_cmd) * self._prev_angular_cmd)
-
-            max_dv = self.config.turtle_linear_accel_limit * dt
-            max_dw = self.config.turtle_angular_accel_limit * dt
-            linear_cmd = self._clamp(linear_smoothed, self._prev_linear_cmd - max_dv, self._prev_linear_cmd + max_dv)
-            angular_cmd = self._clamp(angular_smoothed, self._prev_angular_cmd - max_dw, self._prev_angular_cmd + max_dw)
-
-            self._prev_linear_cmd = float(max(0.0, linear_cmd))
-            self._prev_angular_cmd = float(self._clamp(angular_cmd, -self.config.turtle_max_angular_speed, self.config.turtle_max_angular_speed))
-            cmd.linear.x = self._prev_linear_cmd
-            cmd.angular.z = self._prev_angular_cmd
-            debug["cmd_linear_target"] = float(linear_target)
-            debug["cmd_angular_target"] = float(angular_target)
-
-        try:
-            self.turtle_cmd_publisher.publish(cmd)
-        except Exception:
-            # Podczas zamykania ROS2 kontekst może zniknąć między timerami.
-            pass
-        return float(cmd.linear.x), float(cmd.angular.z), bool(target_reached), debug
-
     def _on_timer(self) -> None:
         ok, frame = self.cap.read()
         if not ok:
@@ -573,9 +408,6 @@ class _Ros2TrackerRuntime:
         x_px = float(best.x) if best else None
         y_px = float(best.y) if best else None
         x_world, y_world, z_world = self._compute_world_xyz(x_px=x_px, y_px=y_px)
-        turtle_linear_cmd, turtle_angular_cmd, turtle_target_reached, turtle_debug = self._publish_turtle_cmd(
-            best, frame.shape[1], frame.shape[0]
-        )
         stamp = self.node.get_clock().now().to_msg()
 
         payload = self._build_payload(
@@ -588,10 +420,6 @@ class _Ros2TrackerRuntime:
             x_world=x_world,
             y_world=y_world,
             z_world=z_world,
-            turtle_linear_cmd=turtle_linear_cmd,
-            turtle_angular_cmd=turtle_angular_cmd,
-            turtle_target_reached=turtle_target_reached,
-            turtle_debug=turtle_debug,
         )
 
         msg = self.message_cls()
@@ -600,21 +428,6 @@ class _Ros2TrackerRuntime:
             self.publisher.publish(msg)
         except Exception:
             pass
-
-        if self.config.turtle_follow and (self.frame_index % max(1, self.config.turtle_log_every_n_frames) == 0):
-            self.node.get_logger().info(
-                (
-                    f"[CTRL_XY] frame={self.frame_index} det={best is not None} "
-                    f"reason={turtle_debug['reason']} "
-                    f"raw_xy=({turtle_debug['raw_x']},{turtle_debug['raw_y']}) "
-                    f"filt_xy=({turtle_debug['filt_x']},{turtle_debug['filt_y']}) "
-                    f"r=({turtle_debug['radius_px']},{turtle_debug['filt_radius']}) "
-                    f"err_xy_n=({turtle_debug['error_norm']},{turtle_debug['error_norm_y']}) "
-                    f"dist_scale={turtle_debug['distance_scale']} "
-                    f"cmd_target=({turtle_debug['cmd_linear_target']:0.3f},{turtle_debug['cmd_angular_target']:0.3f}) "
-                    f"cmd=({turtle_linear_cmd:0.3f},{turtle_angular_cmd:0.3f})"
-                )
-            )
 
         if self.config.display:
             preview = frame.copy()
@@ -654,28 +467,15 @@ def run_ros2_tracker_node(args_or_config: Any) -> None:
         ) from exc
 
     config = _resolve_ros2_config(args_or_config)
-    twist_cls = None
-    if config.turtle_follow:
-        try:
-            from geometry_msgs.msg import Twist as _Twist
-
-            twist_cls = _Twist
-        except ImportError as exc:
-            raise SystemExit("Brak geometry_msgs (Twist). Doinstaluj/załaduj pełne środowisko ROS2.") from exc
 
     rclpy.init(args=None)
     node = Node(config.node_name)
     publisher = node.create_publisher(String, config.topic, 10)
-    turtle_cmd_publisher = None
-    if config.turtle_follow and twist_cls is not None:
-        turtle_cmd_publisher = node.create_publisher(twist_cls, config.turtle_cmd_topic, 10)
     runtime = _Ros2TrackerRuntime(
         node=node,
         publisher=publisher,
         message_cls=String,
         config=config,
-        turtle_cmd_publisher=turtle_cmd_publisher,
-        twist_cls=twist_cls,
     )
 
     try:

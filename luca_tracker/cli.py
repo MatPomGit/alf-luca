@@ -237,23 +237,6 @@ def build_parser():
     p_ros2.add_argument("--frame_width", type=int, default=0, help="Szerokość klatki (0 = domyślna kamery)")
     p_ros2.add_argument("--frame_height", type=int, default=0, help="Wysokość klatki (0 = domyślna kamery)")
     p_ros2.add_argument("--display", action="store_true", help="Podgląd śledzenia (q = zakończ)")
-    p_ros2.add_argument("--turtle_follow", action="store_true", help="Steruj turtlesim (/turtle1/cmd_vel), aby podążał za plamką")
-    p_ros2.add_argument("--turtle_cmd_topic", default="/turtle1/cmd_vel", help="Topic komend prędkości turtlesim (Twist)")
-    p_ros2.add_argument("--turtle_linear_speed", type=float, default=1.0, help="Maksymalna prędkość liniowa turtle")
-    p_ros2.add_argument("--turtle_min_linear_speed", type=float, default=0.05, help="Minimalna prędkość liniowa przy dojazdach")
-    p_ros2.add_argument("--turtle_angular_gain", type=float, default=1.2, help="Wzmocnienie P dla skrętu")
-    p_ros2.add_argument("--turtle_angular_d_gain", type=float, default=0.35, help="Wzmocnienie D dla skrętu (kompensacja ruchu)")
-    p_ros2.add_argument("--turtle_max_angular_speed", type=float, default=1.6, help="Maksymalna prędkość kątowa")
-    p_ros2.add_argument("--turtle_center_deadband", type=float, default=0.04, help="Martwa strefa błędu kierunku (znormalizowana)")
-    p_ros2.add_argument("--turtle_turn_in_place_threshold", type=float, default=0.65, help="Próg błędu, powyżej którego turtle obraca się w miejscu")
-    p_ros2.add_argument("--turtle_target_radius_px", type=float, default=110.0, help="Docelowy promień plamki (proxy dystansu)")
-    p_ros2.add_argument("--turtle_radius_arrived_px", type=float, default=130.0, help="Promień plamki oznaczający osiągnięcie celu (stop)")
-    p_ros2.add_argument("--turtle_tracking_alpha", type=float, default=0.25, help="Współczynnik EMA pozycji plamki (x,y,r)")
-    p_ros2.add_argument("--turtle_cmd_alpha", type=float, default=0.35, help="Współczynnik EMA komend ruchu")
-    p_ros2.add_argument("--turtle_linear_accel_limit", type=float, default=1.2, help="Limit przyspieszenia liniowego")
-    p_ros2.add_argument("--turtle_angular_accel_limit", type=float, default=2.2, help="Limit przyspieszenia kątowego")
-    p_ros2.add_argument("--turtle_log_every_n_frames", type=int, default=10, help="Log diagnostyczny sterowania co N klatek")
-    p_ros2.add_argument("--turtle_search_angular_speed", type=float, default=0.0, help="(Legacy) nieużywane: przy braku detekcji turtle zatrzymuje się")
     p_ros2.add_argument(
         "--run_metadata_json",
         help="Ścieżka do wcześniej przygotowanego pliku JSON (np. *.run.json) z metadanymi runu publikowanymi na ROS2.",
