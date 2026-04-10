@@ -7,7 +7,7 @@ import threading
 import traceback
 from argparse import Namespace
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -73,6 +73,15 @@ WORKFLOW_CARDS = {
         },
     },
 }
+GUI_INPUT_SOURCES = ["video file", "camera"]
+GUI_EVAL_PATH_FIELDS = [
+    "eval.output_csv",
+    "eval.report_csv",
+    "eval.report_pdf",
+    "eval.trajectory_png",
+    "eval.all_tracks_csv",
+    "eval.annotated_video",
+]
 GUI_SLIDER_STEP = {
     "Threshold": 1,
     "Blur": 2,
@@ -556,7 +565,9 @@ def run_gui(args):
             if self.run_config_fields:
                 current_video = str(self.video_files[self.current_video_idx])
                 stem = self.video_files[self.current_video_idx].stem
-                self.run_config_fields["input.video"].text = current_video
+                if self.input_source_mode_spinner.text == "video file":
+                    self.input_source_value_input.text = current_video
+                self._sync_input_source_fields()
                 self.run_config_fields["eval.output_csv"].text = str(self.output_dir / f"{stem}_tracking.csv")
                 self.run_config_fields["eval.trajectory_png"].text = str(self.output_dir / f"{stem}_trajectory.png")
                 self.run_config_fields["eval.report_csv"].text = str(self.output_dir / f"{stem}_report.csv")
@@ -762,6 +773,65 @@ def run_gui(args):
             container.add_widget(row)
             return inp
 
+        def _open_path_dialog(self, mode: str) -> Optional[str]:
+            """Otwiera natywny dialog wyboru ścieżki (plik/folder) i zwraca wynik lub `None`."""
+            try:
+                from tkinter import Tk, filedialog
+            except Exception as exc:  # noqa: BLE001
+                self._set_status("warning", f"Dialog systemowy niedostępny: {exc}")
+                return None
+
+            root = Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            # Wybór typu dialogu zależy od celu pola: plik wejściowy/wyjściowy lub katalog.
+            if mode == "file_open":
+                selected = filedialog.askopenfilename()
+            elif mode == "file_save":
+                selected = filedialog.asksaveasfilename()
+            elif mode == "directory":
+                selected = filedialog.askdirectory()
+            else:
+                selected = ""
+            root.destroy()
+            cleaned = str(selected).strip()
+            return cleaned or None
+
+        def _set_path_from_dialog(self, target: TextInput, mode: str) -> None:
+            """Podstawia wynik z dialogu do wskazanego pola formularza."""
+            selected = self._open_path_dialog(mode)
+            if selected:
+                target.text = selected
+
+        def _build_path_input(
+            self,
+            container: BoxLayout,
+            label: str,
+            value: str,
+            file_mode: Optional[str] = "file_save",
+            directory_selector: bool = True,
+            on_value_change: Optional[Callable[[], None]] = None,
+        ) -> TextInput:
+            """Buduje wiersz formularza dla ścieżek z przyciskami dialogów (plik/katalog)."""
+            row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
+            lbl = Label(text=label, size_hint_x=0.28, halign="left", valign="middle", font_size=self.gui_font_size)
+            lbl.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+            inp = TextInput(text=value, multiline=False, size_hint_x=0.52, font_size=self.gui_font_size)
+            if on_value_change is not None:
+                inp.bind(text=lambda *_: on_value_change())
+            row.add_widget(lbl)
+            row.add_widget(inp)
+            if file_mode:
+                btn_file = Button(text="Plik", size_hint_x=0.1, font_size=max(14, int(self.gui_font_size * 0.75)))
+                btn_file.bind(on_press=lambda *_: self._set_path_from_dialog(inp, file_mode))
+                row.add_widget(btn_file)
+            if directory_selector:
+                btn_dir = Button(text="Katalog", size_hint_x=0.1, font_size=max(14, int(self.gui_font_size * 0.75)))
+                btn_dir.bind(on_press=lambda *_: self._set_path_from_dialog(inp, "directory"))
+                row.add_widget(btn_dir)
+            container.add_widget(row)
+            return inp
+
         def _build_section_header(self, container: BoxLayout, title: str) -> None:
             """Dodaje nagłówek sekcji formularza zgodnej z RunConfig."""
             header = Label(
@@ -956,6 +1026,45 @@ def run_gui(args):
                 return False
             raise ValueError(f"Pole '{name}' musi mieć wartość bool (true/false).")
 
+        def _sync_input_source_fields(self) -> None:
+            """Synchronizuje pola `input.video` i `input.camera` na bazie sekcji Input source."""
+            mode = getattr(self, "input_source_mode_spinner", None)
+            source_input = getattr(self, "input_source_value_input", None)
+            if mode is None or source_input is None:
+                return
+            selected_mode = mode.text.strip().lower()
+            source_value = source_input.text.strip()
+            if selected_mode == "camera":
+                self.run_config_fields["input.camera"].text = source_value
+                self.run_config_fields["input.video"].text = ""
+            else:
+                self.run_config_fields["input.video"].text = source_value
+                self.run_config_fields["input.camera"].text = ""
+
+        def _on_input_source_mode_change(self, _, selected_mode: str) -> None:
+            """Obsługuje zmianę trybu źródła wejściowego i dba o spójność pól formularza."""
+            # Dla kamery zostawiamy tekstową wartość (np. indeks lub URI), a dla pliku uruchamiamy tryb ścieżki.
+            if selected_mode == "camera" and not self.input_source_value_input.text.strip():
+                self.input_source_value_input.text = "0"
+            self._sync_input_source_fields()
+
+        def _normalize_path(self, raw: str) -> Optional[Path]:
+            """Normalizuje tekstową ścieżkę do postaci absolutnej bez wymuszania istnienia pliku."""
+            cleaned = raw.strip()
+            if not cleaned:
+                return None
+            return Path(cleaned).expanduser().resolve(strict=False)
+
+        def _collect_path_warnings(self, cfg: RunConfig) -> List[str]:
+            """Zwraca listę ostrzeżeń o potencjalnym nadpisaniu istniejących artefaktów."""
+            warnings: List[str] = []
+            for field_name in GUI_EVAL_PATH_FIELDS:
+                value = getattr(cfg.eval, field_name.split(".", 1)[1])
+                normalized = self._normalize_path(value or "")
+                if normalized and normalized.exists():
+                    warnings.append(f"Plik docelowy już istnieje i może zostać nadpisany: {normalized}")
+            return warnings
+
         def _validate_run_config(self, cfg: RunConfig) -> None:
             """Weryfikuje zakresy i zależności pomiędzy kontrolkami formularza RunConfig."""
             if bool(cfg.input.video) == bool(cfg.input.camera):
@@ -978,12 +1087,35 @@ def run_gui(args):
                 raise ValueError("Dla rekonstrukcji PnP wymagane są oba pola: `pnp_object_points` i `pnp_image_points`.")
             if cfg.pose.pnp_image_points and not cfg.pose.pnp_object_points:
                 raise ValueError("Dla rekonstrukcji PnP wymagane są oba pola: `pnp_object_points` i `pnp_image_points`.")
+            normalized_outputs: Dict[Path, List[str]] = {}
+            for field_name in GUI_EVAL_PATH_FIELDS:
+                value = getattr(cfg.eval, field_name.split(".", 1)[1])
+                normalized = self._normalize_path(value or "")
+                if normalized is not None:
+                    normalized_outputs.setdefault(normalized, []).append(field_name)
+            duplicate_outputs = {path: keys for path, keys in normalized_outputs.items() if len(keys) > 1}
+            if duplicate_outputs:
+                parts = [f"{path} <= {', '.join(keys)}" for path, keys in duplicate_outputs.items()]
+                raise ValueError("Konflikt ścieżek output: wiele artefaktów wskazuje ten sam plik.\n" + "\n".join(parts))
+            input_video = self._normalize_path(cfg.input.video or "")
+            calib_file = self._normalize_path(cfg.input.calib_file or "")
+            for output_path in normalized_outputs:
+                if input_video is not None and output_path == input_video:
+                    raise ValueError("Konflikt ścieżek: `eval.*` nie może nadpisywać `input.video`.")
+                if calib_file is not None and output_path == calib_file:
+                    raise ValueError("Konflikt ścieżek: `eval.*` nie może nadpisywać `input.calib_file`.")
 
         def _populate_run_config_form(self, cfg: RunConfig) -> None:
             """Wypełnia formularz GUI na podstawie kompletnego modelu RunConfig."""
             fields = self.run_config_fields
             fields["input.video"].text = cfg.input.video or ""
             fields["input.camera"].text = cfg.input.camera or ""
+            if cfg.input.camera:
+                self.input_source_mode_spinner.text = "camera"
+                self.input_source_value_input.text = cfg.input.camera
+            else:
+                self.input_source_mode_spinner.text = "video file"
+                self.input_source_value_input.text = cfg.input.video or ""
             fields["input.calib_file"].text = cfg.input.calib_file or ""
             fields["input.display"].text = str(cfg.input.display).lower()
             fields["input.interactive"].text = str(cfg.input.interactive).lower()
@@ -1153,11 +1285,44 @@ def run_gui(args):
             controls.add_widget(checklist_row)
 
             self._build_section_header(controls, "RunConfig / input")
-            self.run_config_fields["input.video"] = self._build_labeled_input(controls, "input.video", str(self.video_files[self.current_video_idx]))
-            self.run_config_fields["input.camera"] = self._build_labeled_input(controls, "input.camera", "")
-            self.run_config_fields["input.calib_file"] = self._build_labeled_input(controls, "input.calib_file", args.calib_file or "")
+            self._build_section_header(controls, "Input source")
+            input_source_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
+            input_source_label = Label(
+                text="source mode",
+                size_hint_x=0.28,
+                halign="left",
+                valign="middle",
+                font_size=self.gui_font_size,
+            )
+            input_source_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+            self.input_source_mode_spinner = Spinner(text="video file", values=GUI_INPUT_SOURCES, size_hint_x=0.2)
+            self.input_source_mode_spinner.bind(text=self._on_input_source_mode_change)
+            self.input_source_value_input = TextInput(
+                text=str(self.video_files[self.current_video_idx]),
+                multiline=False,
+                size_hint_x=0.42,
+                font_size=self.gui_font_size,
+            )
+            self.input_source_value_input.bind(text=lambda *_: self._sync_input_source_fields())
+            input_source_row.add_widget(input_source_label)
+            input_source_row.add_widget(self.input_source_mode_spinner)
+            input_source_row.add_widget(self.input_source_value_input)
+            btn_source_file = Button(text="Plik", size_hint_x=0.1, font_size=max(14, int(self.gui_font_size * 0.75)))
+            btn_source_file.bind(on_press=lambda *_: self._set_path_from_dialog(self.input_source_value_input, "file_open"))
+            input_source_row.add_widget(btn_source_file)
+            controls.add_widget(input_source_row)
+            self.run_config_fields["input.video"] = TextInput(text=str(self.video_files[self.current_video_idx]), multiline=False)
+            self.run_config_fields["input.camera"] = TextInput(text="", multiline=False)
+            self.run_config_fields["input.calib_file"] = self._build_path_input(
+                controls,
+                "input.calib_file",
+                args.calib_file or "",
+                file_mode="file_open",
+                directory_selector=True,
+            )
             self.run_config_fields["input.display"] = self._build_labeled_input(controls, "input.display", "false")
             self.run_config_fields["input.interactive"] = self._build_labeled_input(controls, "input.interactive", "false")
+            self._sync_input_source_fields()
 
             self._build_section_header(controls, "RunConfig / detector")
             detector_defaults = {
@@ -1227,7 +1392,7 @@ def run_gui(args):
             }.items():
                 self.run_config_fields[key] = self._build_labeled_input(controls, key, value)
 
-            self._build_section_header(controls, "RunConfig / eval")
+            self._build_section_header(controls, "Outputs")
             video_stem = self.video_files[self.current_video_idx].stem
             eval_defaults = {
                 "eval.output_csv": str(self.output_dir / f"{video_stem}_tracking.csv"),
@@ -1279,6 +1444,14 @@ def run_gui(args):
                 self.artifact_labels[label] = path_label
                 artifacts_panel.add_widget(path_label)
             controls.add_widget(artifacts_panel)
+                label = key.split(".", 1)[1]
+                self.run_config_fields[key] = self._build_path_input(
+                    controls,
+                    label,
+                    value,
+                    file_mode="file_save",
+                    directory_selector=True,
+                )
 
             slider_rows = [
                 ("Threshold", 0, 255, self.threshold, 1, lambda v: setattr(self, "threshold", int(v))),
@@ -1515,6 +1688,8 @@ def run_gui(args):
             except ValueError as exc:
                 self._set_status("error", str(exc))
                 return
+            for warning in self._collect_path_warnings(cfg):
+                self._set_status("warning", warning)
             self._set_status("info", "Uruchamianie track_video w tle...")
 
             def _run_tracking_job() -> None:
@@ -1652,6 +1827,7 @@ def run_gui(args):
         def _build_current_run_config(self) -> RunConfig:
             """Buduje pełny model konfiguracji z aktualnego stanu kontrolek GUI."""
             fields = self.run_config_fields
+            self._sync_input_source_fields()
             cfg = RunConfig(
                 input=InputConfig(
                     video=self._parse_optional_text(fields["input.video"].text),
@@ -1748,6 +1924,8 @@ def run_gui(args):
             except ValueError as exc:
                 self._set_status("error", str(exc))
                 return
+            for warning in self._collect_path_warnings(cfg):
+                self._set_status("warning", warning)
             export_path = self.output_dir / f"{self.video_files[self.current_video_idx].stem}_run_config.yaml"
             try:
                 save_run_config(cfg, export_path)
