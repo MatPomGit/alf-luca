@@ -1,0 +1,46 @@
+from __future__ import annotations
+
+import argparse
+
+
+def build_gui_parser() -> argparse.ArgumentParser:
+    """Buduje parser argumentów dla adaptera GUI."""
+    parser = argparse.ArgumentParser(description="Interfejs GUI LUCA (adapter bez legacy namespace).")
+    parser.add_argument("--video", help="Plik wejściowy wideo")
+    parser.add_argument("--calib_file", help="Plik kalibracji .npz")
+    parser.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
+    parser.add_argument("--threshold", type=int, default=200)
+    parser.add_argument("--threshold_mode", choices=["fixed", "otsu", "adaptive"], default="fixed")
+    parser.add_argument("--adaptive_block_size", type=int, default=31)
+    parser.add_argument("--adaptive_c", type=float, default=5.0)
+    parser.add_argument("--use_clahe", action="store_true")
+    parser.add_argument("--blur", type=int, default=11)
+    parser.add_argument("--min_area", type=float, default=10.0)
+    parser.add_argument("--max_area", type=float, default=0.0)
+    parser.add_argument("--erode_iter", type=int, default=2)
+    parser.add_argument("--dilate_iter", type=int, default=4)
+    parser.add_argument("--roi", help="Obszar ROI x,y,w,h")
+    parser.add_argument("--color_name", choices=["red", "green", "blue", "white", "yellow"], default="red")
+    parser.add_argument("--multi_track", action="store_true")
+    parser.add_argument("--max_spots", type=int, default=1)
+    parser.add_argument("--max_distance", type=float, default=40.0)
+    parser.add_argument("--max_missed", type=int, default=10)
+    parser.add_argument("--selection_mode", choices=["largest", "stablest", "longest"], default="stablest")
+    parser.add_argument("--output_csv", default="tracking_results.csv")
+    parser.add_argument("--trajectory_png")
+    parser.add_argument("--report_csv")
+    parser.add_argument("--report_pdf")
+    parser.add_argument("--all_tracks_csv")
+    parser.add_argument("--annotated_video")
+    parser.add_argument("--draw_all_tracks", action="store_true")
+    parser.add_argument("--use_kalman", action="store_true")
+    parser.add_argument("--kalman_process_noise", type=float, default=3e-2)
+    parser.add_argument("--kalman_measurement_noise", type=float, default=5e-2)
+    parser.add_argument("--hsv_lower")
+    parser.add_argument("--hsv_upper")
+    parser.add_argument("--pnp_object_points")
+    parser.add_argument("--pnp_image_points")
+    parser.add_argument("--pnp_world_plane_z", type=float, default=0.0)
+    parser.add_argument("--camera")
+    parser.add_argument("--config")
+    return parser

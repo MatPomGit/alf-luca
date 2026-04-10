@@ -9,7 +9,6 @@ description = "Interfejs ROS2 dla usług aplikacyjnych LUCA"
 requires-python = ">=3.10"
 dependencies = [
   "luca-tracking",
-  "luca-tracker",
 ]
 
 [project.scripts]
