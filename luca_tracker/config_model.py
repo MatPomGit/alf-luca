@@ -51,6 +51,15 @@ class TrackerConfig:
     max_distance: float = 40.0
     max_missed: int = 10
     selection_mode: str = "stablest"
+    distance_weight: float = 1.0
+    area_weight: float = 0.35
+    circularity_weight: float = 0.2
+    brightness_weight: float = 0.0
+    min_match_score: float = 1.0
+    speed_gate_gain: float = 1.5
+    error_gate_gain: float = 1.0
+    min_dynamic_distance: float = 12.0
+    max_dynamic_distance: float = 150.0
 
 
 @dataclass
@@ -195,6 +204,15 @@ def run_config_to_pipeline_config(config: RunConfig):
             max_distance=config.tracker.max_distance,
             max_missed=config.tracker.max_missed,
             selection_mode=config.tracker.selection_mode,
+            distance_weight=config.tracker.distance_weight,
+            area_weight=config.tracker.area_weight,
+            circularity_weight=config.tracker.circularity_weight,
+            brightness_weight=config.tracker.brightness_weight,
+            min_match_score=config.tracker.min_match_score,
+            speed_gate_gain=config.tracker.speed_gate_gain,
+            error_gate_gain=config.tracker.error_gate_gain,
+            min_dynamic_distance=config.tracker.min_dynamic_distance,
+            max_dynamic_distance=config.tracker.max_dynamic_distance,
         ),
         kalman=KalmanConfig(
             process_noise=config.postprocess.kalman_process_noise,
@@ -218,6 +236,15 @@ def pipeline_config_to_run_config(config) -> RunConfig:
             max_distance=config.tracker.max_distance,
             max_missed=config.tracker.max_missed,
             selection_mode=config.selection_mode,
+            distance_weight=config.tracker.distance_weight,
+            area_weight=config.tracker.area_weight,
+            circularity_weight=config.tracker.circularity_weight,
+            brightness_weight=config.tracker.brightness_weight,
+            min_match_score=config.tracker.min_match_score,
+            speed_gate_gain=config.tracker.speed_gate_gain,
+            error_gate_gain=config.tracker.error_gate_gain,
+            min_dynamic_distance=config.tracker.min_dynamic_distance,
+            max_dynamic_distance=config.tracker.max_dynamic_distance,
         ),
         postprocess=PostprocessConfig(
             use_kalman=config.use_kalman,

@@ -250,7 +250,12 @@ def get_default_params_for_mode(track_mode: str) -> Dict[str, object]:
     return detector_cls.default_params()
 
 
-def contour_to_detection(contour: np.ndarray, offset_x: int = 0, offset_y: int = 0) -> Optional[Detection]:
+def contour_to_detection(
+    contour: np.ndarray,
+    offset_x: int = 0,
+    offset_y: int = 0,
+    mean_brightness: Optional[float] = None,
+) -> Optional[Detection]:
     """Przekształca pojedynczy kontur OpenCV do struktury Detection."""
     area = float(cv2.contourArea(contour))
     if area <= 0:
@@ -287,6 +292,7 @@ def contour_to_detection(contour: np.ndarray, offset_x: int = 0, offset_y: int =
         ellipse_center=ellipse_center,
         ellipse_axes=ellipse_axes,
         ellipse_angle=ellipse_angle,
+        mean_brightness=mean_brightness,
     )
 
 
@@ -357,6 +363,7 @@ def detect_spots(
     """Wykrywa plamki na klatce i zwraca detekcje, maskę oraz użyte ROI."""
     x0, y0, w, h = parse_roi(roi, frame.shape)
     roi_frame = frame[y0 : y0 + h, x0 : x0 + w]
+    roi_gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
     detector_cls = _resolve_detector_class(track_mode)
     detector_config = DetectorConfig(
         track_mode=track_mode,
@@ -383,7 +390,11 @@ def detect_spots(
     contours, _ = cv2.findContours(mask_roi.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     detections: List[Detection] = []
     for contour in contours:
-        det = contour_to_detection(contour, offset_x=x0, offset_y=y0)
+        # Średnią jasność liczymy tylko wewnątrz konturu, aby cecha była odporna na tło ROI.
+        contour_mask = np.zeros(roi_gray.shape, dtype=np.uint8)
+        cv2.drawContours(contour_mask, [contour], contourIdx=-1, color=255, thickness=-1)
+        brightness = float(cv2.mean(roi_gray, mask=contour_mask)[0])
+        det = contour_to_detection(contour, offset_x=x0, offset_y=y0, mean_brightness=brightness)
         if det is None:
             continue
         if det.area < min_area:
