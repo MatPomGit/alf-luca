@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "luca-interface-cli"
+version = "0.1.0"
+description = "Interfejs CLI dla usług aplikacyjnych LUCA"
+requires-python = ">=3.10"
+dependencies = [
+  "luca-tracking",
+  "luca-tracker",
+]
+
+[project.scripts]
+luca-cli = "luca_interface_cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

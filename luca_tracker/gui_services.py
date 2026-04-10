@@ -20,15 +20,14 @@ class GUIServiceLayer:
     @classmethod
     def create_default(cls) -> "GUIServiceLayer":
         """Buduje domyślną konfigurację serwisów opartą o moduły aplikacji."""
-        from .pipeline import calibrate_camera, track_video
-        from .reports import compare_csv
-        from .ros2_node import run_ros2_tracker_node
+        # GUI korzysta wyłącznie z interfejsu usług aplikacyjnych, bez importów niskopoziomowych modułów detekcji.
+        from luca_tracking.application_services import run_calibrate, run_compare, run_ros2, run_tracking
 
         return cls(
-            run_tracking_impl=track_video,
-            run_calibration_impl=calibrate_camera,
-            run_compare_impl=compare_csv,
-            run_ros2_impl=run_ros2_tracker_node,
+            run_tracking_impl=run_tracking,
+            run_calibration_impl=run_calibrate,
+            run_compare_impl=run_compare,
+            run_ros2_impl=run_ros2,
         )
 
     def run_tracking(self, config: RunConfig) -> None:
