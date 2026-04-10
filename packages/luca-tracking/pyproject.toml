@@ -13,6 +13,8 @@ dependencies = [
     "luca-types",
     "luca-input",
     "luca-processing",
+    "luca-reporting",
+    "luca-publishing",
 ]
 
 [tool.setuptools.packages.find]
