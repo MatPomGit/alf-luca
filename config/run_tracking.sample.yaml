@@ -34,9 +34,19 @@ detector:
 
 tracker:
   multi_track: false
+  use_single_object_ekf: true
   max_distance: 40.0
   max_missed: 10
   selection_mode: stablest
+  distance_weight: 1.0
+  area_weight: 0.35
+  circularity_weight: 0.2
+  brightness_weight: 0.0
+  min_match_score: 0.5
+  speed_gate_gain: 1.5
+  error_gate_gain: 1.0
+  min_dynamic_distance: 12.0
+  max_dynamic_distance: 150.0
 
 postprocess:
   use_kalman: false

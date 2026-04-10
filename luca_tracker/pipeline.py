@@ -40,6 +40,7 @@ class PipelineConfig:
     display: bool = False
     interactive: bool = False
     multi_track: bool = False
+    use_single_object_ekf: bool = True
     selection_mode: str = "stablest"
     output_csv: str = "tracking_results.csv"
     trajectory_png: Optional[str] = None
@@ -160,6 +161,10 @@ def interactive_track_config(args):
     args.temporal_window = ask_value("Rozmiar bufora temporalnego (klatki)", int, args.temporal_window)
     args.temporal_mode = ask_value("Tryb stabilizacji temporalnej (majority/and)", str, args.temporal_mode)
     args.multi_track = ask_bool("Śledzić wiele plamek jednocześnie?", args.multi_track)
+    args.use_single_object_ekf = ask_bool(
+        "W trybie single-object użyć EKF (większa odporność na artefakty)?",
+        getattr(args, "use_single_object_ekf", True),
+    )
     args.max_spots = ask_value("Maksymalna liczba plamek na klatkę", int, args.max_spots)
     args.selection_mode = ask_value(
         "Jak wybrać trajektorię główną? (largest/stablest/longest)", str, args.selection_mode
@@ -241,6 +246,7 @@ def _resolve_config(args_or_config) -> PipelineConfig:
         display=getattr(args_or_config, "display", False),
         interactive=getattr(args_or_config, "interactive", False),
         multi_track=getattr(args_or_config, "multi_track", False),
+        use_single_object_ekf=getattr(args_or_config, "use_single_object_ekf", True),
         selection_mode=getattr(args_or_config, "selection_mode", "stablest"),
         output_csv=getattr(args_or_config, "output_csv", "tracking_results.csv"),
         trajectory_png=getattr(args_or_config, "trajectory_png", None),
@@ -288,7 +294,7 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             area_weight=getattr(args_or_config, "area_weight", 0.35),
             circularity_weight=getattr(args_or_config, "circularity_weight", 0.2),
             brightness_weight=getattr(args_or_config, "brightness_weight", 0.0),
-            min_match_score=getattr(args_or_config, "min_match_score", 1.0),
+            min_match_score=getattr(args_or_config, "min_match_score", 0.5),
             speed_gate_gain=getattr(args_or_config, "speed_gate_gain", 1.5),
             error_gate_gain=getattr(args_or_config, "error_gate_gain", 1.0),
             min_dynamic_distance=getattr(args_or_config, "min_dynamic_distance", 12.0),
@@ -430,6 +436,7 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
         min_dynamic_distance=config.tracker.min_dynamic_distance,
         max_dynamic_distance=config.tracker.max_dynamic_distance,
     )
+    # EKF dla trybu single-object poprawia odporność na krótkie artefakty oraz chwilowy brak detekcji.
     single_tracker = SingleObjectEKFTracker(gating_distance=config.tracker.max_distance)
     finished_tracks: Dict[int, Dict] = {}
     single_points: List[TrackPoint] = []
@@ -468,12 +475,18 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
             ended = tracker.update(detections, frame_index, time_sec)
             finished_tracks.update(ended)
         else:
-            # W trybie single-object korzystamy z EKF, aby lepiej odrzucać artefakty chwilowych detekcji.
-            ekf_state = single_tracker.update(detections)
             best = detections[0] if detections else None
-            predicted_only = bool(ekf_state.get("predicted_only", True))
-            x_value = ekf_state.get("x")
-            y_value = ekf_state.get("y")
+            if config.use_single_object_ekf:
+                # W trybie single-object korzystamy z EKF, aby lepiej odrzucać artefakty chwilowych detekcji.
+                ekf_state = single_tracker.update(detections)
+                predicted_only = bool(ekf_state.get("predicted_only", True))
+                x_value = ekf_state.get("x")
+                y_value = ekf_state.get("y")
+            else:
+                # Fallback bez EKF zostawiamy dla diagnostyki i porównań jakości.
+                predicted_only = False
+                x_value = best.x if best else None
+                y_value = best.y if best else None
             single_points.append(
                 TrackPoint(
                     frame_index=frame_index,
@@ -553,6 +566,7 @@ def track_video(args_or_config):
         (
             f"Start analizy | mode={config.detector.track_mode}, "
             f"multi_track={config.multi_track}, use_kalman={config.use_kalman}, "
+            f"use_single_object_ekf={config.use_single_object_ekf}, "
             f"selection_mode={config.selection_mode}, live={config.is_live_source}"
         ),
         "magenta",
@@ -700,6 +714,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--temporal_window", type=int, default=3, help="Rozmiar bufora temporalnego (liczba klatek)")
     parser.add_argument("--temporal_mode", choices=["majority", "and"], default="majority")
     parser.add_argument("--multi_track", action="store_true")
+    parser.add_argument("--use_single_object_ekf", action="store_true", default=True)
+    parser.add_argument("--no_single_object_ekf", action="store_false", dest="use_single_object_ekf")
     parser.add_argument("--max_spots", type=int, default=10)
     parser.add_argument("--max_distance", type=float, default=40.0)
     parser.add_argument("--max_missed", type=int, default=10)
@@ -707,7 +723,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--area_weight", type=float, default=0.35)
     parser.add_argument("--circularity_weight", type=float, default=0.2)
     parser.add_argument("--brightness_weight", type=float, default=0.0)
-    parser.add_argument("--min_match_score", type=float, default=1.0)
+    parser.add_argument("--min_match_score", type=float, default=0.5)
     parser.add_argument("--speed_gate_gain", type=float, default=1.5)
     parser.add_argument("--error_gate_gain", type=float, default=1.0)
     parser.add_argument("--min_dynamic_distance", type=float, default=12.0)
