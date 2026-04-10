@@ -36,6 +36,10 @@ GUI_SLIDER_STEP = {
     "Adaptive C": 0.5,
     "Min area": 10,
     "Max area": 50,
+    "Min circularity": 0.01,
+    "Max aspect ratio": 0.1,
+    "Min peak intensity": 1,
+    "Min solidity": 0.01,
     "Erode": 1,
     "Dilate": 1,
     "Max spots": 1,
@@ -64,7 +68,7 @@ def _validate_gui_runtime_environment() -> None:
     raise GUIEnvironmentError(
         "Brak aktywnego serwera graficznego (DISPLAY/WAYLAND_DISPLAY). "
         "Uruchom aplikację w sesji desktopowej lub skonfiguruj X11/Wayland, "
-        "a następnie powtórz uruchomienie z logowaniem debug (np. `python track_luca.py gui -d`)."
+        "a następnie powtórz uruchomienie z logowaniem debug (np. `python -m luca_tracker gui -d`)."
     )
 
 
@@ -359,6 +363,11 @@ def run_gui(args):
             self.blur = int(np.clip(args.blur, 1, 31))
             self.min_area = float(args.min_area)
             self.max_area = float(args.max_area)
+            self.min_circularity = float(np.clip(args.min_circularity, 0.0, 1.0))
+            self.max_aspect_ratio = float(max(1.0, args.max_aspect_ratio))
+            self.min_peak_intensity = float(np.clip(args.min_peak_intensity, 0.0, 255.0))
+            raw_min_solidity = 0.0 if args.min_solidity is None else float(args.min_solidity)
+            self.min_solidity = float(np.clip(raw_min_solidity, 0.0, 1.0))
             self.erode_iter = int(np.clip(args.erode_iter, 0, 10))
             self.dilate_iter = int(np.clip(args.dilate_iter, 0, 10))
             self.multi_track = bool(args.multi_track)
@@ -395,7 +404,7 @@ def run_gui(args):
             out_file = self.output_dir / f"{video_name}_gui_analysis.csv"
             # Zestaw metadanych jest zgodny z trybem `track`, aby uprościć analizę porównawczą.
             run_metadata = build_run_metadata(
-                video_file=str(self.video_files[video_idx]),
+                input_source=str(self.video_files[video_idx]),
                 detector_name=self.track_mode,
                 smoother_name="none",
                 config_payload={
@@ -409,6 +418,10 @@ def run_gui(args):
                     "blur": self.blur,
                     "min_area": self.min_area,
                     "max_area": self.max_area,
+                    "min_circularity": self.min_circularity,
+                    "max_aspect_ratio": self.max_aspect_ratio,
+                    "min_peak_intensity": self.min_peak_intensity,
+                    "min_solidity": self.min_solidity,
                     "erode_iter": self.erode_iter,
                     "dilate_iter": self.dilate_iter,
                     "multi_track": self.multi_track,
@@ -424,7 +437,7 @@ def run_gui(args):
                     fieldnames=[
                         "frame_index",
                         "time_sec",
-                        "video_file",
+                        "input_source",
                         "mode",
                         "track_mode",
                         "detections",
@@ -438,6 +451,10 @@ def run_gui(args):
                         "blur",
                         "min_area",
                         "max_area",
+                        "min_circularity",
+                        "max_aspect_ratio",
+                        "min_peak_intensity",
+                        "min_solidity",
                         "color_name",
                     ]
                     + list(RUN_METADATA_FIELDS),
@@ -724,6 +741,10 @@ def run_gui(args):
                 ("Adaptive C", -20, 20, self.adaptive_c, 0.5, lambda v: setattr(self, "adaptive_c", float(v))),
                 ("Min area", 0, 5000, self.min_area, 1, lambda v: setattr(self, "min_area", float(v))),
                 ("Max area", 0, 20000, self.max_area, 1, lambda v: setattr(self, "max_area", float(v))),
+                ("Min circularity", 0, 1, self.min_circularity, 0.01, lambda v: setattr(self, "min_circularity", float(v))),
+                ("Max aspect ratio", 1, 20, self.max_aspect_ratio, 0.1, lambda v: setattr(self, "max_aspect_ratio", float(v))),
+                ("Min peak intensity", 0, 255, self.min_peak_intensity, 1, lambda v: setattr(self, "min_peak_intensity", float(v))),
+                ("Min solidity", 0, 1, self.min_solidity, 0.01, lambda v: setattr(self, "min_solidity", float(v))),
                 ("Erode", 0, 10, self.erode_iter, 1, lambda v: setattr(self, "erode_iter", int(v))),
                 ("Dilate", 0, 10, self.dilate_iter, 1, lambda v: setattr(self, "dilate_iter", int(v))),
                 ("Max spots", 1, 20, self.max_spots, 1, lambda v: setattr(self, "max_spots", int(v))),
@@ -929,6 +950,10 @@ def run_gui(args):
                     dilate_iter=int(self.dilate_iter),
                     min_area=float(self.min_area),
                     max_area=float(self.max_area),
+                    min_circularity=float(self.min_circularity),
+                    max_aspect_ratio=float(self.max_aspect_ratio),
+                    min_peak_intensity=float(self.min_peak_intensity),
+                    min_solidity=float(self.min_solidity),
                     max_spots=max(1, int(self.max_spots)),
                     color_name=self.color_name,
                     hsv_lower=None,
@@ -1008,6 +1033,10 @@ def run_gui(args):
             self.blur = 9
             self.min_area = max(5.0, frame.shape[0] * frame.shape[1] * 0.00002)
             self.max_area = frame.shape[0] * frame.shape[1] * 0.25
+            self.min_circularity = 0.1
+            self.max_aspect_ratio = 4.0
+            self.min_peak_intensity = float(np.clip(np.percentile(gray, 97.0), 40, 255))
+            self.min_solidity = 0.5
             self.erode_iter = 1
             self.dilate_iter = 2
             self.color_name = choose_auto_color_name(frame, args.roi)
@@ -1025,6 +1054,10 @@ def run_gui(args):
             self.slider_refs["Adaptive C"].value = self.adaptive_c
             self.slider_refs["Min area"].value = _clip_slider(self.min_area, 0, 5000)
             self.slider_refs["Max area"].value = _clip_slider(self.max_area, 0, 20000)
+            self.slider_refs["Min circularity"].value = _clip_slider(self.min_circularity, 0, 1)
+            self.slider_refs["Max aspect ratio"].value = _clip_slider(self.max_aspect_ratio, 1, 20)
+            self.slider_refs["Min peak intensity"].value = _clip_slider(self.min_peak_intensity, 0, 255)
+            self.slider_refs["Min solidity"].value = _clip_slider(self.min_solidity, 0, 1)
             self.slider_refs["Erode"].value = self.erode_iter
             self.slider_refs["Dilate"].value = self.dilate_iter
             self.slider_refs["Max spots"].value = self.max_spots
@@ -1069,6 +1102,10 @@ def run_gui(args):
                 dilate_iter=self.dilate_iter,
                 min_area=float(self.min_area),
                 max_area=float(self.max_area),
+                min_circularity=float(self.min_circularity),
+                max_aspect_ratio=float(self.max_aspect_ratio),
+                min_peak_intensity=float(self.min_peak_intensity),
+                min_solidity=float(self.min_solidity),
                 max_spots=max(1, self.max_spots),
                 color_name=self.color_name,
                 hsv_lower=None,
@@ -1134,6 +1171,10 @@ def run_gui(args):
                     dilate_iter=self.dilate_iter,
                     min_area=float(self.min_area),
                     max_area=float(self.max_area),
+                    min_circularity=float(self.min_circularity),
+                    max_aspect_ratio=float(self.max_aspect_ratio),
+                    min_peak_intensity=float(self.min_peak_intensity),
+                    min_solidity=float(self.min_solidity),
                     max_spots=max(1, self.max_spots),
                     color_name=self.color_name,
                     hsv_lower=None,
@@ -1153,6 +1194,10 @@ def run_gui(args):
                     dilate_iter=self.dilate_iter,
                     min_area=float(self.min_area),
                     max_area=float(self.max_area),
+                    min_circularity=float(self.min_circularity),
+                    max_aspect_ratio=float(self.max_aspect_ratio),
+                    min_peak_intensity=float(self.min_peak_intensity),
+                    min_solidity=float(self.min_solidity),
                     max_spots=max(1, self.max_spots),
                     color_name=self.color_name,
                     hsv_lower=None,
@@ -1182,7 +1227,7 @@ def run_gui(args):
                     {
                         "frame_index": self.frame_index,
                         "time_sec": self.frame_index / self.fps,
-                        "video_file": self.video_files[self.current_video_idx].name,
+                        "input_source": self.video_files[self.current_video_idx].name,
                         "mode": self.mode,
                         "track_mode": self.track_mode,
                         "detections": len(detections),
@@ -1196,6 +1241,10 @@ def run_gui(args):
                         "blur": self.blur,
                         "min_area": self.min_area,
                         "max_area": self.max_area,
+                        "min_circularity": self.min_circularity,
+                        "max_aspect_ratio": self.max_aspect_ratio,
+                        "min_peak_intensity": self.min_peak_intensity,
+                        "min_solidity": self.min_solidity,
                         "color_name": self.color_name,
                     }
                 )

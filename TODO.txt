@@ -1,7 +1,0 @@
-Rozwiąż błędy:
-[WARNING] [MTD         ] Unable to open device "/dev/input/event10". Please ensure you have the appropriate permissions.
-[WARNING] Deprecated property "<BooleanProperty name=allow_stretch>" of object "<kivy.uix.image.Image object at 0x7f3ec2aba2b0>" has been set, it will be removed in a future version
-[WARNING] Deprecated property "<BooleanProperty name=keep_ratio>" of object "<kivy.uix.image.Image object at 0x7f3ec2aba2b0>" was accessed, it will be removed in a future version
-[WARNING] [Deprecated  ] Pygame has been deprecated and will be removed after 1.11.0: Call to deprecated function __init__ in /home/matpom/.local/lib/python3.14/site-packages/kivy/core/text/text_pygame.py line 36.Called from /home/matpom/.local/lib/python3.14/site-packages/kivy/uix/label.py line 359 by _create_label().
-[WARNING] [Deprecated  ] Pygame has been deprecated and will be removed after 1.11.0: Call to deprecated function __init__ in /home/matpom/.local/lib/python3.14/site-packages/kivy/core/image/img_pygame.py line 27.Called from /home/matpom/.local/lib/python3.14/site-packages/kivy/core/image/__init__.py line 455 by load().
-[WARNING] [Deprecated  ] Pygame has been deprecated and will be removed after 1.11.0: Call to deprecated function __init__ in /home/matpom/.local/lib/python3.14/site-packages/kivy/core/window/window_pygame.py line 42.Called from /home/matpom/.local/lib/python3.14/site-packages/kivy/core/__init__.py line 71 by core_select_lib().

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -74,9 +75,18 @@ def resolve_analysis_input(path_value: str) -> str:
 
 
 def build_measurement_stem(video_path: str) -> str:
-    """Tworzy bazową nazwę plików pomiarowych na podstawie pliku wejściowego."""
-    stem = Path(video_path).stem
+    """Tworzy bazową nazwę plików pomiarowych na podstawie źródła wejściowego."""
+    stem = Path(video_path).stem or Path(video_path).name or video_path
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-") or "measurement"
     return f"{stem}_measurement"
+
+
+def parse_camera_source(path_value: str) -> str | int:
+    """Konwertuje źródło kamery do typu akceptowanego przez OpenCV."""
+    raw = path_value.strip()
+    if re.fullmatch(r"\d+", raw):
+        return int(raw)
+    return raw
 
 
 def with_default(value: Optional[str], default_path: str) -> str:

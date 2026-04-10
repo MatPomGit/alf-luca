@@ -10,7 +10,8 @@ from typing import Any, Dict, Optional
 class InputConfig:
     """Konfiguracja wejścia danych oraz trybu uruchomienia pipeline'u."""
 
-    video: str
+    video: Optional[str] = None
+    camera: Optional[str] = None
     calib_file: Optional[str] = None
     display: bool = False
     interactive: bool = False
@@ -33,6 +34,14 @@ class DetectorConfig:
     closing_kernel: int = 0
     min_area: float = 10.0
     max_area: float = 0.0
+    # Minimalna kolistość (0..1); wyższa wartość ogranicza wydłużone artefakty i szum krawędzi.
+    min_circularity: float = 0.0
+    # Maksymalny stosunek boków bbox (>=1); mniejsza wartość odrzuca ekstremalnie podłużne obiekty.
+    max_aspect_ratio: float = 6.0
+    # Minimalna jasność lokalnego maksimum (0..255) wewnątrz konturu; pomaga usuwać słabe refleksy.
+    min_peak_intensity: float = 0.0
+    # Minimalna zwartość konturu (area/convex_hull_area, 0..1); opcjonalnie usuwa mocno wklęsłe kształty.
+    min_solidity: Optional[float] = None
     max_spots: int = 10
     color_name: str = "red"
     hsv_lower: Optional[str] = None
@@ -51,6 +60,15 @@ class TrackerConfig:
     max_distance: float = 40.0
     max_missed: int = 10
     selection_mode: str = "stablest"
+    distance_weight: float = 1.0
+    area_weight: float = 0.35
+    circularity_weight: float = 0.2
+    brightness_weight: float = 0.0
+    min_match_score: float = 1.0
+    speed_gate_gain: float = 1.5
+    error_gate_gain: float = 1.0
+    min_dynamic_distance: float = 12.0
+    max_dynamic_distance: float = 150.0
 
 
 @dataclass
@@ -168,12 +186,22 @@ def run_config_to_pipeline_config(config: RunConfig):
     """Mapuje `RunConfig` na istniejący model `PipelineConfig` używany przez tracker."""
     # Import lokalny ogranicza zależności ciężkich modułów (np. OpenCV) tylko do momentu uruchomienia trackingu.
     from .detectors import DetectorConfig as PipelineDetectorConfig
+    from .io_paths import parse_camera_source
     from .pipeline import PipelineConfig
     from .postprocess import KalmanConfig
     from .tracker_core import TrackerConfig as PipelineTrackerConfig
 
+    if bool(config.input.video) == bool(config.input.camera):
+        raise ValueError("Konfiguracja musi zawierać dokładnie jedno źródło wejścia: `input.video` albo `input.camera`.")
+
+    source_value = config.input.video if config.input.video else parse_camera_source(config.input.camera or "")
+    source_label = config.input.video if config.input.video else f"camera:{config.input.camera}"
+    is_live_source = bool(config.input.camera)
+
     return PipelineConfig(
-        video=config.input.video,
+        video=source_value,
+        source_label=source_label,
+        is_live_source=is_live_source,
         calib_file=config.input.calib_file,
         display=config.input.display,
         interactive=config.input.interactive,
@@ -195,6 +223,15 @@ def run_config_to_pipeline_config(config: RunConfig):
             max_distance=config.tracker.max_distance,
             max_missed=config.tracker.max_missed,
             selection_mode=config.tracker.selection_mode,
+            distance_weight=config.tracker.distance_weight,
+            area_weight=config.tracker.area_weight,
+            circularity_weight=config.tracker.circularity_weight,
+            brightness_weight=config.tracker.brightness_weight,
+            min_match_score=config.tracker.min_match_score,
+            speed_gate_gain=config.tracker.speed_gate_gain,
+            error_gate_gain=config.tracker.error_gate_gain,
+            min_dynamic_distance=config.tracker.min_dynamic_distance,
+            max_dynamic_distance=config.tracker.max_dynamic_distance,
         ),
         kalman=KalmanConfig(
             process_noise=config.postprocess.kalman_process_noise,
@@ -207,7 +244,8 @@ def pipeline_config_to_run_config(config) -> RunConfig:
     """Mapuje `PipelineConfig` na zunifikowany model eksportowy `RunConfig`."""
     return RunConfig(
         input=InputConfig(
-            video=config.video,
+            video=None if getattr(config, "is_live_source", False) else str(config.video),
+            camera=str(config.video) if getattr(config, "is_live_source", False) else None,
             calib_file=config.calib_file,
             display=config.display,
             interactive=config.interactive,
@@ -218,6 +256,15 @@ def pipeline_config_to_run_config(config) -> RunConfig:
             max_distance=config.tracker.max_distance,
             max_missed=config.tracker.max_missed,
             selection_mode=config.selection_mode,
+            distance_weight=config.tracker.distance_weight,
+            area_weight=config.tracker.area_weight,
+            circularity_weight=config.tracker.circularity_weight,
+            brightness_weight=config.tracker.brightness_weight,
+            min_match_score=config.tracker.min_match_score,
+            speed_gate_gain=config.tracker.speed_gate_gain,
+            error_gate_gain=config.tracker.error_gate_gain,
+            min_dynamic_distance=config.tracker.min_dynamic_distance,
+            max_dynamic_distance=config.tracker.max_dynamic_distance,
         ),
         postprocess=PostprocessConfig(
             use_kalman=config.use_kalman,
