@@ -9,6 +9,7 @@ if not exist "output\manual" mkdir "output\manual"
 set "CALIB_ARG="
 if exist "camera_calib.npz" set "CALIB_ARG=--calib_file camera_calib.npz"
 
+rem Uruchomienie z checkoutu repo; pakiet `luca_tracker` doładowuje workspace `packages/*/src`.
 where py >nul 2>&1
 if %errorlevel%==0 (
     py -3 -m luca_tracker track --camera 0 --display --output_csv output/manual/camera0_tracking_results.csv --trajectory_png output/manual/camera0_trajectory.png --report_csv output/manual/camera0_report.csv --report_pdf output/manual/camera0_report.pdf %CALIB_ARG%

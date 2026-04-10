@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import warnings
 from functools import lru_cache
 from importlib import import_module
@@ -13,6 +14,22 @@ from typing import Any
 _VERSION_BASE = "0.1"
 # Data docelowego usunięcia eksportów legacy po okresie migracyjnym.
 LEGACY_REMOVAL_TARGET = "2026-09-30"
+
+
+def _bootstrap_workspace_src_paths() -> None:
+    """Dodaje `packages/*/src` do `sys.path` dla uruchomień z checkoutu repo."""
+    repo_root = Path(__file__).resolve().parents[1]
+    packages_root = repo_root / "packages"
+    if not packages_root.is_dir():
+        return
+
+    for src_dir in sorted(packages_root.glob("*/src")):
+        src_dir_str = str(src_dir)
+        if src_dir_str not in sys.path:
+            sys.path.insert(0, src_dir_str)
+
+
+_bootstrap_workspace_src_paths()
 
 
 @lru_cache(maxsize=1)

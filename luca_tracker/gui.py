@@ -2476,6 +2476,8 @@ def run_gui(args):
                 f"frame={self.frame_index} | analyze={'ON' if self.analyze_enabled else 'OFF'}"
             )
 
+            """TODO :zrobić mapę pozycji 3D (rzut z góry)"""
+
         def on_stop(self):
             if self.cap:
                 self.cap.release()

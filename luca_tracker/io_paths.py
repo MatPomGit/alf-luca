@@ -2,3 +2,6 @@
 
 # Ten moduł zachowuje stare ścieżki importu dla klientów `luca_tracker`.
 from luca_input.io_paths import *  # noqa: F401,F403
+
+"""Do wywalenia z czasem"""
+

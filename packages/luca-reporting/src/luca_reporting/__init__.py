@@ -1,5 +1,13 @@
 """Publiczne API pakietu `luca_reporting`."""
 
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("luca-reporting")
+except PackageNotFoundError:
+    # Fallback dla uruchomień z checkoutu repo bez instalacji editable/wheel.
+    __version__ = "0.1.0"
+
 from luca_reporting.reports import (
     build_run_metadata,
     compare_csv,

@@ -8,12 +8,12 @@ J2S
 
 ## Dokumentacja deweloperska
 
-- Setup środowiska i zasady uruchamiania: `docs/development.md` (editable installs z `packages/*`).
+- Setup środowiska i zasady uruchamiania: `docs/development.md`.
 
 
 ## Struktura repozytorium
 
-- `luca_tracker/` - główny pakiet aplikacji z CLI, pipeline, GUI, raportami i ROS2.
+- `luca_tracker/` - legacy facade + wygodny punkt wejścia `python -m luca_tracker ...`; część logiki GUI nadal jest utrzymywana tutaj.
 - `tools/` - skrypty pomocnicze do analizy CSV, QA wideo i ekstrakcji obrazów kalibracyjnych.
 - `scripts/` - gotowe skrypty uruchomieniowe.
 - `config/` - konfiguracja GUI i przykładowa konfiguracja pełnego uruchomienia.
@@ -38,6 +38,149 @@ J2S
 | `luca-interface-ros2` | Interfejs ROS2 dla uruchamiania i publikacji danych online. | `luca-tracking`, `luca-tracker` | `luca-ros2` |
 | `luca-suite` | Metapakiet spinający kompatybilne wersje wszystkich modułów. | Wszystkie pakiety `luca-*` w zakresie `>=0.1.0,<0.2.0` | brak CLI (meta-zależności) |
 
+## Gdzie rozwijać nowy kod
+
+Najczęstsza pomyłka w tym repo to dopisywanie nowej logiki w niewłaściwej warstwie. Najbezpieczniejsza zasada jest taka:
+
+- nową logikę produkcyjną dodawaj do `packages/*/src/*`,
+- `luca_tracker/` traktuj głównie jako legacy facade, punkt wejścia i miejsce utrzymywania zgodności wstecznej,
+- `scripts/` traktuj jako wygodne uruchamianie, a nie główne miejsce logiki domenowej.
+
+Praktyczna mapa:
+
+- nowy detektor lub filtrowanie obrazu -> `packages/luca-processing/src/luca_processing/`
+- tracking, pipeline i przypadki użycia -> `packages/luca-tracking/src/luca_tracking/`
+- publikacja ROS2, runtime online i kontrakt JSON -> `packages/luca-publishing/src/luca_publishing/`
+- typy i modele konfiguracji -> `packages/luca-types/src/luca_types/`
+- mapowanie wejść/wyjść i ścieżek -> `packages/luca-input/src/luca_input/`
+- GUI -> `luca_tracker/gui.py` oraz adaptery `packages/luca-interface-gui/`
+- kompatybilność starych importów -> `luca_tracker/`
+
+Jeśli nie wiesz, gdzie zacząć, najpierw sprawdź `packages/luca-tracking/src/luca_tracking/application_services.py`, a potem zejdź warstwę niżej do pakietu domenowego, który naprawdę powinien dostać zmianę.
+
+## Jak się w tym nie pogubić
+
+Jeśli wchodzisz do projektu pierwszy raz, nie musisz rozumieć od razu wszystkich pakietów. W praktyce najważniejsze są tylko cztery warstwy:
+
+1. `luca_tracker`  
+   To najwygodniejszy punkt wejścia. Stąd uruchamiasz `python -m luca_tracker ...`, GUI i skrypty z katalogu `scripts/`.
+2. `luca-processing`  
+   Tu dzieje się detekcja plamki na obrazie: progowanie, filtrowanie, wybór najlepszego punktu.
+3. `luca-tracking`  
+   Tu składany jest cały pipeline: wejście wideo/kamera, detekcja, śledzenie, zapis wyników.
+4. `luca-publishing`  
+   Tu dane są publikowane online, głównie do ROS2.
+
+Najprostszy model mentalny jest taki:
+
+- kamera albo plik wideo daje klatki,
+- detektor znajduje na klatce najjaśniejszą plamkę,
+- tracker zamienia to na stabilny punkt `x/y` w czasie,
+- jeśli mamy kalibrację i referencje PnP, punkt `x/y` jest przeliczany na `x_world/y_world/z_world`,
+- wynik trafia do CSV, GUI albo na topic ROS2.
+
+Jeżeli masz mało czasu, zacznij od tych plików:
+
+- `luca_tracker/cli.py`  
+  Pokazuje, jakie są tryby uruchamiania i jakie argumenty można podać.
+- `packages/luca-tracking/src/luca_tracking/application_services.py`  
+  To warstwa spinająca przypadki użycia: `track`, `compare`, `ros2`, `calibrate`.
+- `packages/luca-tracking/src/luca_tracking/pipeline.py`  
+  To główne miejsce, gdzie wykonywane jest śledzenie offline/live.
+- `packages/luca-publishing/src/luca_publishing/ros2_node.py`  
+  To najważniejszy plik dla publikacji online i współrzędnych `XYZ`.
+- `scripts/`  
+  Tu są gotowe, praktyczne wejścia do najczęstszych scenariuszy.
+
+## Gdzie rozwijać nowy kod
+
+Najczęstsza pomyłka w tym repo to dopisywanie nowej logiki w niewłaściwej warstwie. Najbezpieczniejsza zasada jest taka:
+
+- nową logikę produkcyjną dodawaj do `packages/*/src/*`,
+- `luca_tracker/` traktuj głównie jako legacy facade, punkt wejścia i miejsce utrzymywania zgodności wstecznej,
+- `scripts/` traktuj jako wygodne uruchamianie, a nie główne miejsce logiki domenowej.
+
+Praktyczna mapa:
+
+- nowy detektor lub filtrowanie obrazu -> `packages/luca-processing/src/luca_processing/`
+- tracking, pipeline i przypadki użycia -> `packages/luca-tracking/src/luca_tracking/`
+- publikacja ROS2, runtime online i kontrakt JSON -> `packages/luca-publishing/src/luca_publishing/`
+- typy i modele konfiguracji -> `packages/luca-types/src/luca_types/`
+- mapowanie wejść/wyjść i ścieżek -> `packages/luca-input/src/luca_input/`
+- GUI -> `luca_tracker/gui.py` oraz adaptery `packages/luca-interface-gui/`
+- kompatybilność starych importów -> `luca_tracker/`
+
+Jeśli nie wiesz, gdzie zacząć, najpierw sprawdź `packages/luca-tracking/src/luca_tracking/application_services.py`, a potem zejdź warstwę niżej do pakietu domenowego, który naprawdę powinien dostać zmianę.
+
+## Co po kolei robi system
+
+Poniżej najkrótsze wyjaśnienie całego przepływu, prostym językiem:
+
+1. **Pobranie obrazu**  
+   Program czyta klatkę z pliku wideo albo z fizycznej kamery.
+2. **Wykrycie plamki**  
+   Z obrazu wybierany jest najjaśniejszy albo kolorowy punkt, zależnie od trybu.
+3. **Ustalenie pozycji 2D**  
+   Dla wykrytej plamki wyznaczane są współrzędne obrazu `x` i `y`, a także parametry jakości jak `area`, `radius`, `confidence`.
+4. **Śledzenie w czasie**  
+   Kolejne klatki są łączone w jedną trajektorię, żeby ruch nie był „skaczący” od klatki do klatki.
+5. **Opcjonalne przeliczenie do 3D (`XYZ`)**  
+   Jeśli dostępna jest kalibracja kamery i punkty odniesienia PnP, punkt z obrazu jest rzutowany na układ świata.
+6. **Publikacja albo zapis**  
+   Wynik trafia do CSV, raportu, GUI, filmu wynikowego albo na topic ROS2.
+
+## Skąd biorą się punkty XYZ
+
+To jest najważniejsza rzecz dla osób integrujących ten projekt z innym oprogramowaniem.
+
+`x` i `y` są współrzędnymi punktu na obrazie, czyli po prostu pozycją plamki w pikselach.
+
+`x_world`, `y_world`, `z_world` to współrzędne tego samego punktu, ale w umownym układzie świata. Żeby je policzyć, potrzebne są trzy rzeczy:
+
+1. **Kalibracja kamery**  
+   Plik `camera_calib.npz` zawiera parametry optyki kamery: macierz kamery i dystorsję.
+2. **Referencje PnP**  
+   Trzeba znać kilka punktów planszy lub sceny:
+   - gdzie leżą w świecie (`pnp_object_points`),
+   - gdzie widać je na obrazie (`pnp_image_points`).
+3. **Założenie płaszczyzny świata**  
+   Program zakłada, że szukany punkt leży na płaszczyźnie `Z = const` i przecina promień kamery z tą płaszczyzną.
+
+W praktyce działa to tak:
+
+- kamera widzi punkt plamki w pikselu `x/y`,
+- z kalibracji wiadomo, jak ten piksel przekłada się na kierunek patrzenia kamery,
+- z PnP wiadomo, gdzie kamera znajduje się względem planszy odniesienia,
+- z przecięcia tego kierunku z płaszczyzną świata powstaje `x_world/y_world/z_world`.
+
+Dlatego `XYZ` nie jest „magiczne” ani brane z modelu AI. To czysta geometria kamery.
+
+## Jak czytać XYZ i co można z tym zrobić dalej
+
+Najprostsze miejsca odczytu to:
+
+- CSV z `track`  
+  dobre do analizy offline, wykresów, eksportu do Excela, Pandas, Matlab lub innego narzędzia.
+- JSON publikowany na ROS2  
+  dobre do pracy online, sterowania robotem, synchronizacji z innymi sensorami albo dalszego przetwarzania w osobnym procesie.
+- GUI / podgląd  
+  dobre do strojenia i weryfikacji, ale nie jako główny interfejs integracyjny.
+
+Co programista może zrobić dalej z `XYZ`:
+
+- liczyć prędkość i przyspieszenie punktu,
+- wykrywać przekroczenie stref lub progów,
+- sterować manipulatorem, kamerą albo innym układem wykonawczym,
+- łączyć dane z IMU, enkoderami albo innym trackingiem,
+- zapisywać trajektorie do własnej bazy, logów lub systemu analitycznego,
+- filtrować dane w osobnym programie, np. Kalmana, EMA albo własnym estymatorem.
+
+Najpraktyczniejsza zasada integracyjna:
+
+- ten projekt traktuj jako warstwę „detekcja + pozycja”,
+- logikę biznesową lub sterowanie trzymaj w osobnym programie,
+- konsumuj `x/y/XYZ` przez CSV albo ROS2 i buduj na tym kolejne etapy.
+
 ## Wymagania
 
 - Python 3.10+
@@ -50,6 +193,12 @@ Instalacja:
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
+
+Uruchamianie z checkoutu repo:
+
+- `python -m luca_tracker ...` działa bez ręcznego `pip install -e` dla pakietów z `packages/*`,
+- legacy entrypoint `luca_tracker` automatycznie doładowuje lokalne ścieżki `packages/*/src`,
+- editable installs są nadal przydatne do pracy stricte pakietowej i publikacji, ale nie są wymagane do podstawowego uruchamiania CLI/skryptów z repo.
 
 ## Szybki start krok po kroku (co uruchamiać po kolei)
 
@@ -67,8 +216,8 @@ python -m pip install -r requirements.txt
 ```bash
 python -m luca_tracker calibrate \
   --calib_dir images_calib \
-  --rows 6 \
-  --cols 9 \
+  --rows 7 \
+  --cols 10 \
   --square_size 1.0 \
   --output_file camera_calib.npz
 ```
@@ -291,6 +440,41 @@ Przykładowy payload:
 bash scripts/run_gui.sh
 bash scripts/run_cli.sh
 bash scripts/run_analysis.sh
+bash scripts/run_ros2_camera_xyz.sh
+```
+
+Przykład dla publikacji `XYZ` na ROS2:
+
+```bash
+export LUCA_PNP_OBJECT_POINTS="0,0,0;1,0,0;1,1,0;0,1,0"
+export LUCA_PNP_IMAGE_POINTS="120,210;520,205;525,470;115,475"
+bash scripts/run_ros2_camera_xyz.sh
+```
+
+Więcej przykładów Linux/macOS:
+
+```bash
+# Własny setup ROS2 i własny topic
+export LUCA_ROS2_SETUP_FILE=/opt/ros/humble/setup.bash
+export LUCA_ROS2_TOPIC=/detector/spot_xyz
+export LUCA_ROS2_NODE_NAME=detector_node
+export LUCA_PNP_OBJECT_POINTS="0,0,0;1,0,0;1,1,0;0,1,0"
+export LUCA_PNP_IMAGE_POINTS="120,210;520,205;525,470;115,475"
+bash scripts/run_ros2_camera_xyz.sh
+
+# Kamera o indeksie 1, bez podglądu OpenCV
+export LUCA_CAMERA_INDEX=1
+export LUCA_DISPLAY=0
+export LUCA_PNP_OBJECT_POINTS="0,0,0;1,0,0;1,1,0;0,1,0"
+export LUCA_PNP_IMAGE_POINTS="120,210;520,205;525,470;115,475"
+bash scripts/run_ros2_camera_xyz.sh
+
+# Ograniczenie analizy do ROI i inne FPS
+export LUCA_ROI="100,80,900,700"
+export LUCA_ROS2_FPS=20
+export LUCA_PNP_OBJECT_POINTS="0,0,0;1,0,0;1,1,0;0,1,0"
+export LUCA_PNP_IMAGE_POINTS="120,210;520,205;525,470;115,475"
+bash scripts/run_ros2_camera_xyz.sh
 ```
 
 ### 8) Gotowe skrypty startowe (Windows)
@@ -299,6 +483,32 @@ bash scripts/run_analysis.sh
 scripts\run_gui.bat
 scripts\run_cli.bat
 scripts\run_camera.bat
+scripts\run_ros2_camera_xyz.bat
+```
+
+Przykłady Windows (`cmd.exe`):
+
+```bat
+REM Minimalny start z publikacją XYZ
+set "LUCA_PNP_OBJECT_POINTS=0,0,0;1,0,0;1,1,0;0,1,0"
+set "LUCA_PNP_IMAGE_POINTS=120,210;520,205;525,470;115,475"
+scripts\run_ros2_camera_xyz.bat
+
+REM Własny setup ROS2 i własny topic
+set "LUCA_ROS2_SETUP_BAT=C:\dev\ros2_humble\local_setup.bat"
+set "LUCA_ROS2_TOPIC=/detector/spot_xyz"
+set "LUCA_ROS2_NODE_NAME=detector_node"
+set "LUCA_PNP_OBJECT_POINTS=0,0,0;1,0,0;1,1,0;0,1,0"
+set "LUCA_PNP_IMAGE_POINTS=120,210;520,205;525,470;115,475"
+scripts\run_ros2_camera_xyz.bat
+
+REM Kamera 1, bez podglądu i z ROI
+set "LUCA_CAMERA_INDEX=1"
+set "LUCA_DISPLAY=0"
+set "LUCA_ROI=100,80,900,700"
+set "LUCA_PNP_OBJECT_POINTS=0,0,0;1,0,0;1,1,0;0,1,0"
+set "LUCA_PNP_IMAGE_POINTS=120,210;520,205;525,470;115,475"
+scripts\run_ros2_camera_xyz.bat
 ```
 
 ## CLI
@@ -332,8 +542,8 @@ Kalibracja kamery:
 ```bash
 python -m luca_tracker calibrate \
   --calib_dir images_calib \
-  --rows 6 \
-  --cols 9 \
+  --rows 7 \
+  --cols 10 \
   --square_size 1.0 \
   --output_file camera_calib.npz
 ```
@@ -376,15 +586,21 @@ Linux/macOS:
 
 - `scripts/run_gui.sh` - uruchamia GUI.
 - `scripts/run_cli.sh` - przykładowe uruchomienie `track` z wynikami w `output/manual/`.
-- `scripts/run_analysis.sh` - porównanie danych CSV z `output/manual/`.
+- `scripts/run_analysis.sh` - generuje wykresy porównawcze z CSV w `output/manual/` przez `tools/data_tool.py`.
+- `scripts/compute_pnp_reference.py` - wylicza referencje PnP z obrazów w `images_calib/` i wypisuje je jako zmienne środowiskowe dla `.sh` albo `.bat`.
+- `scripts/run_ros2_camera_xyz.sh` - uruchamia ROS2 z kamery fizycznej, śledzi najjaśniejszą plamkę i publikuje `x/y/x_world/y_world/z_world`.
 
 Windows:
 
 - `scripts/run_gui.bat` - uruchamia GUI.
 - `scripts/run_cli.bat` - uruchamia analizę przykładowego pliku `video/sledzenie_plamki.mkv`.
 - `scripts/run_camera.bat` - uruchamia szybki start z kamery `--camera 0 --display`.
+- `scripts/run_ros2_camera_xyz.bat` - uruchamia ROS2 z kamery fizycznej, śledzi najjaśniejszą plamkę i publikuje `x/y/x_world/y_world/z_world`.
 
 Skrypty `run_cli` i `run_camera` automatycznie dodają `--calib_file camera_calib.npz`, jeśli plik kalibracji istnieje w katalogu repozytorium.
+Wszystkie skrypty startowe zakładają uruchamianie bezpośrednio z checkoutu repo i nie wymagają osobnej instalacji editable pakietów workspace.
+Skrypt `run_ros2_camera_xyz.sh` dodatkowo wymaga aktywnego środowiska ROS2 (`rclpy`, `std_msgs`) oraz pliku kalibracji. Referencje PnP są domyślnie liczone automatycznie z `images_calib/` dla planszy `10x7`, a zmienne `LUCA_PNP_OBJECT_POINTS` i `LUCA_PNP_IMAGE_POINTS` służą do ręcznego nadpisania tego fallbacku.
+W Windows odpowiednik korzysta z `LUCA_ROS2_SETUP_BAT` i `LUCA_ROS2_OVERLAY_SETUP_BAT`, jeśli chcesz automatycznie wykonać `call` do skryptów środowiska ROS2 przed startem.
 
 ## Artefakty wynikowe
 
@@ -550,3 +766,21 @@ Przykład uruchomienia obrazu:
 ```bash
 docker run --rm ghcr.io/<owner>/alf-luca --help
 ```
+
+## Jeśli chcesz X, uruchom Y
+
+| Jeśli chcesz... | Uruchom... | Po co / co dostaniesz |
+|---|---|---|
+| szybko sprawdzić dostępne komendy | `python -m luca_tracker --help` | listę wszystkich trybów pracy CLI |
+| zrobić tracking offline z pliku wideo | `python -m luca_tracker track --video video/sledzenie_plamki.mp4` | CSV, raporty i trajektorię z analizy materiału |
+| zrobić szybki start offline gotowym skryptem | `bash scripts/run_cli.sh` lub `scripts\run_cli.bat` | przykładowe uruchomienie z zapisaniem wyników do `output/manual/` |
+| uruchomić GUI do strojenia parametrów | `python -m luca_tracker gui` | interfejs do podglądu i eksperymentów z parametrami |
+| uruchomić GUI gotowym skryptem | `bash scripts/run_gui.sh` lub `scripts\run_gui.bat` | GUI z domyślnym wyborem pliku i opcjonalnym `camera_calib.npz` |
+| śledzić plamkę z kamery na żywo | `python -m luca_tracker track --camera 0 --display` | bieżący podgląd OpenCV i wynik live |
+| uruchomić szybki start z kamery gotowym skryptem | `scripts\run_camera.bat` | prosty start live na Windows |
+| opublikować pozycję plamki online do ROS2 | `python -m luca_tracker ros2 --camera_index 0 --topic /luca_tracker/tracking` | strumień JSON na topicu ROS2 |
+| opublikować również `XYZ` z gotowym fallbackiem PnP | `bash scripts/run_ros2_camera_xyz.sh` lub `scripts\run_ros2_camera_xyz.bat` | ROS2 + automatyczne liczenie referencji PnP z `images_calib/` |
+| porównać dwa wyniki CSV | `python -m luca_tracker compare --reference a.csv --candidate b.csv --output_csv diff.csv` | różnice między dwoma przebiegami |
+| wygenerować wykresy z kilku CSV | `python tools/data_tool.py output/a.csv output/b.csv --x-col frame --y-cols x y speed` | porównawcze wykresy PNG do dalszej analizy |
+| wyliczyć same referencje PnP z obrazów kalibracyjnych | `python scripts/compute_pnp_reference.py --format shell` | gotowe zmienne `LUCA_PNP_OBJECT_POINTS` i `LUCA_PNP_IMAGE_POINTS` |
+| zrobić kalibrację kamery od zera | `python -m luca_tracker calibrate --calib_dir images_calib --rows 7 --cols 10 --square_size 1.0 --output_file camera_calib.npz` | plik `camera_calib.npz` do korekcji i rekonstrukcji geometrii |
