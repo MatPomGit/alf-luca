@@ -13,6 +13,33 @@ import numpy as np
 from .detector_interfaces import DetectorConfig
 from .detectors import detect_spots_with_config
 
+ROS2_MESSAGE_SCHEMA_DEFAULT = "luca_tracker.ros2.tracking.v1"
+
+# Dokumentacja pól payloadu publikowanego na topicu ROS2.
+# Słownik utrzymujemy blisko kodu produkcyjnego, aby łatwo synchronizować kontrakt.
+ROS2_PAYLOAD_FIELD_DESCRIPTIONS: dict[str, str] = {
+    "schema": "Identyfikator wersji kontraktu wiadomości JSON publikowanej na ROS2.",
+    "stamp_sec": "Sekundy czasu ROS (`node.get_clock().now()`).",
+    "stamp_nanosec": "Nanosekundy czasu ROS (`node.get_clock().now()`).",
+    "frame_index": "Numer przetworzonej klatki od startu node.",
+    "time_sec": "Czas monotoniczny od startu node (sekundy).",
+    "source": "Źródło wejściowe kamery (indeks lub ścieżka urządzenia).",
+    "track_mode": "Tryb detekcji (`brightness` albo `color`).",
+    "spot_id": "Indeks detekcji wybranej jako obiekt główny.",
+    "detected": "Czy dla `spot_id` znaleziono obiekt w bieżącej klatce.",
+    "roi": "Region ROI użyty przez detektor (`x`, `y`, `w`, `h`).",
+    "detections_count": "Liczba wykryć spełniających kryteria detektora.",
+    "x": "Pozycja X obiektu głównego w pikselach.",
+    "y": "Pozycja Y obiektu głównego w pikselach.",
+    "x_world": "Pozycja X w układzie świata (jeśli dostępna kalibracja/PnP).",
+    "y_world": "Pozycja Y w układzie świata (jeśli dostępna kalibracja/PnP).",
+    "z_world": "Pozycja Z w układzie świata (jeśli dostępna kalibracja/PnP).",
+    "area": "Pole konturu detekcji głównej [px²].",
+    "radius": "Promień detekcji głównej [px].",
+    "rank": "Ranking detekcji po sortowaniu detektora.",
+    "run_metadata": "Metadane runu z zewnętrznego pliku JSON (`--run_metadata_json`).",
+}
+
 
 @dataclass
 class Ros2TrackerConfig:
@@ -48,7 +75,7 @@ class Ros2TrackerConfig:
     turtle_log_every_n_frames: int = 10
     turtle_search_angular_speed: float = 0.0
     run_metadata_json: Optional[str] = None
-    message_schema: str = "luca_tracker.ros2.tracking.v1"
+    message_schema: str = ROS2_MESSAGE_SCHEMA_DEFAULT
     detector: DetectorConfig = field(default_factory=DetectorConfig)
 
 
@@ -95,7 +122,7 @@ def _resolve_ros2_config(args_or_config: Any) -> Ros2TrackerConfig:
         turtle_log_every_n_frames=int(getattr(args_or_config, "turtle_log_every_n_frames", 10)),
         turtle_search_angular_speed=float(getattr(args_or_config, "turtle_search_angular_speed", 0.0)),
         run_metadata_json=getattr(args_or_config, "run_metadata_json", None),
-        message_schema=str(getattr(args_or_config, "message_schema", "luca_tracker.ros2.tracking.v1")),
+        message_schema=str(getattr(args_or_config, "message_schema", ROS2_MESSAGE_SCHEMA_DEFAULT)),
         detector=DetectorConfig(
             track_mode=getattr(args_or_config, "track_mode", "brightness"),
             blur=getattr(args_or_config, "blur", 11),
@@ -293,6 +320,64 @@ class _Ros2TrackerRuntime:
             node.get_logger().info(
                 f"Wczytano metadane publikacji z JSON: {self.config.run_metadata_json}"
             )
+
+    def _build_payload(
+        self,
+        stamp,
+        detections,
+        best,
+        roi_box: tuple[int, int, int, int],
+        x_px: Optional[float],
+        y_px: Optional[float],
+        x_world: Optional[float],
+        y_world: Optional[float],
+        z_world: Optional[float],
+        turtle_linear_cmd: float,
+        turtle_angular_cmd: float,
+        turtle_target_reached: bool,
+        turtle_debug: dict,
+    ) -> dict[str, object]:
+        """Buduje pojedynczy payload JSON publikowany na topicu ROS2.
+
+        Zasady kontraktu:
+        - pola bazowe (`schema`, `frame_index`, `x`, `y`...) są zawsze obecne,
+        - pola niedostępne przy danej konfiguracji mają wartość `None`,
+        - metadane runu są osadzane jako obiekt `run_metadata` bez modyfikacji kluczy.
+        """
+        return {
+            "schema": self.config.message_schema,
+            "stamp_sec": int(stamp.sec),
+            "stamp_nanosec": int(stamp.nanosec),
+            "frame_index": self.frame_index,
+            "time_sec": time.monotonic() - self.start_time,
+            "source": str(self.config.video_source),
+            "track_mode": self.config.detector.track_mode,
+            "spot_id": int(self.config.spot_id),
+            "detected": best is not None,
+            "roi": {"x": int(roi_box[0]), "y": int(roi_box[1]), "w": int(roi_box[2]), "h": int(roi_box[3])},
+            "detections_count": len(detections),
+            "x": x_px,
+            "y": y_px,
+            "x_world": x_world,
+            "y_world": y_world,
+            "z_world": z_world,
+            "area": float(best.area) if best else None,
+            "radius": float(best.radius) if best else None,
+            "rank": int(best.rank) if best and best.rank is not None else None,
+            "turtle_follow": self.config.turtle_follow,
+            "turtle_linear_cmd": turtle_linear_cmd if self.config.turtle_follow else None,
+            "turtle_angular_cmd": turtle_angular_cmd if self.config.turtle_follow else None,
+            "turtle_target_reached": turtle_target_reached if self.config.turtle_follow else None,
+            "turtle_reason": turtle_debug["reason"] if self.config.turtle_follow else None,
+            "turtle_error_norm": turtle_debug["error_norm"] if self.config.turtle_follow else None,
+            "turtle_error_norm_y": turtle_debug["error_norm_y"] if self.config.turtle_follow else None,
+            "turtle_distance_scale": turtle_debug["distance_scale"] if self.config.turtle_follow else None,
+            "x_filtered": turtle_debug["filt_x"] if self.config.turtle_follow else None,
+            "y_filtered": turtle_debug["filt_y"] if self.config.turtle_follow else None,
+            "radius_filtered": turtle_debug["filt_radius"] if self.config.turtle_follow else None,
+            # Metadane są opcjonalne i pochodzą z wcześniej przygotowanego pliku `*.run.json`.
+            "run_metadata": self._run_metadata or None,
+        }
 
     def _init_world_projection(self) -> None:
         """Ładuje kalibrację i przygotowuje estymację PnP do publikacji XYZ."""
@@ -493,40 +578,21 @@ class _Ros2TrackerRuntime:
         )
         stamp = self.node.get_clock().now().to_msg()
 
-        payload = {
-            "schema": self.config.message_schema,
-            "stamp_sec": int(stamp.sec),
-            "stamp_nanosec": int(stamp.nanosec),
-            "frame_index": self.frame_index,
-            "time_sec": time.monotonic() - self.start_time,
-            "source": str(self.config.video_source),
-            "track_mode": self.config.detector.track_mode,
-            "spot_id": int(self.config.spot_id),
-            "detected": best is not None,
-            "roi": {"x": int(roi_box[0]), "y": int(roi_box[1]), "w": int(roi_box[2]), "h": int(roi_box[3])},
-            "detections_count": len(detections),
-            "x": x_px,
-            "y": y_px,
-            "x_world": x_world,
-            "y_world": y_world,
-            "z_world": z_world,
-            "area": float(best.area) if best else None,
-            "radius": float(best.radius) if best else None,
-            "rank": int(best.rank) if best and best.rank is not None else None,
-            "turtle_follow": self.config.turtle_follow,
-            "turtle_linear_cmd": turtle_linear_cmd if self.config.turtle_follow else None,
-            "turtle_angular_cmd": turtle_angular_cmd if self.config.turtle_follow else None,
-            "turtle_target_reached": turtle_target_reached if self.config.turtle_follow else None,
-            "turtle_reason": turtle_debug["reason"] if self.config.turtle_follow else None,
-            "turtle_error_norm": turtle_debug["error_norm"] if self.config.turtle_follow else None,
-            "turtle_error_norm_y": turtle_debug["error_norm_y"] if self.config.turtle_follow else None,
-            "turtle_distance_scale": turtle_debug["distance_scale"] if self.config.turtle_follow else None,
-            "x_filtered": turtle_debug["filt_x"] if self.config.turtle_follow else None,
-            "y_filtered": turtle_debug["filt_y"] if self.config.turtle_follow else None,
-            "radius_filtered": turtle_debug["filt_radius"] if self.config.turtle_follow else None,
-            # Metadane są opcjonalne i pochodzą z wcześniej przygotowanego pliku `*.run.json`.
-            "run_metadata": self._run_metadata or None,
-        }
+        payload = self._build_payload(
+            stamp=stamp,
+            detections=detections,
+            best=best,
+            roi_box=roi_box,
+            x_px=x_px,
+            y_px=y_px,
+            x_world=x_world,
+            y_world=y_world,
+            z_world=z_world,
+            turtle_linear_cmd=turtle_linear_cmd,
+            turtle_angular_cmd=turtle_angular_cmd,
+            turtle_target_reached=turtle_target_reached,
+            turtle_debug=turtle_debug,
+        )
 
         msg = self.message_cls()
         msg.data = json.dumps(payload, ensure_ascii=False)
