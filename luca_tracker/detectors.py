@@ -32,7 +32,11 @@ def parse_roi(roi_text: Optional[str], frame_shape: Tuple[int, int, int]) -> Tup
     if not roi_text:
         h, w = frame_shape[:2]
         return 0, 0, w, h
-    parts = [int(v) for v in roi_text.split(",")]
+    try:
+        # Dopuszczamy białe znaki w zapisie ROI, np. "10, 20, 300, 200".
+        parts = [int(v.strip()) for v in roi_text.split(",")]
+    except ValueError as exc:
+        raise ValueError("ROI musi zawierać liczby całkowite w formacie x,y,w,h") from exc
     if len(parts) != 4:
         raise ValueError("ROI musi mieć format x,y,w,h")
     x, y, w, h = parts
@@ -56,7 +60,11 @@ def parse_hsv_pair(text: Optional[str], fallback: Tuple[int, int, int]) -> Tuple
     parts = [int(v.strip()) for v in text.split(",")]
     if len(parts) != 3:
         raise ValueError("Zakres HSV musi mieć 3 wartości: h,s,v")
-    return tuple(parts)  # type: ignore
+    h, s, v = parts
+    # Walidacja zapobiega cichemu overflow przy konwersji do np.uint8.
+    if not (0 <= h <= 180 and 0 <= s <= 255 and 0 <= v <= 255):
+        raise ValueError("Zakres HSV poza dozwolonym przedziałem: h 0..180, s/v 0..255")
+    return h, s, v
 
 
 class BrightnessDetector(BaseDetector):
@@ -543,6 +551,9 @@ def detect_spots(
 
     scored_detections.sort(key=lambda item: item[0], reverse=True)
     detections = [det for _, det in scored_detections]
+    # Ujemne wartości max_spots prowadziły do nieintuicyjnego cięcia listy (np. -1 usuwał ostatni element).
+    # Traktujemy je defensywnie jako brak zwracanych detekcji.
+    max_spots = max(0, int(max_spots))
     detections = detections[:max_spots]
     for idx, det in enumerate(detections, start=1):
         det.rank = idx
