@@ -198,6 +198,42 @@ Publikowany JSON na topicu zawiera m.in. pola:
 - `frame_index`, `time_sec`, `detections_count`,
 - `run_metadata` (opcjonalny obiekt JSON pochodzący z `--run_metadata_json`, np. z plików `*.run.json`).
 
+#### Przepływ danych krok po kroku (od skryptu do publikacji ROS2)
+
+1. **Uruchomienie adaptera ROS2 (`luca-interface-ros2`)**  
+   Skrypt wejściowy buduje parser argumentów (`--camera_index`, `--topic`, `--spot_id`, konfiguracja detektora itp.) i przekazuje zebrane parametry do warstwy usług aplikacyjnych.
+2. **Mapowanie argumentów na konfigurację runtime (`luca-publishing`)**  
+   Argumenty CLI są normalizowane do obiektu konfiguracyjnego node, gdzie ustawiane są źródło wideo, częstotliwość przetwarzania, tryb detekcji, ROI i opcje kalibracji/PnP.
+3. **Start node ROS2 i timera przetwarzania**  
+   Node tworzy publisher `std_msgs/String` i uruchamia cykliczny timer zgodny z docelowym FPS. Każde wywołanie timera odpowiada pojedynczej iteracji przetwarzania klatki.
+4. **Pobranie klatki z kamery i detekcja plamki**  
+   W każdej iteracji runtime czyta nową klatkę (`cv2.VideoCapture.read()`), uruchamia detektor i pobiera listę wykryć wraz z ROI. Następnie wybierana jest plamka o indeksie `spot_id`.
+5. **Wyliczenie współrzędnych 2D i opcjonalnie 3D**  
+   Dla wybranej detekcji wyznaczane są współrzędne pikselowe (`x`, `y`) i parametry geometrii (`area`, `radius`, `rank`). Jeśli aktywna jest kalibracja i PnP, przeliczane są także współrzędne świata (`x_world`, `y_world`, `z_world`).
+6. **Budowa kontraktowego payloadu JSON**  
+   Runtime składa kompletny obiekt JSON: metadane czasu ROS, informacje o źródle i trybie pracy, status detekcji oraz dane pozycji. Kontrakt jest walidowany pod kątem obecności wymaganych pól.
+7. **Publikacja wiadomości na topicu ROS2**  
+   Gotowy payload jest serializowany do `msg.data` i publikowany na skonfigurowanym topicu (domyślnie `/luca_tracker/tracking`), gotowy do konsumpcji przez kolejne nody.
+
+#### Sugestie dla programistów konsumujących współrzędne (`x`, `y`, `x_world`, `y_world`, `z_world`)
+
+- **Zawsze weryfikuj `schema` i wersjonuj własny parser.**  
+  Traktuj `schema` jako twardy kontrakt wejściowy i przygotuj jawne mapowanie wersji, aby bezpiecznie przechodzić między rewizjami payloadu.
+- **Nie zakładaj ciągłości detekcji.**  
+  Gdy `detected=false`, pola pozycji mogą być `null`. Po stronie konsumenta warto utrzymywać stan `last_valid_sample` i politykę timeoutu (np. 200–500 ms) zamiast natychmiastowego zerowania.
+- **Filtruj sygnał pozycji przed sterowaniem.**  
+  Dla sterowania robotem rekomendowane są co najmniej: EMA (prostota), filtr Kalmana (szum + predykcja), albo filtr komplementarny przy łączeniu z IMU/odometrią.
+- **Używaj `stamp_sec` + `stamp_nanosec` do synchronizacji między topicami.**  
+  Nie opieraj logiki czasowej wyłącznie na czasie lokalnym subskrybenta; do korelacji z innymi sensorami stosuj timestamp ROS z payloadu i/lub `message_filters`.
+- **Oddziel warstwę detekcji od logiki decyzyjnej.**  
+  Dobrą praktyką jest osobny node „estymatora” (wygładzanie + walidacja ruchu) i dopiero potem node „kontrolera”, aby uprościć testowanie i diagnostykę.
+- **Dodaj bramki jakości danych.**  
+  Wykorzystuj `area`, `radius`, `rank`, `detections_count` do odrzucania niestabilnych pomiarów (np. minimalna powierzchnia, maksymalny skok pozycji, ograniczenie prędkości punktu).
+- **Rozważ publikację pochodnych wielkości.**  
+  Jeśli aplikacja tego wymaga, wyliczaj prędkość/przyspieszenie punktu (`dx/dt`, `dy/dt`) w osobnym node i publikuj je jako nowy topic, zamiast przeciążać bazowy kontrakt trackera.
+- **Przy przetwarzaniu 3D waliduj geometrię stanowiska.**  
+  Jakość `x_world/y_world/z_world` zależy od kalibracji i stabilności punktów referencyjnych PnP; regularnie wykonuj rekalibrację i testy błędu reprojekcji.
+
 Przykładowy payload:
 
 ```json
@@ -247,7 +283,6 @@ Przykładowy payload:
 | `x`, `y` | `float \| null` | Pozycja obiektu w pikselach (null, gdy brak detekcji). |
 | `x_world`, `y_world`, `z_world` | `float \| null` | Współrzędne świata (gdy aktywne PnP+kalibracja). |
 | `area`, `radius`, `rank` | `float/int \| null` | Parametry geometryczne i ranking wybranej detekcji. |
-| `turtle_*` | `float/bool/string \| null` | Diagnostyka i komendy sterowania turtlesim (gdy `--turtle_follow`). |
 | `run_metadata` | `object \| null` | Metadane runu z pliku `--run_metadata_json` (np. `*.run.json`). |
 
 ### 7) Gotowe skrypty startowe (Linux/macOS)
