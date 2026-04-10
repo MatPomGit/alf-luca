@@ -289,6 +289,7 @@ def contour_to_detection(
         bbox_y=by + offset_y,
         bbox_w=bw,
         bbox_h=bh,
+        confidence=0.0,
         ellipse_center=ellipse_center,
         ellipse_axes=ellipse_axes,
         ellipse_angle=ellipse_angle,
@@ -296,6 +297,54 @@ def contour_to_detection(
     )
 
 
+def _clip01(value: float) -> float:
+    """Ogranicza wartość do zakresu [0, 1], aby uprościć łączenie cech jakościowych."""
+    return float(max(0.0, min(1.0, value)))
+
+
+def _compute_detection_confidence(
+    contour: np.ndarray,
+    detection: Detection,
+    roi_frame: np.ndarray,
+    area_reference: float,
+) -> float:
+    """Liczy confidence detekcji z cech geometrii, jasności i stabilności rozmiaru.
+
+    Składowe:
+    - shape_score: preferuje kształty o wysokiej kolistości i umiarkowanej ekscentryczności,
+    - brightness_score: porównuje średnią jasność obiektu do tła z lokalnego bounding boxa,
+    - size_stability_score: nagradza pole bliskie medianie pól kandydatów w bieżącej klatce.
+    """
+    # Cechy kształtu: kolistość i proporcja osi elipsy (gdy dostępna).
+    circularity_score = _clip01(detection.circularity)
+    axis_ratio_score = 1.0
+    if detection.ellipse_axes and min(detection.ellipse_axes) > 0:
+        major_axis = max(detection.ellipse_axes)
+        minor_axis = min(detection.ellipse_axes)
+        axis_ratio = major_axis / minor_axis
+        axis_ratio_score = _clip01(1.0 / axis_ratio)
+    shape_score = 0.7 * circularity_score + 0.3 * axis_ratio_score
+
+    # Cechy jasności: średnia jasność obiektu + kontrast względem lokalnego tła.
+    gray_roi = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
+    contour_mask = np.zeros(gray_roi.shape, dtype=np.uint8)
+    cv2.drawContours(contour_mask, [contour], -1, color=255, thickness=-1)
+    object_pixels = gray_roi[contour_mask > 0]
+    mean_obj = float(np.mean(object_pixels)) if object_pixels.size else 0.0
+    x, y, w, h = cv2.boundingRect(contour)
+    patch = gray_roi[y : y + h, x : x + w]
+    mean_patch = float(np.mean(patch)) if patch.size else mean_obj
+    brightness_norm = _clip01(mean_obj / 255.0)
+    contrast_norm = _clip01((mean_obj - mean_patch + 128.0) / 255.0)
+    brightness_score = 0.6 * brightness_norm + 0.4 * contrast_norm
+
+    # Stabilność rozmiaru: odchyłka względna od mediany pól kandydatów z klatki.
+    ref_area = max(float(area_reference), 1.0)
+    size_error = abs(float(detection.area) - ref_area) / ref_area
+    size_stability_score = _clip01(1.0 - size_error)
+
+    confidence = 0.45 * shape_score + 0.35 * brightness_score + 0.20 * size_stability_score
+    return _clip01(confidence)
 def _contour_peak_intensity(gray_roi: np.ndarray, contour: np.ndarray) -> float:
     """Zwraca lokalne maksimum jasności (0..255) wewnątrz konturu."""
     local_mask = np.zeros(gray_roi.shape, dtype=np.uint8)
@@ -419,6 +468,7 @@ def detect_spots(
     gray_roi = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
     contours, _ = cv2.findContours(mask_roi.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    candidates: List[Tuple[Detection, np.ndarray]] = []
     scored_detections: List[Tuple[float, Detection]] = []
     effective_max_aspect_ratio = max(1.0, float(max_aspect_ratio))
     for contour in contours:
@@ -433,6 +483,18 @@ def detect_spots(
             continue
         if max_area > 0 and det.area > max_area:
             continue
+        candidates.append((det, contour))
+
+    area_reference = float(np.median([det.area for det, _ in candidates])) if candidates else 0.0
+    detections: List[Detection] = []
+    for det, contour in candidates:
+        det.confidence = _compute_detection_confidence(
+            contour=contour,
+            detection=det,
+            roi_frame=roi_frame,
+            area_reference=area_reference,
+        )
+        detections.append(det)
         if det.circularity < float(min_circularity):
             continue
         if det.bbox_w <= 0 or det.bbox_h <= 0:
