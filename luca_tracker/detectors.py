@@ -331,7 +331,8 @@ def _compute_detection_confidence(
         minor_axis = min(detection.ellipse_axes)
         axis_ratio = major_axis / minor_axis
         axis_ratio_score = _clip01(1.0 / axis_ratio)
-    shape_score = 0.7 * circularity_score + 0.3 * axis_ratio_score
+    solidity_score = _clip01(_contour_solidity(contour, detection.area))
+    shape_score = 0.55 * circularity_score + 0.25 * axis_ratio_score + 0.20 * solidity_score
 
     # Cechy jasności: średnia jasność obiektu + kontrast względem lokalnego tła.
     gray_roi = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
@@ -351,6 +352,8 @@ def _compute_detection_confidence(
     size_error = abs(float(detection.area) - ref_area) / ref_area
     size_stability_score = _clip01(1.0 - size_error)
 
+    # Finalne confidence łączy trzy grupy cech; wagi preferują geometrię,
+    # ale nadal premiują jasny i stabilny rozmiar plamki.
     confidence = 0.45 * shape_score + 0.35 * brightness_score + 0.20 * size_stability_score
     return _clip01(confidence)
 

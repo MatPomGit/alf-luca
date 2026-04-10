@@ -348,25 +348,27 @@ def choose_main_track(track_histories: Dict[int, Dict], selection_mode: str) -> 
     scored = []
     for tid, data in track_histories.items():
         metrics = _compute_track_metrics_local(data["points"])
-        # Kara rośnie wraz ze spadkiem mediany confidence i obniża ranking torów niskiej jakości.
-        confidence_penalty = max(0.0, 1.0 - metrics["median_confidence"])
+        # Kara rośnie przy niskiej medianie confidence oraz słabej spójności confidence.
+        confidence_penalty = max(0.0, 0.7 - metrics["median_confidence"])
+        confidence_spread_penalty = max(0.0, 0.6 - metrics["confidence_consistency"])
+        low_confidence_penalty = metrics["low_confidence_ratio"]
         if selection_mode == "largest":
             key = (
                 -metrics["mean_area"],
-                confidence_penalty,
+                confidence_penalty + confidence_spread_penalty + low_confidence_penalty,
                 -metrics["mean_confidence"],
                 -metrics["detections"],
             )
         elif selection_mode == "longest":
             key = (
                 -metrics["detections"],
-                confidence_penalty,
+                confidence_penalty + confidence_spread_penalty + low_confidence_penalty,
                 -metrics["mean_confidence"],
                 metrics["mean_step"],
             )
         elif selection_mode == "stablest":
             key = (
-                metrics["stability_score"] + 2.0 * confidence_penalty,
+                metrics["stability_score"] + 1.8 * confidence_penalty + 1.2 * confidence_spread_penalty + low_confidence_penalty,
                 -metrics["confidence_consistency"],
                 -metrics["detections"],
             )
@@ -403,13 +405,18 @@ def _compute_track_metrics_local(points: List[TrackPoint]) -> Dict[str, float]:
     if confidence_values:
         mean_confidence = float(sum(confidence_values) / len(confidence_values))
         confidence_p25 = float(np.percentile(confidence_values, 25))
+        confidence_p10 = float(np.percentile(confidence_values, 10))
         median_confidence = float(np.percentile(confidence_values, 50))
         confidence_consistency = float(max(0.0, 1.0 - np.std(confidence_values)))
+        # Udział detekcji o confidence < 0.5 pomaga odsiać niestabilne tory.
+        low_confidence_ratio = float(sum(1 for value in confidence_values if value < 0.5) / len(confidence_values))
     else:
         mean_confidence = 0.0
         confidence_p25 = 0.0
+        confidence_p10 = 0.0
         median_confidence = 0.0
         confidence_consistency = 0.0
+        low_confidence_ratio = 1.0
 
     return {
         "mean_area": mean_area,
@@ -418,8 +425,10 @@ def _compute_track_metrics_local(points: List[TrackPoint]) -> Dict[str, float]:
         "stability_score": stability_score,
         "mean_confidence": mean_confidence,
         "confidence_p25": confidence_p25,
+        "confidence_p10": confidence_p10,
         "median_confidence": median_confidence,
         "confidence_consistency": confidence_consistency,
+        "low_confidence_ratio": low_confidence_ratio,
     }
 
 

@@ -58,9 +58,11 @@ PROFILE_METRICS = {
         "max_radius",
         "mean_circularity",
         "mean_confidence",
+        "p10_confidence",
         "p25_confidence",
         "median_confidence",
         "confidence_consistency",
+        "low_confidence_ratio",
     ),
     "research": (
         "frames_total",
@@ -81,9 +83,11 @@ PROFILE_METRICS = {
         "max_radius",
         "mean_circularity",
         "mean_confidence",
+        "p10_confidence",
         "p25_confidence",
         "median_confidence",
         "confidence_consistency",
+        "low_confidence_ratio",
         "mae_px",
         "rmse_px",
         "p95_error_px",
@@ -102,9 +106,11 @@ def compute_track_metrics(points: Sequence[TrackPoint]) -> Dict[str, float]:
         "mean_area": 0.0,
         "mean_circularity": 0.0,
         "mean_confidence": 0.0,
+        "p10_confidence": 0.0,
         "p25_confidence": 0.0,
         "median_confidence": 0.0,
         "confidence_consistency": 0.0,
+        "low_confidence_ratio": 0.0,
         "stability_score": float("inf"),
     }
     if not detected:
@@ -127,10 +133,13 @@ def compute_track_metrics(points: Sequence[TrackPoint]) -> Dict[str, float]:
     confidences = [float(p.confidence) for p in detected if p.confidence is not None]
     if confidences:
         metrics["mean_confidence"] = float(np.mean(confidences))
+        metrics["p10_confidence"] = float(np.percentile(confidences, 10))
         metrics["p25_confidence"] = float(np.percentile(confidences, 25))
         metrics["median_confidence"] = float(np.percentile(confidences, 50))
         # Wysoka spójność = małe rozrzuty confidence pomiędzy detekcjami.
         metrics["confidence_consistency"] = float(max(0.0, 1.0 - np.std(confidences)))
+        # Udział słabych detekcji ułatwia diagnozę "migoczących" torów.
+        metrics["low_confidence_ratio"] = float(sum(1 for val in confidences if val < 0.5) / len(confidences))
 
     metrics["stability_score"] = float(
         metrics["mean_step"] * 2.0
@@ -408,9 +417,11 @@ def metrics_from_points_with_profile(
         "max_radius": float(max(radii)) if radii else 0.0,
         "mean_circularity": float(sum(circs) / len(circs)) if circs else 0.0,
         "mean_confidence": float(np.mean(confidences)) if confidences else 0.0,
+        "p10_confidence": float(np.percentile(confidences, 10)) if confidences else 0.0,
         "p25_confidence": float(np.percentile(confidences, 25)) if confidences else 0.0,
         "median_confidence": float(np.percentile(confidences, 50)) if confidences else 0.0,
         "confidence_consistency": float(max(0.0, 1.0 - np.std(confidences))) if confidences else 0.0,
+        "low_confidence_ratio": float(sum(1 for val in confidences if val < 0.5) / len(confidences)) if confidences else 0.0,
     }
     all_metrics.update(_compute_reference_errors(ordered, reference_points))
 
