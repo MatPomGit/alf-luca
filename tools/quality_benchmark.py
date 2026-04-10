@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+
 def parse_args() -> argparse.Namespace:
     """Parsuje argumenty CLI benchmarku jakości śledzenia."""
     parser = argparse.ArgumentParser(
@@ -36,13 +37,17 @@ def parse_args() -> argparse.Namespace:
         help="Etykieta porównawcza (np. before_refactor, after_refactor).",
     )
     parser.add_argument(
+        "--baseline-csv",
+        default=None,
+        help="Opcjonalny CSV bazowy (np. run 'before') do raportu różnic 'przed/po'.",
+    )
+    parser.add_argument(
         "--limit-scenarios",
         type=int,
         default=None,
         help="Opcjonalny limit liczby scenariuszy (przydatne do szybkiego smoke testu).",
     )
     return parser.parse_args()
-
 
 
 def import_pipeline_modules():
@@ -251,6 +256,7 @@ def run_single_case(
         "scenario_name": scenario_name,
         "video": str(video_path),
         "tags": ",".join(scenario.get("tags", [])),
+        "notes": scenario.get("notes", ""),
         "config_name": config_name,
         "config_json": json.dumps(config_values, ensure_ascii=False, sort_keys=True),
         **metrics,
@@ -270,6 +276,7 @@ def write_csv(rows: Iterable[Dict[str, Any]], csv_path: Path) -> None:
         "scenario_name",
         "video",
         "tags",
+        "notes",
         "config_name",
         "frames_total",
         "main_detections",
@@ -287,8 +294,36 @@ def write_csv(rows: Iterable[Dict[str, Any]], csv_path: Path) -> None:
             writer.writerow(row)
 
 
-def write_markdown_report(rows: Sequence[Dict[str, Any]], report_path: Path) -> None:
+def load_baseline_rows(baseline_csv: Optional[str]) -> Dict[Tuple[str, str], Dict[str, float]]:
+    """Wczytuje opcjonalny plik bazowy i indeksuje go po (scenario_name, config_name)."""
+    if not baseline_csv:
+        return {}
+
+    baseline_path = Path(baseline_csv)
+    if not baseline_path.exists():
+        raise FileNotFoundError(f"Nie znaleziono pliku --baseline-csv: {baseline_path}")
+
+    indexed: Dict[Tuple[str, str], Dict[str, float]] = {}
+    with baseline_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            key = (str(row.get("scenario_name", "")), str(row.get("config_name", "")))
+            if not all(key):
+                continue
+            indexed[key] = {
+                "false_detections_per_frame": float(row.get("false_detections_per_frame", 0.0) or 0.0),
+                "stable_track_len_frames": float(row.get("stable_track_len_frames", 0.0) or 0.0),
+                "track_id_switches": float(row.get("track_id_switches", 0.0) or 0.0),
+                "kalman_predicted_share": float(row.get("kalman_predicted_share", 0.0) or 0.0),
+            }
+    return indexed
+
+
+def write_markdown_report(
+    rows: Sequence[Dict[str, Any]], report_path: Path, baseline_rows: Optional[Dict[Tuple[str, str], Dict[str, float]]] = None
+) -> None:
     """Generuje krótki raport Markdown z tabelą metryk do szybkiego porównania."""
+    baseline_rows = baseline_rows or {}
     lines: List[str] = []
     lines.append("# Raport benchmarku jakości śledzenia")
     lines.append("")
@@ -301,20 +336,53 @@ def write_markdown_report(rows: Sequence[Dict[str, Any]], report_path: Path) -> 
     lines.append("")
     lines.append("## Wyniki")
     lines.append("")
-    lines.append("| scenario | config | false/frame | stable_len | switches | kalman_share |")
-    lines.append("|---|---:|---:|---:|---:|---:|")
+
+    has_baseline = bool(baseline_rows)
+    if has_baseline:
+        lines.append("Porównanie z baseline: Δ = aktualny - bazowy (dla `false/frame` i `switches` wartości ujemne są korzystne).")
+        lines.append("")
+        lines.append(
+            "| scenario | config | false/frame | Δfalse | stable_len | Δstable | switches | Δswitches | kalman_share | Δkalman |"
+        )
+        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    else:
+        lines.append("| scenario | config | false/frame | stable_len | switches | kalman_share |")
+        lines.append("|---|---:|---:|---:|---:|---:|")
 
     for row in rows:
-        lines.append(
-            "| {scenario} | {config} | {false_rate:.4f} | {stable_len:.0f} | {switches:.0f} | {kalman_share:.4f} |".format(
-                scenario=row["scenario_name"],
-                config=row["config_name"],
-                false_rate=float(row["false_detections_per_frame"]),
-                stable_len=float(row["stable_track_len_frames"]),
-                switches=float(row["track_id_switches"]),
-                kalman_share=float(row["kalman_predicted_share"]),
+        key = (str(row["scenario_name"]), str(row["config_name"]))
+        if has_baseline and key in baseline_rows:
+            baseline = baseline_rows[key]
+            delta_false = float(row["false_detections_per_frame"]) - baseline["false_detections_per_frame"]
+            delta_stable = float(row["stable_track_len_frames"]) - baseline["stable_track_len_frames"]
+            delta_switches = float(row["track_id_switches"]) - baseline["track_id_switches"]
+            delta_kalman = float(row["kalman_predicted_share"]) - baseline["kalman_predicted_share"]
+            lines.append(
+                "| {scenario} | {config} | {false_rate:.4f} | {delta_false:+.4f} | {stable_len:.0f} | {delta_stable:+.0f} | "
+                "{switches:.0f} | {delta_switches:+.0f} | {kalman_share:.4f} | {delta_kalman:+.4f} |".format(
+                    scenario=row["scenario_name"],
+                    config=row["config_name"],
+                    false_rate=float(row["false_detections_per_frame"]),
+                    delta_false=delta_false,
+                    stable_len=float(row["stable_track_len_frames"]),
+                    delta_stable=delta_stable,
+                    switches=float(row["track_id_switches"]),
+                    delta_switches=delta_switches,
+                    kalman_share=float(row["kalman_predicted_share"]),
+                    delta_kalman=delta_kalman,
+                )
             )
-        )
+        else:
+            lines.append(
+                "| {scenario} | {config} | {false_rate:.4f} | {stable_len:.0f} | {switches:.0f} | {kalman_share:.4f} |".format(
+                    scenario=row["scenario_name"],
+                    config=row["config_name"],
+                    false_rate=float(row["false_detections_per_frame"]),
+                    stable_len=float(row["stable_track_len_frames"]),
+                    switches=float(row["track_id_switches"]),
+                    kalman_share=float(row["kalman_predicted_share"]),
+                )
+            )
 
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -353,7 +421,9 @@ def main() -> int:
     csv_path = run_dir / "benchmark_summary.csv"
     md_path = run_dir / "benchmark_report.md"
     write_csv(rows, csv_path)
-    write_markdown_report(rows, md_path)
+
+    baseline_rows = load_baseline_rows(args.baseline_csv)
+    write_markdown_report(rows, md_path, baseline_rows=baseline_rows)
 
     print(f"[OK] CSV: {csv_path}")
     print(f"[OK] MD:  {md_path}")
