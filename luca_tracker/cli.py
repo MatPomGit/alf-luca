@@ -26,6 +26,7 @@ DEFAULT_GUI_COLOR_NAMES = ["red", "green", "blue", "white", "yellow"]
 DEFAULT_GUI_SELECTION_MODES = ["largest", "stablest", "longest"]
 DEFAULT_MP4_QUALITY_TOOL_PATH = "tools/video_tool.py"
 DEFAULT_CONSOLE_CLOSE_TIMEOUT_SEC = 4
+LEGACY_EXIT_ENV_VAR = "LUCA_CLI_LEGACY_EXIT_BEHAVIOR"
 
 
 def _load_gui_metadata() -> tuple[List[str], List[str], str]:
@@ -59,6 +60,11 @@ def build_parser():
     p_cal.add_argument("--cols", type=int, default=9, help="Liczba wewnętrznych narożników w kolumnie")
     p_cal.add_argument("--square_size", type=float, default=1.0, help="Rozmiar pola szachownicy")
     p_cal.add_argument("--output_file", default="camera_calib.npz", help="Plik wynikowy .npz")
+    p_cal.add_argument(
+        "--interactive-shell",
+        action="store_true",
+        help="Legacy: po zakończeniu zadania odtwórz dźwięk i odczekaj przed zamknięciem konsoli.",
+    )
 
     p_track = subparsers.add_parser("track", help="Śledzenie plamki")
     p_track.add_argument("--config", help="Pełna konfiguracja uruchomienia z pliku JSON/YAML (.json/.yaml/.yml)")
@@ -156,12 +162,22 @@ def build_parser():
     p_track.add_argument("--pnp_object_points", help="Punkty 3D świata dla PnP w formacie X,Y,Z;X,Y,Z;... (min. 4)")
     p_track.add_argument("--pnp_image_points", help="Punkty 2D obrazu dla PnP w formacie x,y;x,y;... (min. 4)")
     p_track.add_argument("--pnp_world_plane_z", type=float, default=0.0, help="Wysokość płaszczyzny świata Z dla rekonstrukcji XYZ")
+    p_track.add_argument(
+        "--interactive-shell",
+        action="store_true",
+        help="Legacy: po zakończeniu zadania odtwórz dźwięk i odczekaj przed zamknięciem konsoli.",
+    )
 
     p_cmp = subparsers.add_parser("compare", help="Porównanie dwóch CSV")
     p_cmp.add_argument("--reference", required=True, help="Referencyjny CSV")
     p_cmp.add_argument("--candidate", required=True, help="Porównywany CSV")
     p_cmp.add_argument("--output_csv", required=True, help="Wyjściowy CSV różnic")
     p_cmp.add_argument("--report_pdf", help="Opcjonalny raport PDF")
+    p_cmp.add_argument(
+        "--interactive-shell",
+        action="store_true",
+        help="Legacy: po zakończeniu zadania odtwórz dźwięk i odczekaj przed zamknięciem konsoli.",
+    )
 
     p_gui = subparsers.add_parser("gui", help="GUI do strojenia parametrów i podglądu w czasie rzeczywistym")
     p_gui.add_argument("--video", help="Opcjonalny plik wejściowy wideo (np. MP4/MKV/AVI/MOV/WEBM; domyślnie ładowane są pliki z folderu video/)")
@@ -289,6 +305,38 @@ def pick_default_gui_video() -> Optional[str]:
     return None
 
 
+def _is_env_truthy(value: Optional[str]) -> bool:
+    """Zwraca True, gdy wartość ENV reprezentuje stan włączony."""
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _should_use_legacy_exit_behavior(args: argparse.Namespace) -> bool:
+    """Wybiera legacy zachowanie shella wyłącznie po jawnej zgodzie flagą lub ENV."""
+    if getattr(args, "interactive_shell", False):
+        return True
+    return _is_env_truthy(os.getenv(LEGACY_EXIT_ENV_VAR))
+
+
+def _handle_post_command_exit_behavior(args: argparse.Namespace) -> None:
+    """Obsługuje końcowe zachowanie CLI po wykonaniu komend analitycznych."""
+    if args.command not in {"calibrate", "track", "compare"}:
+        return
+
+    print("\n[OK] Analiza zakończona pomyślnie.")
+
+    # Tryb domyślny (CI i skrypty) kończy proces natychmiast bez efektów ubocznych terminala.
+    if not _should_use_legacy_exit_behavior(args):
+        return
+
+    # Legacy: zachowujemy sygnał dźwiękowy i opóźnienie tylko dla jawnie włączonego trybu.
+    print("\a\a", end="")
+    timeout_sec = int(os.getenv("LUCA_CONSOLE_CLOSE_TIMEOUT", DEFAULT_CONSOLE_CLOSE_TIMEOUT_SEC))
+    print(f"[INFO] Okno konsoli zostanie zamknięte za {timeout_sec} s.")
+    time.sleep(max(0, timeout_sec))
+
+
 def main():
     # Parser i argumenty CLI są przetwarzane bez importu ciężkich modułów.
     parser = build_parser()
@@ -336,11 +384,4 @@ def main():
     else:
         parser.print_help()
 
-    if args.command in {"calibrate", "track", "compare"}:
-        print("\n[OK] Analiza zakończona pomyślnie.")
-        print("\a\a", end="")
-        timeout_sec = int(os.getenv("LUCA_CONSOLE_CLOSE_TIMEOUT", DEFAULT_CONSOLE_CLOSE_TIMEOUT_SEC))
-        print(f"[INFO] Okno konsoli zostanie zamknięte za {timeout_sec} s.")
-        time.sleep(max(0, timeout_sec))
-        if os.name == "nt":
-            os.system("exit")
+    _handle_post_command_exit_behavior(args)
