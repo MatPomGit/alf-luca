@@ -152,6 +152,27 @@ python -m luca_tracker ros2 \
   --display
 ```
 
+Przykład dla wymagania „detector_node + pozycja 2D/3D wybranego ID”:
+
+```bash
+python -m luca_tracker ros2 \
+  --node_name detector_node \
+  --camera_index 0 \
+  --topic /luca_tracker/tracking \
+  --spot_id 0 \
+  --calib_file camera_calib.npz \
+  --pnp_object_points "0,0,0;1,0,0;1,1,0;0,1,0" \
+  --pnp_image_points "120,210;520,205;525,470;115,475" \
+  --pnp_world_plane_z 0.0 \
+  --fps 30 \
+  --display
+```
+
+Publikowany JSON na topicu zawiera m.in. pola:
+- `spot_id`, `detected`, `x`, `y` (współrzędne ekranowe),
+- `x_world`, `y_world`, `z_world` (współrzędne 3D),
+- `frame_index`, `time_sec`, `detections_count`.
+
 ### 7) Gotowe skrypty startowe (Linux/macOS)
 
 ```bash

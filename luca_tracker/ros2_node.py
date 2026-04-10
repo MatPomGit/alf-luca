@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Union
 
 import cv2
+import numpy as np
 
 from .detector_interfaces import DetectorConfig
 from .detectors import detect_spots_with_config
@@ -17,8 +18,13 @@ class Ros2TrackerConfig:
     """Konfiguracja uruchomienia node ROS2 dla strumienia z kamery fizycznej."""
 
     video_source: Union[int, str] = "/dev/video0"
-    node_name: str = "luca_tracker_node"
+    node_name: str = "detector_node"
     topic: str = "/luca_tracker/tracking"
+    spot_id: int = 0
+    calib_file: Optional[str] = None
+    pnp_object_points: Optional[str] = None
+    pnp_image_points: Optional[str] = None
+    pnp_world_plane_z: float = 0.0
     fps: float = 30.0
     frame_width: int = 0
     frame_height: int = 0
@@ -57,8 +63,13 @@ def _resolve_ros2_config(args_or_config: Any) -> Ros2TrackerConfig:
 
     return Ros2TrackerConfig(
         video_source=video_source,
-        node_name=getattr(args_or_config, "node_name", "luca_tracker_node"),
+        node_name=getattr(args_or_config, "node_name", "detector_node"),
         topic=getattr(args_or_config, "topic", "/luca_tracker/tracking"),
+        spot_id=max(0, int(getattr(args_or_config, "spot_id", 0))),
+        calib_file=getattr(args_or_config, "calib_file", None),
+        pnp_object_points=getattr(args_or_config, "pnp_object_points", None),
+        pnp_image_points=getattr(args_or_config, "pnp_image_points", None),
+        pnp_world_plane_z=float(getattr(args_or_config, "pnp_world_plane_z", 0.0)),
         fps=float(getattr(args_or_config, "fps", 30.0)),
         frame_width=int(getattr(args_or_config, "frame_width", 0) or 0),
         frame_height=int(getattr(args_or_config, "frame_height", 0) or 0),
@@ -101,6 +112,100 @@ def _resolve_ros2_config(args_or_config: Any) -> Ros2TrackerConfig:
     )
 
 
+def _parse_point_series(raw: Optional[str], expected_dims: int, label: str) -> Optional[np.ndarray]:
+    """Parsuje listę punktów zapisaną jako `a,b; c,d; ...` do tablicy NumPy."""
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    points = []
+    for chunk in text.split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        values = [float(v.strip()) for v in chunk.split(",")]
+        if len(values) != expected_dims:
+            raise ValueError(f"Nieprawidłowy format {label}. Oczekiwano {expected_dims} liczb na punkt.")
+        points.append(values)
+    if len(points) < 4:
+        raise ValueError(f"Do estymacji PnP potrzeba co najmniej 4 punktów referencyjnych: {label}.")
+    return np.asarray(points, dtype=np.float64)
+
+
+def _estimate_pnp_pose(
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+    object_points_raw: Optional[str],
+    image_points_raw: Optional[str],
+) -> Optional[tuple[np.ndarray, np.ndarray]]:
+    """Wyznacza pozycję kamery (rvec/tvec) dla mapowania punktów 2D -> 3D."""
+    object_points = _parse_point_series(object_points_raw, expected_dims=3, label="pnp_object_points")
+    image_points = _parse_point_series(image_points_raw, expected_dims=2, label="pnp_image_points")
+    if object_points is None or image_points is None:
+        return None
+    if len(object_points) != len(image_points):
+        raise ValueError("Liczba punktów `pnp_object_points` i `pnp_image_points` musi być identyczna.")
+
+    ok, rvec, tvec, _ = cv2.solvePnPRansac(
+        objectPoints=object_points,
+        imagePoints=image_points,
+        cameraMatrix=camera_matrix,
+        distCoeffs=dist_coeffs,
+        reprojectionError=3.0,
+        confidence=0.995,
+        flags=cv2.SOLVEPNP_ITERATIVE,
+    )
+    if not ok:
+        ok, rvec, tvec = cv2.solvePnP(
+            objectPoints=object_points,
+            imagePoints=image_points,
+            cameraMatrix=camera_matrix,
+            distCoeffs=dist_coeffs,
+            flags=cv2.SOLVEPNP_ITERATIVE,
+        )
+    if not ok:
+        raise RuntimeError("Nie udało się wyznaczyć pozycji kamery metodą solvePnP/solvePnPRansac.")
+    rvec, tvec = cv2.solvePnPRefineLM(
+        objectPoints=object_points,
+        imagePoints=image_points,
+        cameraMatrix=camera_matrix,
+        distCoeffs=dist_coeffs,
+        rvec=rvec,
+        tvec=tvec,
+    )
+    return rvec, tvec
+
+
+def _pixel_to_world_on_plane(
+    x_px: float,
+    y_px: float,
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+    rvec: np.ndarray,
+    tvec: np.ndarray,
+    plane_z: float,
+) -> Optional[tuple[float, float, float]]:
+    """Przelicza punkt obrazu (piksel) na współrzędne 3D przez przecięcie z płaszczyzną Z."""
+    rotation_matrix, _ = cv2.Rodrigues(rvec)
+    rotation_t = rotation_matrix.T
+    undistorted = cv2.undistortPoints(
+        src=np.array([[[x_px, y_px]]], dtype=np.float64),
+        cameraMatrix=camera_matrix,
+        distCoeffs=dist_coeffs,
+    )
+    x_norm, y_norm = undistorted[0, 0]
+    direction_camera = np.array([[x_norm], [y_norm], [1.0]], dtype=np.float64)
+    direction_world = rotation_t @ direction_camera
+    camera_center_world = -rotation_t @ tvec
+    denom = float(direction_world[2, 0])
+    if math.isclose(denom, 0.0, abs_tol=1e-12):
+        return None
+    scale = (plane_z - float(camera_center_world[2, 0])) / denom
+    point_world = camera_center_world + direction_world * scale
+    return float(point_world[0, 0]), float(point_world[1, 0]), float(point_world[2, 0])
+
+
 class _Ros2TrackerRuntime:
     """Warstwa runtime spinana z obiektem Node, publikująca dane per klatka."""
 
@@ -120,6 +225,10 @@ class _Ros2TrackerRuntime:
         self._prev_error_norm_x = 0.0
         self._prev_linear_cmd = 0.0
         self._prev_angular_cmd = 0.0
+        self._camera_matrix: Optional[np.ndarray] = None
+        self._dist_coeffs: Optional[np.ndarray] = None
+        self._pnp_rvec: Optional[np.ndarray] = None
+        self._pnp_tvec: Optional[np.ndarray] = None
         self.cap = cv2.VideoCapture(config.video_source)
 
         if not self.cap.isOpened():
@@ -132,6 +241,7 @@ class _Ros2TrackerRuntime:
 
         timer_period = 1.0 / max(config.fps, 1.0)
         self.timer = node.create_timer(timer_period, self._on_timer)
+        self._init_world_projection()
         node.get_logger().info(
             (
                 f"ROS2 tracking start | source={config.video_source}, "
@@ -157,8 +267,52 @@ class _Ros2TrackerRuntime:
                     f"a_lin_max={self.config.turtle_linear_accel_limit}, "
                     f"a_ang_max={self.config.turtle_angular_accel_limit}, "
                     f"log_N={self.config.turtle_log_every_n_frames}"
-                )
             )
+        )
+
+    def _init_world_projection(self) -> None:
+        """Ładuje kalibrację i przygotowuje estymację PnP do publikacji XYZ."""
+        if not self.config.calib_file:
+            return
+        data = np.load(self.config.calib_file)
+        if "camera_matrix" not in data or "dist_coeffs" not in data:
+            raise RuntimeError("Plik kalibracji musi zawierać pola `camera_matrix` i `dist_coeffs`.")
+        self._camera_matrix = np.asarray(data["camera_matrix"], dtype=np.float64)
+        self._dist_coeffs = np.asarray(data["dist_coeffs"], dtype=np.float64)
+        self.node.get_logger().info(f"Wczytano kalibrację: {self.config.calib_file}")
+
+        if self.config.pnp_object_points and self.config.pnp_image_points:
+            self._pnp_rvec, self._pnp_tvec = _estimate_pnp_pose(
+                camera_matrix=self._camera_matrix,
+                dist_coeffs=self._dist_coeffs,
+                object_points_raw=self.config.pnp_object_points,
+                image_points_raw=self.config.pnp_image_points,
+            )
+            self.node.get_logger().info("Włączono rekonstrukcję XYZ (PnP + przecięcie z płaszczyzną świata).")
+
+    def _compute_world_xyz(self, x_px: Optional[float], y_px: Optional[float]) -> tuple[Optional[float], Optional[float], Optional[float]]:
+        """Wylicza współrzędne świata XYZ dla bieżącego punktu detekcji."""
+        if (
+            x_px is None
+            or y_px is None
+            or self._camera_matrix is None
+            or self._dist_coeffs is None
+            or self._pnp_rvec is None
+            or self._pnp_tvec is None
+        ):
+            return None, None, None
+        world = _pixel_to_world_on_plane(
+            x_px=x_px,
+            y_px=y_px,
+            camera_matrix=self._camera_matrix,
+            dist_coeffs=self._dist_coeffs,
+            rvec=self._pnp_rvec,
+            tvec=self._pnp_tvec,
+            plane_z=self.config.pnp_world_plane_z,
+        )
+        if world is None:
+            return None, None, None
+        return world
 
     @staticmethod
     def _clamp(value: float, vmin: float, vmax: float) -> float:
@@ -306,7 +460,10 @@ class _Ros2TrackerRuntime:
         self._warned_capture_failure = False
 
         detections, _, roi_box = detect_spots_with_config(frame, self.config.detector)
-        best = detections[0] if detections else None
+        best = detections[self.config.spot_id] if len(detections) > self.config.spot_id else None
+        x_px = float(best.x) if best else None
+        y_px = float(best.y) if best else None
+        x_world, y_world, z_world = self._compute_world_xyz(x_px=x_px, y_px=y_px)
         turtle_linear_cmd, turtle_angular_cmd, turtle_target_reached, turtle_debug = self._publish_turtle_cmd(
             best, frame.shape[1], frame.shape[0]
         )
@@ -319,11 +476,15 @@ class _Ros2TrackerRuntime:
             "time_sec": time.monotonic() - self.start_time,
             "source": str(self.config.video_source),
             "track_mode": self.config.detector.track_mode,
+            "spot_id": int(self.config.spot_id),
             "detected": best is not None,
             "roi": {"x": int(roi_box[0]), "y": int(roi_box[1]), "w": int(roi_box[2]), "h": int(roi_box[3])},
             "detections_count": len(detections),
-            "x": float(best.x) if best else None,
-            "y": float(best.y) if best else None,
+            "x": x_px,
+            "y": y_px,
+            "x_world": x_world,
+            "y_world": y_world,
+            "z_world": z_world,
             "area": float(best.area) if best else None,
             "radius": float(best.radius) if best else None,
             "rank": int(best.rank) if best and best.rank is not None else None,
