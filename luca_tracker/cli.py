@@ -83,19 +83,10 @@ def build_parser():
         "--adaptive_block_size",
         type=int,
         default=31,
-        help="Rozmiar okna dla progowania adaptacyjnego (wartość nieparzysta >= 3).",
+        help="Rozmiar okna dla progowania adaptacyjnego (nieparzysty, >=3).",
     )
-    p_track.add_argument(
-        "--adaptive_c",
-        type=float,
-        default=5.0,
-        help="Stała odejmowana w progowaniu adaptacyjnym (większa wartość = bardziej restrykcyjna maska).",
-    )
-    p_track.add_argument(
-        "--use_clahe",
-        action="store_true",
-        help="Włącz lokalną normalizację kontrastu (CLAHE) przed progowaniem jasności.",
-    )
+    p_track.add_argument("--adaptive_c", type=float, default=5.0, help="Stała C odejmowana w progu adaptacyjnym.")
+    p_track.add_argument("--use_clahe", action="store_true", help="Włącz CLAHE przed progowaniem (normalizacja lokalnego kontrastu).")
     p_track.add_argument("--blur", type=int, default=11, help="Rozmiar filtra Gaussa")
     p_track.add_argument("--min_area", type=float, default=10.0, help="Minimalne pole plamki")
     p_track.add_argument("--max_area", type=float, default=0.0, help="Maksymalne pole plamki, 0 = brak")
@@ -251,19 +242,10 @@ def build_parser():
         "--adaptive_block_size",
         type=int,
         default=31,
-        help="Rozmiar okna dla progowania adaptacyjnego (wartość nieparzysta >= 3).",
+        help="Rozmiar okna dla progowania adaptacyjnego (nieparzysty, >=3).",
     )
-    p_ros2.add_argument(
-        "--adaptive_c",
-        type=float,
-        default=5.0,
-        help="Stała odejmowana w progowaniu adaptacyjnym.",
-    )
-    p_ros2.add_argument(
-        "--use_clahe",
-        action="store_true",
-        help="Włącz lokalną normalizację kontrastu (CLAHE) przed progowaniem jasności.",
-    )
+    p_ros2.add_argument("--adaptive_c", type=float, default=5.0, help="Stała C odejmowana w progu adaptacyjnym.")
+    p_ros2.add_argument("--use_clahe", action="store_true", help="Włącz CLAHE przed progowaniem (normalizacja lokalnego kontrastu).")
     p_ros2.add_argument("--blur", type=int, default=11, help="Rozmiar filtra Gaussa")
     p_ros2.add_argument("--min_area", type=float, default=10.0, help="Minimalne pole plamki")
     p_ros2.add_argument("--max_area", type=float, default=0.0, help="Maksymalne pole plamki, 0 = brak")

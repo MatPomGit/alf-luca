@@ -23,7 +23,7 @@ class DetectorConfig:
 
     track_mode: str = "brightness"
     blur: int = 11
-    threshold: int = 200
+    threshold: int = 230
     threshold_mode: str = "fixed"
     adaptive_block_size: int = 31
     adaptive_c: float = 5.0

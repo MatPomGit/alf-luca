@@ -107,7 +107,13 @@ class BrightnessDetector(BaseDetector):
                 adaptive_block_size,
                 adaptive_c,
             )
-        return _apply_morphology(mask, erode_iter=self.config.erode_iter, dilate_iter=self.config.dilate_iter)
+        return _apply_morphology(
+            mask,
+            erode_iter=self.config.erode_iter,
+            dilate_iter=self.config.dilate_iter,
+            opening_kernel=self.config.opening_kernel,
+            closing_kernel=self.config.closing_kernel,
+        )
 
 
 class ColorDetector(BaseDetector):
