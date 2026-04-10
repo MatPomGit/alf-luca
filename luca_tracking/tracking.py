@@ -19,7 +19,8 @@ from luca_processing.detectors import (
     parse_hsv_pair,
     parse_roi,
 )
-from luca_tracking.pipeline import calibrate_camera, track_video
+from luca_camera import calibrate_camera
+from luca_tracking.pipeline import track_video
 from luca_processing.postprocess import apply_kalman_to_points
 from luca_reporting.reports import compute_track_metrics, generate_trajectory_png, metrics_from_points, save_all_tracks_csv, save_metrics_csv, save_track_csv, save_track_report_pdf
 from luca_tracking.tracker_core import SimpleMultiTracker, SingleObjectEKFTracker, choose_main_track

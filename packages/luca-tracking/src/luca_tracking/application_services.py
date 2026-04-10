@@ -10,7 +10,8 @@ from luca_input.io_paths import (
     with_default,
 )
 from luca_reporting.reports import compare_csv
-from luca_tracking.pipeline import calibrate_camera, track_video
+from luca_camera import calibrate_camera
+from luca_tracking.pipeline import track_video
 from luca_publishing.ros2_node import run_ros2_tracker_node
 from luca_types.config_model import load_run_config
 from luca_input.pipeline_config_mapping import run_config_to_pipeline_config
