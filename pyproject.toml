@@ -1,0 +1,11 @@
+[tool.uv.workspace]
+members = [
+  "packages/luca-types",
+  "packages/luca-input",
+  "packages/luca-camera",
+  "packages/luca-processing",
+  "packages/luca-tracking",
+  "packages/luca-reporting",
+  "packages/luca-publishing",
+  "luca_tracker",
+]
