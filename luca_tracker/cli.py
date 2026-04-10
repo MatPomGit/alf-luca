@@ -91,6 +91,30 @@ def build_parser():
     p_track.add_argument("--blur", type=int, default=11, help="Rozmiar filtra Gaussa")
     p_track.add_argument("--min_area", type=float, default=10.0, help="Minimalne pole plamki")
     p_track.add_argument("--max_area", type=float, default=0.0, help="Maksymalne pole plamki, 0 = brak")
+    p_track.add_argument(
+        "--min_circularity",
+        type=float,
+        default=0.0,
+        help="Minimalna kolistość (0..1); wyższa wartość redukuje fałszywe trafienia o nieregularnym kształcie.",
+    )
+    p_track.add_argument(
+        "--max_aspect_ratio",
+        type=float,
+        default=6.0,
+        help="Maksymalny stosunek boków bbox; niższa wartość odrzuca podłużne artefakty i smugi.",
+    )
+    p_track.add_argument(
+        "--min_peak_intensity",
+        type=float,
+        default=0.0,
+        help="Minimalna jasność lokalnego maksimum (0..255); zwiększenie odcina słabe odblaski i szum.",
+    )
+    p_track.add_argument(
+        "--min_solidity",
+        type=float,
+        default=None,
+        help="Opcjonalna minimalna zwartość konturu (0..1); pomaga usuwać mocno postrzępione/wnękowe kształty.",
+    )
     p_track.add_argument("--erode_iter", type=int, default=2, help="Liczba iteracji erozji")
     p_track.add_argument("--dilate_iter", type=int, default=4, help="Liczba iteracji dylatacji")
     p_track.add_argument("--opening_kernel", type=int, default=0, help="Rozmiar jądra opening (0/1 = wyłączone)")
@@ -141,6 +165,10 @@ def build_parser():
     p_gui.add_argument("--blur", type=int, default=11)
     p_gui.add_argument("--min_area", type=float, default=10.0)
     p_gui.add_argument("--max_area", type=float, default=0.0)
+    p_gui.add_argument("--min_circularity", type=float, default=0.0)
+    p_gui.add_argument("--max_aspect_ratio", type=float, default=6.0)
+    p_gui.add_argument("--min_peak_intensity", type=float, default=0.0)
+    p_gui.add_argument("--min_solidity", type=float, default=None)
     p_gui.add_argument("--erode_iter", type=int, default=2)
     p_gui.add_argument("--dilate_iter", type=int, default=4)
     p_gui.add_argument("--roi", help="Obszar ROI x,y,w,h")
