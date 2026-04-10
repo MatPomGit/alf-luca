@@ -160,6 +160,7 @@ python -m luca_tracker ros2 \
   --camera_index 0 \
   --topic /luca_tracker/tracking \
   --spot_id 0 \
+  --run_metadata_json output/example.run.json \
   --calib_file camera_calib.npz \
   --pnp_object_points "0,0,0;1,0,0;1,1,0;0,1,0" \
   --pnp_image_points "120,210;520,205;525,470;115,475" \
@@ -169,9 +170,63 @@ python -m luca_tracker ros2 \
 ```
 
 Publikowany JSON na topicu zawiera m.in. pola:
+- `schema` (wersja kontraktu wiadomości, konfigurowana przez `--message_schema`),
 - `spot_id`, `detected`, `x`, `y` (współrzędne ekranowe),
 - `x_world`, `y_world`, `z_world` (współrzędne 3D),
-- `frame_index`, `time_sec`, `detections_count`.
+- `frame_index`, `time_sec`, `detections_count`,
+- `run_metadata` (opcjonalny obiekt JSON pochodzący z `--run_metadata_json`, np. z plików `*.run.json`).
+
+Przykładowy payload:
+
+```json
+{
+  "schema": "luca_tracker.ros2.tracking.v1",
+  "stamp_sec": 1712750400,
+  "stamp_nanosec": 245001000,
+  "frame_index": 124,
+  "time_sec": 4.13,
+  "source": "0",
+  "track_mode": "brightness",
+  "spot_id": 0,
+  "detected": true,
+  "roi": {"x": 0, "y": 0, "w": 640, "h": 480},
+  "detections_count": 1,
+  "x": 318.4,
+  "y": 251.7,
+  "x_world": 1.02,
+  "y_world": -0.15,
+  "z_world": 0.0,
+  "area": 211.3,
+  "radius": 8.2,
+  "rank": 0,
+  "run_metadata": {
+    "run_id": "20260410T101530Z-a1b2c3d4",
+    "input_source": "video/sledzenie_plamki.mp4",
+    "detector_name": "brightness",
+    "config_hash": "e1f2a3b4c5d6"
+  }
+}
+```
+
+#### Schemat i znaczenie zmiennych publikowanych na ROS2
+
+| Pole | Typ | Znaczenie |
+|---|---|---|
+| `schema` | `string` | Identyfikator wersji kontraktu wiadomości JSON. |
+| `stamp_sec` / `stamp_nanosec` | `int` / `int` | Znacznik czasu ROS (`node.get_clock().now()`). |
+| `frame_index` | `int` | Numer klatki przetworzonej od startu node. |
+| `time_sec` | `float` | Czas monotoniczny od startu node w sekundach. |
+| `source` | `string` | Źródło kamery (`camera_index` lub ścieżka urządzenia). |
+| `track_mode` | `string` | Tryb detekcji (`brightness` albo `color`). |
+| `spot_id` | `int` | Indeks detekcji wybranej jako główny obiekt raportowany. |
+| `detected` | `bool` | Czy obiekt główny został wykryty w bieżącej klatce. |
+| `roi` | `object` | Obszar analizy (`x`, `y`, `w`, `h`) użyty przez detektor. |
+| `detections_count` | `int` | Liczba wszystkich detekcji w klatce. |
+| `x`, `y` | `float \| null` | Pozycja obiektu w pikselach (null, gdy brak detekcji). |
+| `x_world`, `y_world`, `z_world` | `float \| null` | Współrzędne świata (gdy aktywne PnP+kalibracja). |
+| `area`, `radius`, `rank` | `float/int \| null` | Parametry geometryczne i ranking wybranej detekcji. |
+| `turtle_*` | `float/bool/string \| null` | Diagnostyka i komendy sterowania turtlesim (gdy `--turtle_follow`). |
+| `run_metadata` | `object \| null` | Metadane runu z pliku `--run_metadata_json` (np. `*.run.json`). |
 
 ### 7) Gotowe skrypty startowe (Linux/macOS)
 
