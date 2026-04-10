@@ -320,10 +320,16 @@ Budowanie obrazu:
 docker build -t alf-luca .
 ```
 
-Uruchomienie:
+Uruchomienie (domyślnie pokazuje pomoc CLI):
 
 ```bash
 docker run --rm -it alf-luca
+```
+
+Uruchomienie konkretnej podkomendy (np. `track`):
+
+```bash
+docker run --rm -it alf-luca track --help
 ```
 
 ## Wyniki i artefakty

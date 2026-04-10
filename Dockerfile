@@ -51,4 +51,8 @@ RUN python -m pip install -r requirements.txt
 
 COPY . .
 
-CMD ["python", "-m", "luca_tracker"]
+# Ustawiamy ENTRYPOINT na CLI aplikacji, aby argumenty z `docker run ... <arg>`
+# były przekazywane jako podkomendy (np. `track`) zamiast nazw plików wykonywalnych.
+ENTRYPOINT ["python", "-m", "luca_tracker"]
+# Domyślne uruchomienie bez argumentów pokazuje pomoc zamiast błędu braku podkomendy.
+CMD ["--help"]
