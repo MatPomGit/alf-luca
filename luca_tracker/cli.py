@@ -77,7 +77,7 @@ def build_parser():
         "--threshold_mode",
         choices=["fixed", "otsu", "adaptive"],
         default="fixed",
-        help="Tryb progowania dla detektora jasności.",
+        help="Tryb progowania jasności (stały, Otsu lub adaptacyjny).",
     )
     p_track.add_argument(
         "--adaptive_block_size",
@@ -236,7 +236,7 @@ def build_parser():
         "--threshold_mode",
         choices=["fixed", "otsu", "adaptive"],
         default="fixed",
-        help="Tryb progowania dla detektora jasności.",
+        help="Tryb progowania jasności (stały, Otsu lub adaptacyjny).",
     )
     p_ros2.add_argument(
         "--adaptive_block_size",
