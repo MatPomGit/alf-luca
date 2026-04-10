@@ -423,3 +423,18 @@ Dla każdego uruchomienia tworzony jest katalog:
 3. `kalman_predicted_share` interpretuj razem z pozostałymi metrykami:
    - wysoki udział predykcji może oznaczać lepszą ciągłość,
    - ale też może sygnalizować, że detektor zbyt często gubi obiekt.
+
+## Docker na GitHub Actions (GHCR)
+
+Repozytorium ma workflow CI, który buduje obraz Dockera i publikuje go do GitHub Container Registry (`ghcr.io`) dla pushy do gałęzi `main`/`master` oraz tagów `v*`.
+
+- plik workflow: `.github/workflows/docker.yml`,
+- obraz: `ghcr.io/<owner>/alf-luca`,
+- dla Pull Request wykonywany jest tylko build (bez push),
+- dla default branch automatycznie dodawany jest tag `latest`.
+
+Przykład uruchomienia obrazu:
+
+```bash
+docker run --rm ghcr.io/<owner>/alf-luca --help
+```

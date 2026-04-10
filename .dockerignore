@@ -1,0 +1,19 @@
+# Dane lokalne i artefakty nie są potrzebne podczas budowania obrazu CI.
+.git
+.github
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+*.DS_Store
+
+# Duże pliki wejściowe i wyniki lokalne.
+video/
+images_calib/
+output/
+
+# Środowisko lokalne Python.
+.venv/
+venv/
