@@ -14,6 +14,41 @@ from luca_processing.detector_interfaces import DetectorConfig
 from luca_processing.detectors import detect_spots_with_config
 
 ROS2_MESSAGE_SCHEMA_DEFAULT = "luca_tracker.ros2.tracking.v1"
+ROS2_BASE_PAYLOAD_KEYS: tuple[str, ...] = (
+    "schema",
+    "stamp_sec",
+    "stamp_nanosec",
+    "frame_index",
+    "time_sec",
+    "source",
+    "track_mode",
+    "spot_id",
+    "detected",
+    "roi",
+    "detections_count",
+    "x",
+    "y",
+    "x_world",
+    "y_world",
+    "z_world",
+    "area",
+    "radius",
+    "rank",
+    "run_metadata",
+)
+ROS2_TURTLE_PAYLOAD_KEYS: tuple[str, ...] = (
+    "turtle_follow",
+    "turtle_linear_cmd",
+    "turtle_angular_cmd",
+    "turtle_target_reached",
+    "turtle_reason",
+    "turtle_error_norm",
+    "turtle_error_norm_y",
+    "turtle_distance_scale",
+    "x_filtered",
+    "y_filtered",
+    "radius_filtered",
+)
 
 # Dokumentacja pól payloadu publikowanego na topicu ROS2.
 # Słownik utrzymujemy blisko kodu produkcyjnego, aby łatwo synchronizować kontrakt.
@@ -77,6 +112,19 @@ class Ros2TrackerConfig:
     run_metadata_json: Optional[str] = None
     message_schema: str = ROS2_MESSAGE_SCHEMA_DEFAULT
     detector: DetectorConfig = field(default_factory=DetectorConfig)
+
+
+@dataclass(frozen=True)
+class Ros2TopicContract:
+    """Kontrakt komunikacji publikowanej na topicu ROS2.
+
+    Ta klasa grupuje nazwy pól payloadu i pozwala łatwo rozszerzać
+    kontrakt bez szukania kluczy po całym kodzie runtime.
+    """
+
+    schema: str = ROS2_MESSAGE_SCHEMA_DEFAULT
+    base_keys: tuple[str, ...] = ROS2_BASE_PAYLOAD_KEYS
+    turtle_keys: tuple[str, ...] = ROS2_TURTLE_PAYLOAD_KEYS
 
 
 def _resolve_ros2_config(args_or_config: Any) -> Ros2TrackerConfig:
@@ -276,6 +324,8 @@ class _Ros2TrackerRuntime:
         self._pnp_rvec: Optional[np.ndarray] = None
         self._pnp_tvec: Optional[np.ndarray] = None
         self._run_metadata = _load_run_metadata_json(config.run_metadata_json)
+        # Jedno źródło prawdy dla kontraktu JSON publikowanego do ROS2.
+        self._topic_contract = Ros2TopicContract(schema=config.message_schema)
         self.cap = cv2.VideoCapture(config.video_source)
 
         if not self.cap.isOpened():
@@ -321,6 +371,40 @@ class _Ros2TrackerRuntime:
                 f"Wczytano metadane publikacji z JSON: {self.config.run_metadata_json}"
             )
 
+    def _build_turtle_payload(self, turtle_linear_cmd: float, turtle_angular_cmd: float, turtle_target_reached: bool, turtle_debug: dict) -> dict[str, object]:
+        """Buduje część payloadu związaną z ruchem turtlesim.
+
+        Rozdzielenie tej sekcji upraszcza edycję komunikacji sterowania,
+        bo klucze i logika warunkowa są skupione w jednej metodzie.
+        """
+        if not self.config.turtle_follow:
+            return {
+                "turtle_follow": False,
+                "turtle_linear_cmd": None,
+                "turtle_angular_cmd": None,
+                "turtle_target_reached": None,
+                "turtle_reason": None,
+                "turtle_error_norm": None,
+                "turtle_error_norm_y": None,
+                "turtle_distance_scale": None,
+                "x_filtered": None,
+                "y_filtered": None,
+                "radius_filtered": None,
+            }
+        return {
+            "turtle_follow": True,
+            "turtle_linear_cmd": turtle_linear_cmd,
+            "turtle_angular_cmd": turtle_angular_cmd,
+            "turtle_target_reached": turtle_target_reached,
+            "turtle_reason": turtle_debug["reason"],
+            "turtle_error_norm": turtle_debug["error_norm"],
+            "turtle_error_norm_y": turtle_debug["error_norm_y"],
+            "turtle_distance_scale": turtle_debug["distance_scale"],
+            "x_filtered": turtle_debug["filt_x"],
+            "y_filtered": turtle_debug["filt_y"],
+            "radius_filtered": turtle_debug["filt_radius"],
+        }
+
     def _build_payload(
         self,
         stamp,
@@ -344,8 +428,8 @@ class _Ros2TrackerRuntime:
         - pola niedostępne przy danej konfiguracji mają wartość `None`,
         - metadane runu są osadzane jako obiekt `run_metadata` bez modyfikacji kluczy.
         """
-        return {
-            "schema": self.config.message_schema,
+        payload = {
+            "schema": self._topic_contract.schema,
             "stamp_sec": int(stamp.sec),
             "stamp_nanosec": int(stamp.nanosec),
             "frame_index": self.frame_index,
@@ -364,20 +448,30 @@ class _Ros2TrackerRuntime:
             "area": float(best.area) if best else None,
             "radius": float(best.radius) if best else None,
             "rank": int(best.rank) if best and best.rank is not None else None,
-            "turtle_follow": self.config.turtle_follow,
-            "turtle_linear_cmd": turtle_linear_cmd if self.config.turtle_follow else None,
-            "turtle_angular_cmd": turtle_angular_cmd if self.config.turtle_follow else None,
-            "turtle_target_reached": turtle_target_reached if self.config.turtle_follow else None,
-            "turtle_reason": turtle_debug["reason"] if self.config.turtle_follow else None,
-            "turtle_error_norm": turtle_debug["error_norm"] if self.config.turtle_follow else None,
-            "turtle_error_norm_y": turtle_debug["error_norm_y"] if self.config.turtle_follow else None,
-            "turtle_distance_scale": turtle_debug["distance_scale"] if self.config.turtle_follow else None,
-            "x_filtered": turtle_debug["filt_x"] if self.config.turtle_follow else None,
-            "y_filtered": turtle_debug["filt_y"] if self.config.turtle_follow else None,
-            "radius_filtered": turtle_debug["filt_radius"] if self.config.turtle_follow else None,
             # Metadane są opcjonalne i pochodzą z wcześniej przygotowanego pliku `*.run.json`.
             "run_metadata": self._run_metadata or None,
         }
+        payload.update(
+            self._build_turtle_payload(
+                turtle_linear_cmd=turtle_linear_cmd,
+                turtle_angular_cmd=turtle_angular_cmd,
+                turtle_target_reached=turtle_target_reached,
+                turtle_debug=turtle_debug,
+            )
+        )
+        self._validate_payload_contract(payload)
+        return payload
+
+    def _validate_payload_contract(self, payload: dict[str, object]) -> None:
+        """Waliduje, czy payload zawiera pełny zestaw kluczy kontraktu.
+
+        Kontrola jest lekka i wykonywana lokalnie, aby szybciej wykryć
+        regresje przy modyfikacji formatu wiadomości ROS2.
+        """
+        required_keys = set(self._topic_contract.base_keys) | set(self._topic_contract.turtle_keys)
+        missing = required_keys.difference(payload.keys())
+        if missing:
+            raise RuntimeError(f"Payload ROS2 niekompletny. Brakujące pola: {sorted(missing)}")
 
     def _init_world_projection(self) -> None:
         """Ładuje kalibrację i przygotowuje estymację PnP do publikacji XYZ."""
