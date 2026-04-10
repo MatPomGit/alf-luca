@@ -3,6 +3,9 @@ from __future__ import annotations
 import csv
 import os
 import re
+import threading
+import traceback
+from argparse import Namespace
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -295,6 +298,8 @@ def run_gui(args):
         from kivy.uix.button import Button
         from kivy.uix.image import Image
         from kivy.uix.label import Label
+        from kivy.uix.tabbedpanel import TabbedPanel, TabbedPanelItem
+        from kivy.uix.textinput import TextInput
         from kivy.uix.scrollview import ScrollView
         from kivy.uix.slider import Slider
         from kivy.uix.spinner import Spinner
@@ -666,6 +671,99 @@ def run_gui(args):
                 for child in widget.children:
                     self._apply_large_font_to_widget_tree(child)
 
+        def _append_log(self, level: str, message: str) -> None:
+            """Dopisuje wpis do wspólnego logu zdarzeń współdzielonego przez wszystkie zakładki."""
+            entry = f"[{level.upper()}] {message}"
+            print(f"[GUI] {entry}")
+            if hasattr(self, "event_log"):
+                self.event_log.text = f"{entry}\n{self.event_log.text}".strip()
+
+        def _set_status(self, level: str, message: str) -> None:
+            """Aktualizuje pasek statusu i automatycznie rejestruje wpis w logu."""
+            prefix = {
+                "success": "✅",
+                "warning": "⚠️",
+                "error": "❌",
+                "info": "ℹ️",
+            }.get(level, "ℹ️")
+            if hasattr(self, "status_label"):
+                self.status_label.text = f"{prefix} {message}"
+            self._append_log(level, message)
+
+        def _build_labeled_input(self, container: BoxLayout, label: str, value: str) -> TextInput:
+            """Buduje standardowy wiersz formularza z etykietą i polem tekstowym."""
+            row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
+            lbl = Label(text=label, size_hint_x=0.4, halign="left", valign="middle", font_size=self.gui_font_size)
+            lbl.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+            inp = TextInput(text=value, multiline=False, size_hint_x=0.6, font_size=self.gui_font_size)
+            row.add_widget(lbl)
+            row.add_widget(inp)
+            container.add_widget(row)
+            return inp
+
+        def _parse_required(self, raw: str, name: str) -> str:
+            """Waliduje pole wymagane i zwraca oczyszczoną wartość."""
+            val = raw.strip()
+            if not val:
+                raise ValueError(f"Pole '{name}' jest wymagane.")
+            return val
+
+        def _parse_int(self, raw: str, name: str, min_value: Optional[int] = None) -> int:
+            """Parsuje liczbę całkowitą z walidacją zakresu minimalnego."""
+            try:
+                value = int(raw.strip())
+            except ValueError as exc:
+                raise ValueError(f"Pole '{name}' musi być liczbą całkowitą.") from exc
+            if min_value is not None and value < min_value:
+                raise ValueError(f"Pole '{name}' musi być >= {min_value}.")
+            return value
+
+        def _parse_float(self, raw: str, name: str, min_value: Optional[float] = None) -> float:
+            """Parsuje liczbę zmiennoprzecinkową z walidacją zakresu minimalnego."""
+            try:
+                value = float(raw.strip())
+            except ValueError as exc:
+                raise ValueError(f"Pole '{name}' musi być liczbą.")
+            if min_value is not None and value < min_value:
+                raise ValueError(f"Pole '{name}' musi być >= {min_value}.")
+            return value
+
+        def _run_background_task(self, name: str, target, success_message: str):
+            """Uruchamia zadanie modułowe w tle i raportuje jego wynik na wspólnym pasku statusu."""
+            def _job():
+                try:
+                    target()
+                except Exception as exc:  # noqa: BLE001
+                    self._set_status("error", f"{name}: {exc}")
+                    self._append_log("error", traceback.format_exc())
+                    return
+                self._set_status("success", success_message)
+
+            threading.Thread(target=_job, daemon=True).start()
+
+        def _collect_ros2_parser_fields(self) -> List[Tuple[str, str, str]]:
+            """Pobiera listę parametrów ROS2 bez duplikowania definicji parsera w GUI."""
+            from .cli import build_parser
+
+            parser = build_parser()
+            ros2_actions = []
+            for action in parser._actions:
+                if getattr(action, "dest", None) == "command" and hasattr(action, "choices"):
+                    ros2_parser = action.choices.get("ros2")
+                    if ros2_parser:
+                        ros2_actions = ros2_parser._actions
+                        break
+
+            fields: List[Tuple[str, str, str]] = []
+            for action in ros2_actions:
+                if not action.option_strings:
+                    continue
+                if action.dest in {"help"}:
+                    continue
+                default = "" if action.default is None else str(action.default)
+                fields.append((action.dest, action.option_strings[0], default))
+            return fields
+
         def build(self):
             # Dodatkowe zabezpieczenie: jeśli provider okna zniknie w trakcie startu,
             # pokażemy czytelny błąd zamiast trudnego do diagnozy wyjątku atrybutu.
@@ -679,9 +777,14 @@ def run_gui(args):
                 Window.maximize()
 
             root = BoxLayout(orientation="vertical", spacing=8, padding=8)
+            tabs = TabbedPanel(do_default_tab=False, tab_pos="top_mid")
+            root.add_widget(tabs)
+
+            tracking_tab = TabbedPanelItem(text="Tracking")
+            tracking_layout = BoxLayout(orientation="vertical", spacing=8)
             # `fit_mode=\"contain\"` zastępuje usunięte właściwości `allow_stretch` i `keep_ratio`.
             self.image_widget = Image(fit_mode="contain")
-            root.add_widget(self.image_widget)
+            tracking_layout.add_widget(self.image_widget)
 
             controls = BoxLayout(orientation="vertical", spacing=6, size_hint_y=None)
             controls.bind(minimum_height=controls.setter("height"))
@@ -811,6 +914,10 @@ def run_gui(args):
             btn_export_cfg.bind(on_press=lambda *_: self._export_run_config())
             row_action.add_widget(btn_export_cfg)
 
+            btn_run_tracking = Button(text="Uruchom tracking")
+            btn_run_tracking.bind(on_press=lambda *_: self._run_tracking_pipeline())
+            row_action.add_widget(btn_run_tracking)
+
             btn_mp4 = Button(text="Pokaż komendę QA wideo")
             btn_mp4.bind(
                 on_press=lambda *_: print(
@@ -825,6 +932,7 @@ def run_gui(args):
                     ("Prev video", btn_prev_video),
                     ("Next video", btn_next_video),
                     ("Restart video", btn_restart),
+                    ("Uruchom tracking", btn_run_tracking),
                     ("QA video", btn_mp4),
                 ]
             )
@@ -866,13 +974,65 @@ def run_gui(args):
                 ]
             )
 
-            self.status_label = Label(text="Ready", size_hint_y=None, height=max(30, int(self.gui_font_size * 1.6)), halign="left", valign="middle", font_size=self.gui_font_size)
-            self.status_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
-            controls.add_widget(self.status_label)
-
             self.scroll_controls = ScrollView(size_hint=(1, None), size=(Window.width, 300), do_scroll_x=False)
             self.scroll_controls.add_widget(controls)
-            root.add_widget(self.scroll_controls)
+            tracking_layout.add_widget(self.scroll_controls)
+            tracking_tab.add_widget(tracking_layout)
+            tabs.add_widget(tracking_tab)
+
+            calibration_tab = TabbedPanelItem(text="Calibration")
+            calibration_layout = BoxLayout(orientation="vertical", spacing=8, padding=8)
+            self.calib_dir_input = self._build_labeled_input(calibration_layout, "calib_dir", "images_calib")
+            self.calib_rows_input = self._build_labeled_input(calibration_layout, "rows", "6")
+            self.calib_cols_input = self._build_labeled_input(calibration_layout, "cols", "9")
+            self.calib_square_input = self._build_labeled_input(calibration_layout, "square_size", "1.0")
+            self.calib_output_input = self._build_labeled_input(calibration_layout, "output_file", "camera_calib.npz")
+            calib_run = Button(text="Uruchom", size_hint_y=None, height=self.row_height)
+            calib_run.bind(on_press=lambda *_: self._run_calibration())
+            calibration_layout.add_widget(calib_run)
+            calibration_tab.add_widget(calibration_layout)
+            tabs.add_widget(calibration_tab)
+
+            compare_tab = TabbedPanelItem(text="Compare")
+            compare_layout = BoxLayout(orientation="vertical", spacing=8, padding=8)
+            self.compare_ref_input = self._build_labeled_input(compare_layout, "reference", "")
+            self.compare_candidate_input = self._build_labeled_input(compare_layout, "candidate", "")
+            self.compare_output_input = self._build_labeled_input(compare_layout, "output_csv", "compare_output.csv")
+            self.compare_report_input = self._build_labeled_input(compare_layout, "report_pdf (opcjonalnie)", "")
+            compare_run = Button(text="Uruchom", size_hint_y=None, height=self.row_height)
+            compare_run.bind(on_press=lambda *_: self._run_compare())
+            compare_layout.add_widget(compare_run)
+            compare_tab.add_widget(compare_layout)
+            tabs.add_widget(compare_tab)
+
+            ros2_tab = TabbedPanelItem(text="ROS2")
+            ros2_scroll = ScrollView(do_scroll_x=False)
+            ros2_layout = BoxLayout(orientation="vertical", spacing=8, padding=8, size_hint_y=None)
+            ros2_layout.bind(minimum_height=ros2_layout.setter("height"))
+            self.ros2_inputs: Dict[str, TextInput] = {}
+            for dest, option_name, default in self._collect_ros2_parser_fields():
+                self.ros2_inputs[dest] = self._build_labeled_input(ros2_layout, option_name, default)
+            ros2_run = Button(text="Uruchom", size_hint_y=None, height=self.row_height)
+            ros2_run.bind(on_press=lambda *_: self._run_ros2())
+            ros2_layout.add_widget(ros2_run)
+            ros2_scroll.add_widget(ros2_layout)
+            ros2_tab.add_widget(ros2_scroll)
+            tabs.add_widget(ros2_tab)
+
+            status_panel = BoxLayout(orientation="vertical", size_hint_y=None, height=max(200, int(self.gui_font_size * 8)))
+            self.status_label = Label(
+                text="Ready",
+                size_hint_y=None,
+                height=max(30, int(self.gui_font_size * 1.6)),
+                halign="left",
+                valign="middle",
+                font_size=self.gui_font_size,
+            )
+            self.status_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+            status_panel.add_widget(self.status_label)
+            self.event_log = TextInput(readonly=True, multiline=True, font_size=max(14, self.gui_font_size * 0.6))
+            status_panel.add_widget(self.event_log)
+            root.add_widget(status_panel)
 
             Window.bind(on_key_down=self._on_key_down)
             Window.bind(on_resize=self._on_window_resize)
@@ -880,12 +1040,102 @@ def run_gui(args):
             self._apply_large_font_to_widget_tree(controls)
             self._refresh_focus_styles()
             self._set_capture_state("idle")
+            self._set_status("info", "GUI gotowe. Wybierz zakładkę i uruchom zadanie.")
             Clock.schedule_interval(self._update_frame, float(np.clip(_cfg_value(gui_cfg, "wait_ms_running", 16), 1, 200)) / 1000.0)
             return root
 
         def _on_video_change(self, _, selected_name: str):
             idx = [p.name for p in self.video_files].index(selected_name)
             self._switch_video(idx)
+
+        def _run_tracking_pipeline(self):
+            """Uruchamia moduł `track_video` na aktualnych parametrach zakładki Tracking."""
+            from .pipeline import track_video
+
+            if not self.video_files:
+                self._set_status("error", "Brak dostępnych plików wideo do uruchomienia trackingu.")
+                return
+            cfg = self._build_current_run_config()
+            self._set_status("info", "Uruchamianie track_video w tle...")
+            self._run_background_task(
+                "Tracking",
+                lambda: track_video(cfg),
+                f"Tracking zakończony. Wynik: {cfg.eval.output_csv}",
+            )
+
+        def _run_calibration(self):
+            """Waliduje formularz Calibration i uruchamia kalibrację bez użycia shella."""
+            from .pipeline import calibrate_camera
+
+            try:
+                calib_dir = self._parse_required(self.calib_dir_input.text, "calib_dir")
+                rows = self._parse_int(self.calib_rows_input.text, "rows", min_value=2)
+                cols = self._parse_int(self.calib_cols_input.text, "cols", min_value=2)
+                square_size = self._parse_float(self.calib_square_input.text, "square_size", min_value=0.0001)
+                output_file = self._parse_required(self.calib_output_input.text, "output_file")
+            except ValueError as exc:
+                self._set_status("error", str(exc))
+                return
+
+            self._set_status("info", "Uruchamianie kalibracji...")
+            self._run_background_task(
+                "Calibration",
+                lambda: calibrate_camera(calib_dir, rows, cols, square_size, output_file),
+                f"Kalibracja zakończona. Plik: {output_file}",
+            )
+
+        def _run_compare(self):
+            """Waliduje formularz Compare i uruchamia porównanie CSV."""
+            from .reports import compare_csv
+
+            try:
+                reference = self._parse_required(self.compare_ref_input.text, "reference")
+                candidate = self._parse_required(self.compare_candidate_input.text, "candidate")
+                output_csv = self._parse_required(self.compare_output_input.text, "output_csv")
+                report_pdf = self.compare_report_input.text.strip() or None
+            except ValueError as exc:
+                self._set_status("error", str(exc))
+                return
+
+            self._set_status("info", "Uruchamianie compare_csv...")
+            self._run_background_task(
+                "Compare",
+                lambda: compare_csv(reference, candidate, output_csv, report_pdf),
+                f"Porównanie zakończone. Wynik: {output_csv}",
+            )
+
+        def _run_ros2(self):
+            """Waliduje parametry ROS2 i uruchamia node trackera jako wywołanie modułowe."""
+            from .ros2_node import run_ros2_tracker_node
+
+            try:
+                ros2_values: Dict[str, object] = {}
+                for key, widget in self.ros2_inputs.items():
+                    raw = widget.text.strip()
+                    if raw.lower() in {"true", "false"}:
+                        ros2_values[key] = raw.lower() == "true"
+                    elif raw == "":
+                        ros2_values[key] = None
+                    else:
+                        try:
+                            ros2_values[key] = int(raw)
+                        except ValueError:
+                            try:
+                                ros2_values[key] = float(raw)
+                            except ValueError:
+                                ros2_values[key] = raw
+                if ros2_values.get("fps") is not None and float(ros2_values["fps"]) <= 0:
+                    raise ValueError("Pole '--fps' musi być dodatnie.")
+            except ValueError as exc:
+                self._set_status("error", str(exc))
+                return
+
+            self._set_status("warning", "Uruchamianie ROS2 node (zadanie długotrwałe)...")
+            self._run_background_task(
+                "ROS2",
+                lambda: run_ros2_tracker_node(Namespace(**ros2_values)),
+                "ROS2 node zakończył działanie.",
+            )
 
         def _on_speed_change(self, _, selected: str):
             self.speed_factor = float(selected.replace("x", ""))
