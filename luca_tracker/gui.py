@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
 import re
 import threading
@@ -71,6 +72,40 @@ WORKFLOW_CARDS = {
             "tracker.multi_track": "false",
             "detector.max_spots": "2",
         },
+    },
+}
+GUI_PARAMETER_PROFILES = {
+    "Szybki start": {
+        "detector.track_mode": "brightness",
+        "detector.threshold_mode": "adaptive",
+        "detector.threshold": "180",
+        "detector.blur": "7",
+        "detector.max_spots": "1",
+        "tracker.multi_track": "false",
+    },
+    "Niskie światło": {
+        "detector.track_mode": "brightness",
+        "detector.threshold_mode": "adaptive",
+        "detector.adaptive_block_size": "41",
+        "detector.adaptive_c": "2.0",
+        "detector.use_clahe": "true",
+        "detector.min_peak_intensity": "20",
+    },
+    "Refleksy": {
+        "detector.track_mode": "brightness",
+        "detector.threshold_mode": "fixed",
+        "detector.threshold": "220",
+        "detector.min_solidity": "0.75",
+        "detector.max_aspect_ratio": "3.0",
+        "detector.min_circularity": "0.5",
+    },
+    "Multi-spot": {
+        "detector.track_mode": "brightness",
+        "detector.threshold_mode": "adaptive",
+        "tracker.multi_track": "true",
+        "detector.max_spots": "5",
+        "tracker.max_distance": "90.0",
+        "tracker.max_missed": "8",
     },
 }
 GUI_INPUT_SOURCES = ["video file", "camera"]
@@ -349,6 +384,8 @@ def run_gui(args):
         from kivy.uix.checkbox import CheckBox
         from kivy.uix.image import Image
         from kivy.uix.label import Label
+        from kivy.uix.popup import Popup
+        from kivy.uix.progressbar import ProgressBar
         from kivy.uix.tabbedpanel import TabbedPanel, TabbedPanelItem
         from kivy.uix.textinput import TextInput
         from kivy.uix.scrollview import ScrollView
@@ -457,6 +494,14 @@ def run_gui(args):
             self.section_defaults: Dict[str, Dict[str, str]] = {}
             self.artifact_labels: Dict[str, Label] = {}
             self.checklist_checks: Dict[str, CheckBox] = {}
+            # Centralny stan zadania steruje postępem, blokadą pól krytycznych i komunikatem dla operatora.
+            self.job_state = "idle"
+            self.job_progress = 0
+            self.field_error_labels: Dict[str, Label] = {}
+            self.field_validators: Dict[str, Callable[[str], Optional[str]]] = {}
+            self.custom_profiles: Dict[str, Dict[str, str]] = {}
+            self.critical_widgets: List[object] = []
+            self.presets_path = self.output_dir / "gui_parameter_presets.json"
 
         def _open_video(self, idx: int):
             cap = cv2.VideoCapture(str(self.video_files[idx]))
@@ -648,18 +693,22 @@ def run_gui(args):
             if self.capture_state in {"idle", "stopped"}:
                 self._restart_video()
             self._set_capture_state("running")
+            self._set_job_state("running", progress=10)
 
         def _pause_capture(self, *_):
             if self.capture_state == "running":
                 self._set_capture_state("paused")
+                self._set_job_state("paused", message="Przetwarzanie wstrzymane.")
 
         def _resume_capture(self, *_):
             if self.capture_state == "paused":
                 self._set_capture_state("running")
+                self._set_job_state("running", message="Wznowiono przetwarzanie.")
 
         def _stop_capture(self, *_):
             if self.capture_state in {"running", "paused"}:
                 self._set_capture_state("stopped")
+                self._set_job_state("finished", progress=100, message="Zatrzymano przetwarzanie.")
 
         def _ensure_recording_writers(self, annotated: np.ndarray, mask_bgr: np.ndarray) -> None:
             """Inicjalizuje pliki wideo dla widoku anotowanego i binarnego."""
@@ -762,15 +811,78 @@ def run_gui(args):
                 self.status_label.text = f"{prefix} {message}"
             self._append_log(level, message)
 
-        def _build_labeled_input(self, container: BoxLayout, label: str, value: str) -> TextInput:
-            """Buduje standardowy wiersz formularza z etykietą i polem tekstowym."""
+        def _set_job_state(self, state: str, progress: Optional[int] = None, message: Optional[str] = None) -> None:
+            """Aktualizuje centralny stan joba oraz pasek postępu i blokadę pól krytycznych."""
+            self.job_state = state
+            if progress is not None:
+                self.job_progress = int(np.clip(progress, 0, 100))
+            if hasattr(self, "job_progress_bar"):
+                self.job_progress_bar.value = self.job_progress
+            if hasattr(self, "job_state_label"):
+                self.job_state_label.text = f"Job: {self.job_state.upper()} ({self.job_progress}%)"
+            self._set_critical_fields_locked(state in {"running", "paused"})
+            if message:
+                self._set_status("info", message)
+
+        def _set_critical_fields_locked(self, locked: bool) -> None:
+            """Blokuje pola krytyczne tylko w czasie aktywnego przetwarzania."""
+            for widget in self.critical_widgets:
+                widget.disabled = locked
+
+        def _confirm_action(self, title: str, message: str, on_confirm: Callable[[], None]) -> None:
+            """Wyświetla lekkie okno potwierdzenia dla operacji destrukcyjnych."""
+            content = BoxLayout(orientation="vertical", spacing=8, padding=8)
+            info = Label(text=message, halign="left", valign="middle")
+            info.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+            actions = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
+            btn_cancel = Button(text="Anuluj")
+            btn_ok = Button(text="Potwierdź")
+            actions.add_widget(btn_cancel)
+            actions.add_widget(btn_ok)
+            content.add_widget(info)
+            content.add_widget(actions)
+            popup = Popup(title=title, content=content, size_hint=(0.7, 0.35), auto_dismiss=False)
+            btn_cancel.bind(on_press=lambda *_: popup.dismiss())
+
+            def _apply_and_close(*_args):
+                popup.dismiss()
+                on_confirm()
+
+            btn_ok.bind(on_press=_apply_and_close)
+            popup.open()
+
+        def _build_labeled_input(
+            self,
+            container: BoxLayout,
+            label: str,
+            value: str,
+            validation_key: Optional[str] = None,
+        ) -> TextInput:
+            """Buduje standardowy wiersz formularza z etykietą i polem tekstowym oraz miejscem na błąd inline."""
+            field_box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=2)
+            field_box.bind(minimum_height=field_box.setter("height"))
             row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
             lbl = Label(text=label, size_hint_x=0.4, halign="left", valign="middle", font_size=self.gui_font_size)
             lbl.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
             inp = TextInput(text=value, multiline=False, size_hint_x=0.6, font_size=self.gui_font_size)
             row.add_widget(lbl)
             row.add_widget(inp)
-            container.add_widget(row)
+            field_box.add_widget(row)
+            if validation_key:
+                error_label = Label(
+                    text="",
+                    size_hint_y=None,
+                    height=max(18, int(self.gui_font_size * 0.7)),
+                    halign="left",
+                    valign="middle",
+                    color=(0.9, 0.2, 0.2, 1.0),
+                    font_size=max(12, int(self.gui_font_size * 0.55)),
+                )
+                error_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+                self.field_error_labels[validation_key] = error_label
+                field_box.add_widget(error_label)
+                inp.bind(text=lambda _, txt, key=validation_key: self._validate_single_field(key, txt))
+            container.add_widget(field_box)
             return inp
 
         def _open_path_dialog(self, mode: str) -> Optional[str]:
@@ -811,8 +923,11 @@ def run_gui(args):
             file_mode: Optional[str] = "file_save",
             directory_selector: bool = True,
             on_value_change: Optional[Callable[[], None]] = None,
+            validation_key: Optional[str] = None,
         ) -> TextInput:
             """Buduje wiersz formularza dla ścieżek z przyciskami dialogów (plik/katalog)."""
+            field_box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=2)
+            field_box.bind(minimum_height=field_box.setter("height"))
             row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
             lbl = Label(text=label, size_hint_x=0.28, halign="left", valign="middle", font_size=self.gui_font_size)
             lbl.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
@@ -829,7 +944,22 @@ def run_gui(args):
                 btn_dir = Button(text="Katalog", size_hint_x=0.1, font_size=max(14, int(self.gui_font_size * 0.75)))
                 btn_dir.bind(on_press=lambda *_: self._set_path_from_dialog(inp, "directory"))
                 row.add_widget(btn_dir)
-            container.add_widget(row)
+            field_box.add_widget(row)
+            if validation_key:
+                error_label = Label(
+                    text="",
+                    size_hint_y=None,
+                    height=max(18, int(self.gui_font_size * 0.7)),
+                    halign="left",
+                    valign="middle",
+                    color=(0.9, 0.2, 0.2, 1.0),
+                    font_size=max(12, int(self.gui_font_size * 0.55)),
+                )
+                error_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+                self.field_error_labels[validation_key] = error_label
+                field_box.add_widget(error_label)
+                inp.bind(text=lambda _, txt, key=validation_key: self._validate_single_field(key, txt))
+            container.add_widget(field_box)
             return inp
 
         def _build_section_header(self, container: BoxLayout, title: str) -> None:
@@ -896,16 +1026,73 @@ def run_gui(args):
             self._set_status("info", f"Załadowano profil: {card.get('title', self.selected_workflow_key)}")
             self._update_checklist_status()
 
+        def _load_custom_presets(self) -> None:
+            """Wczytuje profile użytkownika z pliku JSON i scala je z profilami systemowymi."""
+            self.custom_profiles = {}
+            if not self.presets_path.exists():
+                return
+            try:
+                with self.presets_path.open("r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+                if isinstance(payload, dict):
+                    self.custom_profiles = {
+                        str(name): {str(k): str(v) for k, v in values.items()}
+                        for name, values in payload.items()
+                        if isinstance(values, dict)
+                    }
+            except Exception as exc:  # noqa: BLE001
+                self._set_status("warning", f"Nie udało się wczytać presetów: {exc}")
+
+        def _refresh_preset_spinner(self) -> None:
+            """Odświeża listę presetów widoczną w Spinnerze."""
+            all_names = list(GUI_PARAMETER_PROFILES.keys()) + sorted(self.custom_profiles.keys())
+            self.profile_spinner.values = all_names
+            if self.profile_spinner.text not in all_names and all_names:
+                self.profile_spinner.text = all_names[0]
+
+        def _apply_selected_profile(self, *_args) -> None:
+            """Nakłada wybrany preset (systemowy lub użytkownika) na formularz."""
+            profile_name = self.profile_spinner.text.strip()
+            profile = GUI_PARAMETER_PROFILES.get(profile_name) or self.custom_profiles.get(profile_name, {})
+            if not profile:
+                self._set_status("warning", f"Brak danych dla presetu: {profile_name}")
+                return
+            for field_name, value in profile.items():
+                if field_name in self.run_config_fields:
+                    self.run_config_fields[field_name].text = str(value)
+            self._set_status("success", f"Zastosowano preset: {profile_name}")
+
+        def _save_current_as_preset(self, *_args) -> None:
+            """Zapisuje bieżące ustawienia do presetu użytkownika."""
+            preset_name = self.profile_name_input.text.strip()
+            if not preset_name:
+                self._set_status("warning", "Podaj nazwę własnego presetu przed zapisem.")
+                return
+            self.custom_profiles[preset_name] = {key: widget.text for key, widget in self.run_config_fields.items()}
+            with self.presets_path.open("w", encoding="utf-8") as handle:
+                json.dump(self.custom_profiles, handle, indent=2, ensure_ascii=False)
+            self._refresh_preset_spinner()
+            self.profile_spinner.text = preset_name
+            self._set_status("success", f"Zapisano preset użytkownika: {preset_name}")
+
         def _reset_current_section(self, *_args) -> None:
             """Resetuje wyłącznie aktywną sekcję formularza, bez ingerencji w pozostałe pola."""
             section = self.section_spinner.text.strip().lower()
-            defaults = self.section_defaults.get(section, {})
-            for key, value in defaults.items():
-                if key in self.run_config_fields:
-                    self.run_config_fields[key].text = value
-            self._set_status("info", f"Zresetowano sekcję: {section}")
-            self._update_artifact_panel()
-            self._update_checklist_status()
+
+            def _do_reset() -> None:
+                defaults = self.section_defaults.get(section, {})
+                for key, value in defaults.items():
+                    if key in self.run_config_fields:
+                        self.run_config_fields[key].text = value
+                self._set_status("info", f"Zresetowano sekcję: {section}")
+                self._update_artifact_panel()
+                self._update_checklist_status()
+
+            self._confirm_action(
+                "Potwierdzenie resetu",
+                f"Czy na pewno zresetować sekcję '{section}'? Operacja nadpisze bieżące wartości.",
+                _do_reset,
+            )
 
         def _update_artifact_panel(self) -> None:
             """Odświeża panel wyników i pokazuje ścieżki do artefaktów generowanych przez pipeline."""
@@ -978,13 +1165,17 @@ def run_gui(args):
 
         def _run_background_task(self, name: str, target, success_message: str):
             """Uruchamia zadanie modułowe w tle i raportuje jego wynik na wspólnym pasku statusu."""
+            self._set_job_state("running", progress=5, message=f"{name}: start")
+
             def _job():
                 try:
                     target()
                 except Exception as exc:  # noqa: BLE001
+                    self._set_job_state("error", progress=100)
                     self._set_status("error", f"{name}: {exc}")
                     self._append_log("error", traceback.format_exc())
                     return
+                self._set_job_state("finished", progress=100)
                 self._set_status("success", success_message)
 
             threading.Thread(target=_job, daemon=True).start()
@@ -1104,6 +1295,42 @@ def run_gui(args):
                     raise ValueError("Konflikt ścieżek: `eval.*` nie może nadpisywać `input.video`.")
                 if calib_file is not None and output_path == calib_file:
                     raise ValueError("Konflikt ścieżek: `eval.*` nie może nadpisywać `input.calib_file`.")
+
+        def _build_field_validators(self) -> None:
+            """Rejestruje walidatory pojedynczych pól tak, aby błędy były pokazywane inline pod kontrolką."""
+            self.field_validators = {
+                "input.display": lambda v: self._parse_bool_field(v, "input.display") and None,
+                "input.interactive": lambda v: self._parse_bool_field(v, "input.interactive") and None,
+                "detector.blur": lambda v: self._parse_int(v, "detector.blur", min_value=1) and None,
+                "detector.threshold": lambda v: self._parse_int(v, "detector.threshold", min_value=0) and None,
+                "detector.adaptive_block_size": lambda v: self._parse_int(v, "detector.adaptive_block_size", min_value=3) and None,
+                "detector.max_spots": lambda v: self._parse_int(v, "detector.max_spots", min_value=1) and None,
+                "tracker.max_distance": lambda v: self._parse_float(v, "tracker.max_distance", min_value=0) and None,
+                "tracker.max_missed": lambda v: self._parse_int(v, "tracker.max_missed", min_value=0) and None,
+                "eval.output_csv": lambda v: self._parse_required(v, "eval.output_csv") and None,
+            }
+
+        def _validate_single_field(self, field_key: str, raw_value: str) -> bool:
+            """Waliduje jedno pole i zapisuje komunikat bez blokowania reszty formularza."""
+            label = self.field_error_labels.get(field_key)
+            validator = self.field_validators.get(field_key)
+            if label is None or validator is None:
+                return True
+            try:
+                validator(raw_value)
+            except Exception as exc:  # noqa: BLE001
+                label.text = str(exc)
+                return False
+            label.text = ""
+            return True
+
+        def _validate_visible_fields(self) -> bool:
+            """Sprawdza wszystkie zarejestrowane pola inline i zwraca łączny wynik walidacji."""
+            return all(
+                self._validate_single_field(key, self.run_config_fields[key].text)
+                for key in self.field_validators
+                if key in self.run_config_fields
+            )
 
         def _populate_run_config_form(self, cfg: RunConfig) -> None:
             """Wypełnia formularz GUI na podstawie kompletnego modelu RunConfig."""
@@ -1284,6 +1511,19 @@ def run_gui(args):
                 checklist_row.add_widget(item)
             controls.add_widget(checklist_row)
 
+            preset_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
+            self.profile_spinner = Spinner(text="Szybki start", values=list(GUI_PARAMETER_PROFILES.keys()), size_hint_x=0.25)
+            preset_row.add_widget(self.profile_spinner)
+            btn_apply_preset = Button(text="Zastosuj preset", size_hint_x=0.2)
+            btn_apply_preset.bind(on_press=self._apply_selected_profile)
+            preset_row.add_widget(btn_apply_preset)
+            self.profile_name_input = TextInput(text="", multiline=False, hint_text="Nazwa własnego presetu", size_hint_x=0.35)
+            preset_row.add_widget(self.profile_name_input)
+            btn_save_preset = Button(text="Zapisz preset", size_hint_x=0.2)
+            btn_save_preset.bind(on_press=self._save_current_as_preset)
+            preset_row.add_widget(btn_save_preset)
+            controls.add_widget(preset_row)
+
             self._build_section_header(controls, "RunConfig / input")
             self._build_section_header(controls, "Input source")
             input_source_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
@@ -1319,9 +1559,10 @@ def run_gui(args):
                 args.calib_file or "",
                 file_mode="file_open",
                 directory_selector=True,
+                validation_key="input.calib_file",
             )
-            self.run_config_fields["input.display"] = self._build_labeled_input(controls, "input.display", "false")
-            self.run_config_fields["input.interactive"] = self._build_labeled_input(controls, "input.interactive", "false")
+            self.run_config_fields["input.display"] = self._build_labeled_input(controls, "input.display", "false", validation_key="input.display")
+            self.run_config_fields["input.interactive"] = self._build_labeled_input(controls, "input.interactive", "false", validation_key="input.interactive")
             self._sync_input_source_fields()
 
             self._build_section_header(controls, "RunConfig / detector")
@@ -1353,7 +1594,7 @@ def run_gui(args):
                 "detector.temporal_mode": "majority",
             }
             for key, value in detector_defaults.items():
-                self.run_config_fields[key] = self._build_labeled_input(controls, key, value)
+                self.run_config_fields[key] = self._build_labeled_input(controls, key, value, validation_key=key)
 
             self._build_section_header(controls, "RunConfig / tracker")
             tracker_defaults = {
@@ -1373,7 +1614,7 @@ def run_gui(args):
                 "tracker.max_dynamic_distance": "150.0",
             }
             for key, value in tracker_defaults.items():
-                self.run_config_fields[key] = self._build_labeled_input(controls, key, value)
+                self.run_config_fields[key] = self._build_labeled_input(controls, key, value, validation_key=key)
 
             self._build_section_header(controls, "RunConfig / postprocess")
             for key, value in {
@@ -1382,7 +1623,7 @@ def run_gui(args):
                 "postprocess.kalman_measurement_noise": "0.05",
                 "postprocess.draw_all_tracks": "false",
             }.items():
-                self.run_config_fields[key] = self._build_labeled_input(controls, key, value)
+                self.run_config_fields[key] = self._build_labeled_input(controls, key, value, validation_key=key)
 
             self._build_section_header(controls, "RunConfig / pose")
             for key, value in {
@@ -1390,7 +1631,7 @@ def run_gui(args):
                 "pose.pnp_image_points": "",
                 "pose.pnp_world_plane_z": "0.0",
             }.items():
-                self.run_config_fields[key] = self._build_labeled_input(controls, key, value)
+                self.run_config_fields[key] = self._build_labeled_input(controls, key, value, validation_key=key)
 
             self._build_section_header(controls, "Outputs")
             video_stem = self.video_files[self.current_video_idx].stem
@@ -1403,7 +1644,7 @@ def run_gui(args):
                 "eval.annotated_video": str(self.output_dir / f"{video_stem}_annotated.mp4"),
             }
             for key, value in eval_defaults.items():
-                self.run_config_fields[key] = self._build_labeled_input(controls, key, value)
+                self.run_config_fields[key] = self._build_labeled_input(controls, key, value, validation_key=key)
                 self.run_config_fields[key].bind(text=lambda *_: self._update_artifact_panel())
 
             scenario_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
@@ -1444,14 +1685,6 @@ def run_gui(args):
                 self.artifact_labels[label] = path_label
                 artifacts_panel.add_widget(path_label)
             controls.add_widget(artifacts_panel)
-                label = key.split(".", 1)[1]
-                self.run_config_fields[key] = self._build_path_input(
-                    controls,
-                    label,
-                    value,
-                    file_mode="file_save",
-                    directory_selector=True,
-                )
 
             slider_rows = [
                 ("Threshold", 0, 255, self.threshold, 1, lambda v: setattr(self, "threshold", int(v))),
@@ -1654,6 +1887,18 @@ def run_gui(args):
             )
             self.status_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
             status_panel.add_widget(self.status_label)
+            self.job_state_label = Label(
+                text="Job: IDLE (0%)",
+                size_hint_y=None,
+                height=max(24, int(self.gui_font_size * 1.2)),
+                halign="left",
+                valign="middle",
+                font_size=max(14, int(self.gui_font_size * 0.75)),
+            )
+            self.job_state_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+            status_panel.add_widget(self.job_state_label)
+            self.job_progress_bar = ProgressBar(max=100, value=0, size_hint_y=None, height=max(20, int(self.gui_font_size * 0.8)))
+            status_panel.add_widget(self.job_progress_bar)
             self.event_log = TextInput(readonly=True, multiline=True, font_size=max(14, self.gui_font_size * 0.6))
             status_panel.add_widget(self.event_log)
             root.add_widget(status_panel)
@@ -1662,12 +1907,27 @@ def run_gui(args):
             Window.bind(on_resize=self._on_window_resize)
             Window.bind(on_mouse_scroll=self._on_mouse_scroll)
             self._apply_large_font_to_widget_tree(controls)
+            self._build_field_validators()
+            self._load_custom_presets()
+            self._refresh_preset_spinner()
             self._register_section_defaults()
             self._select_workflow_card(self.selected_workflow_key)
             self._update_artifact_panel()
             self._update_checklist_status()
+            self.critical_widgets = [
+                self.input_source_mode_spinner,
+                self.input_source_value_input,
+                self.profile_spinner,
+                self.profile_name_input,
+                self.section_spinner,
+                btn_apply_profile,
+                btn_reset_section,
+                btn_apply_preset,
+                btn_save_preset,
+            ] + list(self.run_config_fields.values())
             self._refresh_focus_styles()
             self._set_capture_state("idle")
+            self._set_job_state("idle", progress=0)
             self._set_status("info", "GUI gotowe. Wybierz zakładkę i uruchom zadanie.")
             Clock.schedule_interval(self._update_frame, float(np.clip(_cfg_value(gui_cfg, "wait_ms_running", 16), 1, 200)) / 1000.0)
             return root
@@ -1688,9 +1948,7 @@ def run_gui(args):
             except ValueError as exc:
                 self._set_status("error", str(exc))
                 return
-            for warning in self._collect_path_warnings(cfg):
-                self._set_status("warning", warning)
-            self._set_status("info", "Uruchamianie track_video w tle...")
+            warnings = self._collect_path_warnings(cfg)
 
             def _run_tracking_job() -> None:
                 # Po zakończeniu pipeline odświeżamy checklistę i panel artefaktów w tym samym przebiegu.
@@ -1698,11 +1956,19 @@ def run_gui(args):
                 self._update_artifact_panel()
                 self._update_checklist_status()
 
-            self._run_background_task(
-                "Tracking",
-                _run_tracking_job,
-                f"Tracking zakończony. Wynik: {cfg.eval.output_csv}",
-            )
+            def _start_job() -> None:
+                self._set_status("info", "Uruchamianie track_video w tle...")
+                self._run_background_task(
+                    "Tracking",
+                    _run_tracking_job,
+                    f"Tracking zakończony. Wynik: {cfg.eval.output_csv}",
+                )
+
+            if warnings:
+                msg = "Wykryto istniejące pliki wyjściowe:\n- " + "\n- ".join(warnings) + "\nKontynuować nadpisanie?"
+                self._confirm_action("Potwierdzenie nadpisania", msg, _start_job)
+                return
+            _start_job()
 
         def _run_calibration(self):
             """Waliduje formularz Calibration i uruchamia kalibrację bez użycia shella."""
@@ -1828,6 +2094,7 @@ def run_gui(args):
             """Buduje pełny model konfiguracji z aktualnego stanu kontrolek GUI."""
             fields = self.run_config_fields
             self._sync_input_source_fields()
+            self._validate_visible_fields()
             cfg = RunConfig(
                 input=InputConfig(
                     video=self._parse_optional_text(fields["input.video"].text),
@@ -1924,16 +2191,25 @@ def run_gui(args):
             except ValueError as exc:
                 self._set_status("error", str(exc))
                 return
-            for warning in self._collect_path_warnings(cfg):
-                self._set_status("warning", warning)
             export_path = self.output_dir / f"{self.video_files[self.current_video_idx].stem}_run_config.yaml"
-            try:
-                save_run_config(cfg, export_path)
-            except RuntimeError:
-                export_path = self.output_dir / f"{self.video_files[self.current_video_idx].stem}_run_config.json"
-                save_run_config(cfg, export_path)
-            self.status_label.text = f"Wyeksportowano run config: {export_path}"
-            print(f"[GUI] Wyeksportowano run config: {export_path}")
+            def _do_export() -> None:
+                nonlocal export_path
+                try:
+                    save_run_config(cfg, export_path)
+                except RuntimeError:
+                    export_path = self.output_dir / f"{self.video_files[self.current_video_idx].stem}_run_config.json"
+                    save_run_config(cfg, export_path)
+                self.status_label.text = f"Wyeksportowano run config: {export_path}"
+                print(f"[GUI] Wyeksportowano run config: {export_path}")
+
+            if export_path.exists():
+                self._confirm_action(
+                    "Potwierdzenie nadpisania",
+                    f"Plik {export_path} już istnieje. Czy nadpisać?",
+                    _do_export,
+                )
+                return
+            _do_export()
 
         def _on_key_down(self, _, key, __, ___, ____):
             if key == 113:
