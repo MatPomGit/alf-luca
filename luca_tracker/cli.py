@@ -127,6 +127,18 @@ def build_parser():
     p_track.add_argument("--hsv_lower", help="Dolna granica HSV np. 0,80,80")
     p_track.add_argument("--hsv_upper", help="Górna granica HSV np. 10,255,255")
     p_track.add_argument("--multi_track", action="store_true", help="Śledzenie wielu plamek jednocześnie")
+    p_track.add_argument(
+        "--use_single_object_ekf",
+        action="store_true",
+        default=True,
+        help="W trybie single-object użyj SingleObjectEKFTracker dla większej odporności na artefakty.",
+    )
+    p_track.add_argument(
+        "--no_single_object_ekf",
+        action="store_false",
+        dest="use_single_object_ekf",
+        help="Wyłącz EKF w trybie single-object (tryb diagnostyczny/raw detekcje).",
+    )
     p_track.add_argument("--max_spots", type=int, default=1, help="Maksymalna liczba plamek na klatkę")
     p_track.add_argument("--max_distance", type=float, default=40.0, help="Maksymalny dystans przypisania między klatkami")
     p_track.add_argument("--max_missed", type=int, default=10, help="Maksymalna liczba zgubionych klatek dla toru")
@@ -134,7 +146,7 @@ def build_parser():
     p_track.add_argument("--area_weight", type=float, default=0.35, help="Waga różnicy pola w score parowania")
     p_track.add_argument("--circularity_weight", type=float, default=0.2, help="Waga różnicy circularity w score parowania")
     p_track.add_argument("--brightness_weight", type=float, default=0.0, help="Waga różnicy średniej jasności w score parowania")
-    p_track.add_argument("--min_match_score", type=float, default=1.0, help="Maksymalny akceptowalny score pary track-detection")
+    p_track.add_argument("--min_match_score", type=float, default=0.5, help="Minimalny akceptowalny score pary track-detection (0..1)")
     p_track.add_argument("--speed_gate_gain", type=float, default=1.5, help="Wpływ prędkości toru na dynamiczną bramkę dystansu")
     p_track.add_argument("--error_gate_gain", type=float, default=1.0, help="Wpływ historii błędów dopasowania na dynamiczną bramkę")
     p_track.add_argument("--min_dynamic_distance", type=float, default=12.0, help="Dolny limit dynamicznej bramki dystansu")

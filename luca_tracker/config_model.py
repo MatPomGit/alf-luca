@@ -57,6 +57,7 @@ class TrackerConfig:
     """Konfiguracja algorytmu przypisywania detekcji do torów."""
 
     multi_track: bool = False
+    use_single_object_ekf: bool = True
     max_distance: float = 40.0
     max_missed: int = 10
     selection_mode: str = "stablest"
@@ -64,7 +65,7 @@ class TrackerConfig:
     area_weight: float = 0.35
     circularity_weight: float = 0.2
     brightness_weight: float = 0.0
-    min_match_score: float = 1.0
+    min_match_score: float = 0.5
     speed_gate_gain: float = 1.5
     error_gate_gain: float = 1.0
     min_dynamic_distance: float = 12.0
@@ -206,6 +207,7 @@ def run_config_to_pipeline_config(config: RunConfig):
         display=config.input.display,
         interactive=config.input.interactive,
         multi_track=config.tracker.multi_track,
+        use_single_object_ekf=config.tracker.use_single_object_ekf,
         selection_mode=config.tracker.selection_mode,
         output_csv=config.eval.output_csv,
         trajectory_png=config.eval.trajectory_png,
@@ -253,6 +255,7 @@ def pipeline_config_to_run_config(config) -> RunConfig:
         detector=DetectorConfig(**asdict(config.detector)),
         tracker=TrackerConfig(
             multi_track=config.multi_track,
+            use_single_object_ekf=getattr(config, "use_single_object_ekf", True),
             max_distance=config.tracker.max_distance,
             max_missed=config.tracker.max_missed,
             selection_mode=config.selection_mode,

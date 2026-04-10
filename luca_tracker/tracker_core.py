@@ -24,7 +24,7 @@ class TrackerConfig:
     area_weight: float = 0.35
     circularity_weight: float = 0.2
     brightness_weight: float = 0.0
-    min_match_score: float = 1.0
+    min_match_score: float = 0.5
     speed_gate_gain: float = 1.5
     error_gate_gain: float = 1.0
     min_dynamic_distance: float = 12.0
@@ -42,7 +42,7 @@ class SimpleMultiTracker:
         area_weight: float = 0.35,
         circularity_weight: float = 0.2,
         brightness_weight: float = 0.0,
-        min_match_score: float = 1.0,
+        min_match_score: float = 0.5,
         speed_gate_gain: float = 1.5,
         error_gate_gain: float = 1.0,
         min_dynamic_distance: float = 12.0,
@@ -55,7 +55,8 @@ class SimpleMultiTracker:
         self.area_weight = max(0.0, float(area_weight))
         self.circularity_weight = max(0.0, float(circularity_weight))
         self.brightness_weight = max(0.0, float(brightness_weight))
-        self.min_match_score = max(0.0, float(min_match_score))
+        # Trzymamy minimalny score akceptacji w zakresie [0, 1].
+        self.min_match_score = max(0.0, min(1.0, float(min_match_score)))
         self.speed_gate_gain = max(0.0, float(speed_gate_gain))
         self.error_gate_gain = max(0.0, float(error_gate_gain))
         self.min_dynamic_distance = max(1.0, float(min_dynamic_distance))
@@ -79,8 +80,8 @@ class SimpleMultiTracker:
         gate = self.max_distance + self.speed_gate_gain * speed + self.error_gate_gain * avg_error
         return max(self.min_dynamic_distance, min(self.max_dynamic_distance, gate))
 
-    def _compute_match_score(self, track: Dict, det: Detection, dist: float, gate: float) -> float:
-        """Składa końcowy score dopasowania track-detection z wielu cech opisowych."""
+    def _compute_match_cost(self, track: Dict, det: Detection, dist: float, gate: float) -> float:
+        """Składa końcowy koszt dopasowania track-detection z wielu cech opisowych."""
         # Składowa dystansu jest normalizowana przez dynamiczną bramkę toru.
         dist_norm = dist / max(gate, 1e-6)
         area_diff = self._safe_rel_diff(track.get("last_area"), det.area)
@@ -92,6 +93,11 @@ class SimpleMultiTracker:
             + self.circularity_weight * circ_diff
             + self.brightness_weight * brightness_diff
         )
+
+    @staticmethod
+    def _cost_to_acceptance(cost: float) -> float:
+        """Mapuje koszt na score akceptacji [0,1], gdzie 1 oznacza idealną zgodność."""
+        return 1.0 / (1.0 + max(0.0, float(cost)))
 
     @staticmethod
     def _distance(a: Tuple[float, float], b: Tuple[float, float]) -> float:
@@ -108,13 +114,14 @@ class SimpleMultiTracker:
             dynamic_gate = self._compute_dynamic_gate(track)
             for j, det in enumerate(detections):
                 dist = self._distance(last_xy, (det.x, det.y))
-                score = self._compute_match_score(track, det, dist, dynamic_gate)
-                pairs.append((score, dist, dynamic_gate, tid, j))
+                cost = self._compute_match_cost(track, det, dist, dynamic_gate)
+                acceptance = self._cost_to_acceptance(cost)
+                pairs.append((cost, acceptance, dist, dynamic_gate, tid, j))
         pairs.sort(key=lambda x: x[0])
 
-        for score, dist, dynamic_gate, tid, j in pairs:
+        for cost, acceptance, dist, dynamic_gate, tid, j in pairs:
             # Odrzucamy pary poza bramką lub z wynikiem poniżej jakości akceptowalnej.
-            if dist > dynamic_gate or score > self.min_match_score:
+            if dist > dynamic_gate or acceptance < self.min_match_score:
                 continue
             if tid in assigned_tracks or j in assigned_detections:
                 continue
@@ -122,7 +129,8 @@ class SimpleMultiTracker:
             det = detections[j]
             prev_xy = track["last_xy"]
             track["speed"] = self._distance(prev_xy, (det.x, det.y))
-            track["match_errors"].append(float(dist))
+            # Do historii błędów odkładamy koszt parowania, aby dynamiczna bramka reagowała na jakość asocjacji.
+            track["match_errors"].append(float(cost))
             track["last_xy"] = (det.x, det.y)
             track["last_area"] = float(det.area)
             track["last_circularity"] = float(det.circularity)
@@ -466,6 +474,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=float, default=30.0)
     parser.add_argument("--max_distance", type=float, default=40.0)
     parser.add_argument("--max_missed", type=int, default=10)
+    parser.add_argument("--distance_weight", type=float, default=1.0)
+    parser.add_argument("--area_weight", type=float, default=0.35)
+    parser.add_argument("--circularity_weight", type=float, default=0.2)
+    parser.add_argument("--brightness_weight", type=float, default=0.0)
+    parser.add_argument("--min_match_score", type=float, default=0.5)
+    parser.add_argument("--speed_gate_gain", type=float, default=1.5)
+    parser.add_argument("--error_gate_gain", type=float, default=1.0)
+    parser.add_argument("--min_dynamic_distance", type=float, default=12.0)
+    parser.add_argument("--max_dynamic_distance", type=float, default=150.0)
     parser.add_argument("--selection_mode", choices=["largest", "stablest", "longest"], default="stablest")
     parser.add_argument("--output_json", help="Optional output path with tracker summary.")
     return parser
@@ -491,6 +508,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         max_distance=args.max_distance,
         max_missed=args.max_missed,
         selection_mode=args.selection_mode,
+        distance_weight=args.distance_weight,
+        area_weight=args.area_weight,
+        circularity_weight=args.circularity_weight,
+        brightness_weight=args.brightness_weight,
+        min_match_score=args.min_match_score,
+        speed_gate_gain=args.speed_gate_gain,
+        error_gate_gain=args.error_gate_gain,
+        min_dynamic_distance=args.min_dynamic_distance,
+        max_dynamic_distance=args.max_dynamic_distance,
     )
     result = run_tracker_with_config(frames, fps=args.fps, config=config)
 
