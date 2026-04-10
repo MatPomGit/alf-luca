@@ -192,6 +192,7 @@ bez trenowania modeli i bez generowania ciężkich artefaktów (PDF/MP4).
 
 - Manifest scenariuszy: `video/scenarios/scenarios.json`
 - Opis scenariuszy i zasad rozbudowy: `video/scenarios/README.md`
+- Krótka karta przypadków testowych: `video/scenarios/cases.md`
 
 Scenariusze obejmują m.in. przypadki:
 
@@ -215,6 +216,16 @@ python tools/quality_benchmark.py \
   --scenarios video/scenarios/scenarios.json \
   --output-dir output/quality_benchmark \
   --label after_changes
+```
+
+Aby dostać raport z różnicami „przed/po”, podaj CSV z uruchomienia bazowego:
+
+```bash
+python tools/quality_benchmark.py \
+  --scenarios video/scenarios/scenarios.json \
+  --output-dir output/quality_benchmark \
+  --label after_changes \
+  --baseline-csv output/quality_benchmark/<run_before>/benchmark_summary.csv
 ```
 
 ### Jakie metryki są liczone

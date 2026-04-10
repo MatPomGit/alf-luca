@@ -26,3 +26,6 @@ Każdy wpis zawiera:
 1. Dodawaj nowe scenariusze jako osobne wpisy JSON (bez usuwania starych).
 2. Utrzymuj spójne nazewnictwo w `name` (np. `reflections_*`, `flicker_*`, `dynamic_bg_*`).
 3. W `notes` zapisuj, czego oczekujesz po algorytmie (np. „niski udział predykcji Kalmana”).
+
+
+Dodatkowa szybka ściąga scen znajduje się w pliku `cases.md`.
