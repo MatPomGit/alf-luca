@@ -34,6 +34,45 @@ GUI_SELECTION_MODES = ["largest", "stablest", "longest"]
 GUI_COLOR_NAMES = list(COLOR_PRESETS.keys())
 GUI_SPEED_FACTORS = [1.0, 1.25, 1.5, 2.0, 3.0, 5.0, 10.0, 20.0]
 MP4_QUALITY_TOOL_PATH = "tools/video_tool.py"
+WORKFLOW_CARDS = {
+    "calibration": {
+        "title": "Kalibracja kamery",
+        "mode": "calibration",
+        "goal": "Wyznaczenie parametrów kamery i szybka walidacja obrazu surowego vs. skorygowanego.",
+        "required_inputs": "Wideo kalibracyjne + opcjonalny plik calib.",
+        "profile": {
+            "detector.track_mode": "brightness",
+            "detector.threshold_mode": "fixed",
+            "tracker.multi_track": "false",
+            "detector.max_spots": "1",
+        },
+    },
+    "processing": {
+        "title": "Śledzenie produkcyjne",
+        "mode": "processing",
+        "goal": "Stabilne śledzenie obiektu i zapis pełnych artefaktów analizy.",
+        "required_inputs": "Wideo wejściowe + ROI + parametry detektora/tracker.",
+        "profile": {
+            "detector.track_mode": "brightness",
+            "detector.threshold_mode": "adaptive",
+            "tracker.multi_track": "true",
+            "postprocess.use_kalman": "true",
+            "detector.max_spots": "3",
+        },
+    },
+    "compare": {
+        "title": "Porównanie scenariuszy",
+        "mode": "compare",
+        "goal": "Porównanie detekcji brightness vs color na tych samych klatkach.",
+        "required_inputs": "Wideo wejściowe + wspólne progi segmentacji.",
+        "profile": {
+            "detector.track_mode": "color",
+            "detector.threshold_mode": "otsu",
+            "tracker.multi_track": "false",
+            "detector.max_spots": "2",
+        },
+    },
+}
 GUI_SLIDER_STEP = {
     "Threshold": 1,
     "Blur": 2,
@@ -298,6 +337,7 @@ def run_gui(args):
         from kivy.graphics.texture import Texture
         from kivy.uix.boxlayout import BoxLayout
         from kivy.uix.button import Button
+        from kivy.uix.checkbox import CheckBox
         from kivy.uix.image import Image
         from kivy.uix.label import Label
         from kivy.uix.tabbedpanel import TabbedPanel, TabbedPanelItem
@@ -403,6 +443,11 @@ def run_gui(args):
             self.recording_base_path: Optional[Path] = None
             # Mapa kontrolek formularza RunConfig używana do pełnego importu/eksportu ustawień.
             self.run_config_fields: Dict[str, TextInput] = {}
+            self.selected_workflow_key = "processing"
+            self.workflow_card_buttons: Dict[str, Button] = {}
+            self.section_defaults: Dict[str, Dict[str, str]] = {}
+            self.artifact_labels: Dict[str, Label] = {}
+            self.checklist_checks: Dict[str, CheckBox] = {}
 
         def _open_video(self, idx: int):
             cap = cv2.VideoCapture(str(self.video_files[idx]))
@@ -518,6 +563,8 @@ def run_gui(args):
                 self.run_config_fields["eval.report_pdf"].text = str(self.output_dir / f"{stem}_report.pdf")
                 self.run_config_fields["eval.all_tracks_csv"].text = str(self.output_dir / f"{stem}_all_tracks.csv")
                 self.run_config_fields["eval.annotated_video"].text = str(self.output_dir / f"{stem}_annotated.mp4")
+                self._update_artifact_panel()
+                self._update_checklist_status()
 
         def _make_slider(self, label: str, min_v: float, max_v: float, value: float, step: float, on_change):
             # Buduje jeden wiersz suwaka i zwraca referencję do kontrolki, aby obsłużyć nawigację klawiaturą/myszką.
@@ -729,6 +776,109 @@ def run_gui(args):
             header.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
             container.add_widget(header)
 
+        def _register_section_defaults(self) -> None:
+            """Zapamiętuje wartości startowe pól per sekcja, aby reset działał tylko lokalnie."""
+            sections = ["input", "detector", "tracker", "postprocess", "pose", "eval"]
+            self.section_defaults = {section: {} for section in sections}
+            for key, widget in self.run_config_fields.items():
+                section = key.split(".", 1)[0]
+                if section in self.section_defaults:
+                    self.section_defaults[section][key] = widget.text
+
+        def _select_workflow_card(self, workflow_key: str) -> None:
+            """Aktywuje kartę workflow i aktualizuje tryb podglądu zgodnie ze scenariuszem."""
+            if workflow_key not in WORKFLOW_CARDS:
+                return
+            self.selected_workflow_key = workflow_key
+            self.mode = WORKFLOW_CARDS[workflow_key]["mode"]
+            for key, button in self.workflow_card_buttons.items():
+                button.background_color = (0.2, 0.5, 0.9, 1) if key == workflow_key else (0.2, 0.2, 0.2, 1)
+            if hasattr(self, "workflow_goal_label"):
+                card = WORKFLOW_CARDS[workflow_key]
+                self.workflow_goal_label.text = (
+                    f"[b]Cel:[/b] {card['goal']}\n[b]Wymagane wejścia:[/b] {card['required_inputs']}"
+                )
+            self._update_checklist_status()
+
+        def _apply_workflow_profile(self, *_args) -> None:
+            """Wczytuje predefiniowany profil parametrów dla bieżącej karty workflow."""
+            card = WORKFLOW_CARDS.get(self.selected_workflow_key, {})
+            profile = card.get("profile", {})
+            for field_name, value in profile.items():
+                if field_name in self.run_config_fields:
+                    self.run_config_fields[field_name].text = str(value)
+            if "detector.track_mode" in self.run_config_fields:
+                self.track_mode = self.run_config_fields["detector.track_mode"].text.strip() or self.track_mode
+                self.track_spinner.text = self.track_mode
+            if "detector.threshold_mode" in self.run_config_fields:
+                self.threshold_mode = self.run_config_fields["detector.threshold_mode"].text.strip() or self.threshold_mode
+                self.threshold_mode_spinner.text = self.threshold_mode
+            if "detector.max_spots" in self.run_config_fields:
+                try:
+                    self.max_spots = int(self.run_config_fields["detector.max_spots"].text.strip())
+                    self.slider_refs["Max spots"].value = _clip_slider(self.max_spots, 1, 20)
+                except ValueError:
+                    pass
+            if "tracker.multi_track" in self.run_config_fields:
+                self.multi_track = self.run_config_fields["tracker.multi_track"].text.strip().lower() in {"1", "true", "yes", "on"}
+                self.btn_multi.state = "down" if self.multi_track else "normal"
+                self.btn_multi.text = "Multi track: ON" if self.multi_track else "Multi track: OFF"
+            self._set_status("info", f"Załadowano profil: {card.get('title', self.selected_workflow_key)}")
+            self._update_checklist_status()
+
+        def _reset_current_section(self, *_args) -> None:
+            """Resetuje wyłącznie aktywną sekcję formularza, bez ingerencji w pozostałe pola."""
+            section = self.section_spinner.text.strip().lower()
+            defaults = self.section_defaults.get(section, {})
+            for key, value in defaults.items():
+                if key in self.run_config_fields:
+                    self.run_config_fields[key].text = value
+            self._set_status("info", f"Zresetowano sekcję: {section}")
+            self._update_artifact_panel()
+            self._update_checklist_status()
+
+        def _update_artifact_panel(self) -> None:
+            """Odświeża panel wyników i pokazuje ścieżki do artefaktów generowanych przez pipeline."""
+            mapping = {
+                "CSV (tracking)": "eval.output_csv",
+                "CSV (report)": "eval.report_csv",
+                "CSV (all tracks)": "eval.all_tracks_csv",
+                "PDF": "eval.report_pdf",
+                "PNG": "eval.trajectory_png",
+                "MP4": "eval.annotated_video",
+            }
+            for label, field_key in mapping.items():
+                widget = self.run_config_fields.get(field_key)
+                target = widget.text.strip() if widget else ""
+                marker = "✅" if target and Path(target).exists() else "⏳"
+                if label in self.artifact_labels:
+                    self.artifact_labels[label].text = f"{marker} {label}: {target or '-'}"
+
+        def _update_checklist_status(self) -> None:
+            """Aktualizuje checklistę etapów workflow na bazie stanu formularza i wyników."""
+            input_video_widget = self.run_config_fields.get("input.video")
+            input_camera_widget = self.run_config_fields.get("input.camera")
+            has_input = bool(input_video_widget and input_video_widget.text.strip()) or bool(
+                input_camera_widget and input_camera_widget.text.strip()
+            )
+            has_parameters = all(
+                self.run_config_fields.get(key) and self.run_config_fields[key].text.strip()
+                for key in ("detector.track_mode", "detector.threshold_mode", "tracker.max_distance")
+            )
+            has_run = bool(self.analysis_rows)
+            has_artifacts = any(
+                label.text.startswith("✅") for label in self.artifact_labels.values()
+            )
+            states = {
+                "input": has_input,
+                "params": has_parameters,
+                "run": has_run,
+                "artifacts": has_artifacts,
+            }
+            for key, value in states.items():
+                if key in self.checklist_checks:
+                    self.checklist_checks[key].active = value
+
         def _parse_required(self, raw: str, name: str) -> str:
             """Waliduje pole wymagane i zwraca oczyszczoną wartość."""
             val = raw.strip()
@@ -915,18 +1065,45 @@ def run_gui(args):
             controls = BoxLayout(orientation="vertical", spacing=6, size_hint_y=None)
             controls.bind(minimum_height=controls.setter("height"))
 
+            workflow_header = Label(
+                text="[b]Workflow cards[/b]",
+                markup=True,
+                size_hint_y=None,
+                height=self.row_height,
+                halign="left",
+                valign="middle",
+                font_size=self.gui_font_size,
+            )
+            workflow_header.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+            controls.add_widget(workflow_header)
+            workflow_cards_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=int(self.row_height * 1.2), spacing=8)
+            for key, card in WORKFLOW_CARDS.items():
+                btn = Button(text=card["title"])
+                btn.bind(on_press=lambda _, workflow_key=key: self._select_workflow_card(workflow_key))
+                self.workflow_card_buttons[key] = btn
+                workflow_cards_row.add_widget(btn)
+                self.nav_targets.append((f"Workflow {card['title']}", btn))
+            controls.add_widget(workflow_cards_row)
+            self.workflow_goal_label = Label(
+                text="",
+                markup=True,
+                size_hint_y=None,
+                height=int(self.row_height * 1.4),
+                halign="left",
+                valign="middle",
+                font_size=max(14, int(self.gui_font_size * 0.65)),
+            )
+            self.workflow_goal_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+            controls.add_widget(self.workflow_goal_label)
+
             row_top = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
             self.video_spinner = Spinner(
                 text=self.video_files[self.current_video_idx].name,
                 values=[p.name for p in self.video_files],
-                size_hint_x=0.3,
+                size_hint_x=0.35,
             )
             self.video_spinner.bind(text=self._on_video_change)
             row_top.add_widget(self.video_spinner)
-
-            self.mode_spinner = Spinner(text=self.mode, values=GUI_MODES, size_hint_x=0.2)
-            self.mode_spinner.bind(text=lambda _, val: setattr(self, "mode", val))
-            row_top.add_widget(self.mode_spinner)
 
             self.track_spinner = Spinner(text=self.track_mode, values=["brightness", "color"], size_hint_x=0.2)
             self.track_spinner.bind(text=lambda _, val: setattr(self, "track_mode", val))
@@ -952,13 +1129,28 @@ def run_gui(args):
             self.nav_targets.extend(
                 [
                     ("Video", self.video_spinner),
-                    ("Mode", self.mode_spinner),
                     ("Track", self.track_spinner),
                     ("Threshold mode", self.threshold_mode_spinner),
                     ("Color", self.color_spinner),
                     ("Speed", self.speed_spinner),
                 ]
             )
+
+            checklist_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=12)
+            checklist_items = [
+                ("input", "1. Wejście"),
+                ("params", "2. Parametry"),
+                ("run", "3. Uruchomienie"),
+                ("artifacts", "4. Eksport artefaktów"),
+            ]
+            for key, text in checklist_items:
+                item = BoxLayout(orientation="horizontal", spacing=4)
+                checkbox = CheckBox(disabled=True)
+                self.checklist_checks[key] = checkbox
+                item.add_widget(checkbox)
+                item.add_widget(Label(text=text, halign="left", valign="middle", font_size=max(14, int(self.gui_font_size * 0.62))))
+                checklist_row.add_widget(item)
+            controls.add_widget(checklist_row)
 
             self._build_section_header(controls, "RunConfig / input")
             self.run_config_fields["input.video"] = self._build_labeled_input(controls, "input.video", str(self.video_files[self.current_video_idx]))
@@ -1047,6 +1239,46 @@ def run_gui(args):
             }
             for key, value in eval_defaults.items():
                 self.run_config_fields[key] = self._build_labeled_input(controls, key, value)
+                self.run_config_fields[key].bind(text=lambda *_: self._update_artifact_panel())
+
+            scenario_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.row_height, spacing=8)
+            self.section_spinner = Spinner(
+                text="detector",
+                values=["input", "detector", "tracker", "postprocess", "pose", "eval"],
+                size_hint_x=0.25,
+            )
+            scenario_row.add_widget(self.section_spinner)
+            btn_apply_profile = Button(text="Zastosuj profil scenariusza", size_hint_x=0.45)
+            btn_apply_profile.bind(on_press=self._apply_workflow_profile)
+            scenario_row.add_widget(btn_apply_profile)
+            btn_reset_section = Button(text="Reset bieżącej sekcji", size_hint_x=0.30)
+            btn_reset_section.bind(on_press=self._reset_current_section)
+            scenario_row.add_widget(btn_reset_section)
+            controls.add_widget(scenario_row)
+            self.nav_targets.extend(
+                [
+                    ("Sekcja resetu", self.section_spinner),
+                    ("Zastosuj profil", btn_apply_profile),
+                    ("Reset sekcji", btn_reset_section),
+                ]
+            )
+
+            self._build_section_header(controls, "Wyniki i artefakty")
+            artifacts_panel = BoxLayout(orientation="vertical", size_hint_y=None, spacing=4)
+            artifacts_panel.bind(minimum_height=artifacts_panel.setter("height"))
+            for label in ["CSV (tracking)", "CSV (report)", "CSV (all tracks)", "PDF", "PNG", "MP4"]:
+                path_label = Label(
+                    text=f"⏳ {label}: -",
+                    size_hint_y=None,
+                    height=max(22, int(self.gui_font_size * 0.8)),
+                    halign="left",
+                    valign="middle",
+                    font_size=max(14, int(self.gui_font_size * 0.62)),
+                )
+                path_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+                self.artifact_labels[label] = path_label
+                artifacts_panel.add_widget(path_label)
+            controls.add_widget(artifacts_panel)
 
             slider_rows = [
                 ("Threshold", 0, 255, self.threshold, 1, lambda v: setattr(self, "threshold", int(v))),
@@ -1257,6 +1489,10 @@ def run_gui(args):
             Window.bind(on_resize=self._on_window_resize)
             Window.bind(on_mouse_scroll=self._on_mouse_scroll)
             self._apply_large_font_to_widget_tree(controls)
+            self._register_section_defaults()
+            self._select_workflow_card(self.selected_workflow_key)
+            self._update_artifact_panel()
+            self._update_checklist_status()
             self._refresh_focus_styles()
             self._set_capture_state("idle")
             self._set_status("info", "GUI gotowe. Wybierz zakładkę i uruchom zadanie.")
@@ -1280,9 +1516,16 @@ def run_gui(args):
                 self._set_status("error", str(exc))
                 return
             self._set_status("info", "Uruchamianie track_video w tle...")
+
+            def _run_tracking_job() -> None:
+                # Po zakończeniu pipeline odświeżamy checklistę i panel artefaktów w tym samym przebiegu.
+                track_video(cfg)
+                self._update_artifact_panel()
+                self._update_checklist_status()
+
             self._run_background_task(
                 "Tracking",
-                lambda: track_video(cfg),
+                _run_tracking_job,
                 f"Tracking zakończony. Wynik: {cfg.eval.output_csv}",
             )
 
@@ -1563,8 +1806,8 @@ def run_gui(args):
             self.track_mode = "brightness"
             self.max_spots = 1
             self.mode = "processing"
+            self._select_workflow_card("processing")
 
-            self.mode_spinner.text = self.mode
             self.track_spinner.text = self.track_mode
             self.threshold_mode_spinner.text = self.threshold_mode
             self.color_spinner.text = self.color_name
