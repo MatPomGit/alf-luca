@@ -17,6 +17,10 @@ dependencies = [
     "luca-publishing",
 ]
 
+[tool.setuptools]
+package-dir = {"" = "."}
+
 [tool.setuptools.packages.find]
-where = [".."]
-include = ["luca_tracker*"]
+where = ["."]
+include = ["luca_tracker", "luca_tracker.*"]
+exclude = ["packages", "packages.*"]

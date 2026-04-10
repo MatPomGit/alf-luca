@@ -42,3 +42,10 @@ Tryb bez `--write` wykonuje tylko podgląd zmian.
 - Wydanie N: pełna fasada `luca_tracker` + ostrzeżenia `DeprecationWarning`.
 - Wydanie N+1: utrzymanie ostrzeżeń i codemoda, komunikacja o dacie usunięcia.
 - Wydanie N+2: usunięcie eksportów legacy i pozostawienie minimalnego shim zgłaszającego czytelny błąd migracyjny.
+
+## Rozważenie relokacji legacy shim do `packages/luca-tracker/src/luca_tracker`
+
+- Rekomendowany kierunek: przenieść shim do `packages/luca-tracker/src/luca_tracker`, aby wszystkie dystrybucje korzystały ze spójnego układu `src/`.
+- Korzyść: uproszczenie CI/CD i ograniczenie ryzyka przypadkowego pakowania plików spoza shim.
+- Warunek migracji: równoległa aktualizacja ścieżek dokumentacji, skryptów developerskich oraz testów importów legacy.
+- Status: do wykonania w osobnym kroku refaktoryzacyjnym, ponieważ zmienia strukturę repozytorium i wymaga koordynacji wielu pakietów.
