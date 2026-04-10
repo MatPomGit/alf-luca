@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "luca-input"
+version = "0.1.0"
+description = "Pakiet wydzielony z luca_tracker"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+    "luca-types",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

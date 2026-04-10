@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "luca-tracking"
+version = "0.1.0"
+description = "Pakiet wydzielony z luca_tracker"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "luca-types",
+    "luca-input",
+    "luca-processing",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
