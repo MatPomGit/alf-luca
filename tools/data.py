@@ -27,7 +27,7 @@ class SeriesData:
 
 RUN_METADATA_FIELDS = (
     "run_id",
-    "video_file",
+    "input_source",
     "detector_name",
     "smoother_name",
     "config_hash",
@@ -109,7 +109,10 @@ def extract_series(data: MeasurementFile, x_col: str, y_col: str) -> SeriesData:
 def extract_run_metadata(data: MeasurementFile) -> Dict[str, str]:
     """Pobiera metadane uruchomienia z pierwszego rekordu CSV."""
     first = data.rows[0] if data.rows else {}
-    return {name: (first.get(name) or "").strip() for name in RUN_METADATA_FIELDS}
+    metadata = {name: (first.get(name) or "").strip() for name in RUN_METADATA_FIELDS}
+    if not metadata["input_source"]:
+        metadata["input_source"] = (first.get("video_file") or "").strip()
+    return metadata
 
 
 def format_series_label(data: MeasurementFile) -> str:

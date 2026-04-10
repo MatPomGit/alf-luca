@@ -2,13 +2,14 @@ from __future__ import annotations
 import argparse
 import glob
 import os
-import time
 import sys
-from typing import List, Optional, Sequence
+import time
+from typing import List, Optional
 
 from .io_paths import (
     build_measurement_stem,
     ensure_output_dir,
+    parse_camera_source,
     resolve_analysis_input,
     resolve_output_path,
     with_default,
@@ -53,7 +54,7 @@ def build_parser():
     # Metadane GUI ładujemy leniwie, aby parser CLI działał nawet bez OpenCV/Kivy.
     gui_colors, gui_selection_modes, mp4_tool_path = _load_gui_metadata()
     parser = argparse.ArgumentParser(
-        description="Śledzenie jasnej lub kolorowej plamki światła w video (np. MP4/MKV/AVI/MOV/WEBM). Obsługuje także opcjonalne wygładzanie filtrem Kalmana."
+        description="Śledzenie jasnej lub kolorowej plamki światła w materiale wideo albo na kamerze na żywo. Obsługuje także opcjonalne wygładzanie filtrem Kalmana."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -66,7 +67,9 @@ def build_parser():
 
     p_track = subparsers.add_parser("track", help="Śledzenie plamki")
     p_track.add_argument("--config", help="Pełna konfiguracja uruchomienia z pliku JSON/YAML (.json/.yaml/.yml)")
-    p_track.add_argument("--video", help="Plik wejściowy wideo (np. MP4/MKV/AVI/MOV/WEBM)")
+    track_source = p_track.add_mutually_exclusive_group()
+    track_source.add_argument("--video", help="Plik wejściowy wideo (np. MP4/MKV/AVI/MOV/WEBM)")
+    track_source.add_argument("--camera", help="Kamera na żywo: indeks OpenCV (np. 0) albo ścieżka urządzenia")
     p_track.add_argument("--calib_file", help="Plik kalibracji .npz")
     p_track.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
     p_track.add_argument("--threshold", type=int, default=200, help="Próg jasności")
@@ -167,23 +170,6 @@ def build_parser():
     return parser
 
 
-def normalize_legacy_argv(argv: Sequence[str]) -> List[str]:
-    # Normalizujemy stary interfejs `--mode`, aby zachować zgodność wsteczną.
-    args = list(argv)
-    commands = {"calibrate", "track", "compare", "gui", "ros2"}
-    if not args:
-        return ["gui"]
-    if args[0] in commands:
-        return args
-    if "--mode" in args:
-        mode_idx = args.index("--mode")
-        if mode_idx + 1 < len(args):
-            mode = args[mode_idx + 1]
-            if mode in commands:
-                return [mode, *args[:mode_idx], *args[mode_idx + 2 :]]
-    return args
-
-
 def pick_default_gui_video() -> Optional[str]:
     # Szukamy domyślnego pliku wideo według listy najczęściej używanych rozszerzeń.
     for pattern in DEFAULT_GUI_VIDEO_GLOB_PATTERNS:
@@ -196,8 +182,7 @@ def pick_default_gui_video() -> Optional[str]:
 def main():
     # Parser i argumenty CLI są przetwarzane bez importu ciężkich modułów.
     parser = build_parser()
-    argv = normalize_legacy_argv(sys.argv[1:])
-    args = parser.parse_args(argv)
+    args = parser.parse_args(sys.argv[1:])
 
     if args.command == "gui" and not getattr(args, "video", None):
         args.video = pick_default_gui_video()
@@ -218,8 +203,12 @@ def main():
         ensure_output_dir()
         if args.config:
             run_config = load_run_config(args.config)
-            run_config.input.video = resolve_analysis_input(run_config.input.video)
-            base = build_measurement_stem(run_config.input.video)
+            if bool(run_config.input.video) == bool(run_config.input.camera):
+                parser.error("Plik konfiguracyjny musi wskazywać dokładnie jedno źródło: `input.video` albo `input.camera`.")
+            source_label = run_config.input.video or f"camera:{run_config.input.camera}"
+            if run_config.input.video:
+                run_config.input.video = resolve_analysis_input(run_config.input.video)
+            base = build_measurement_stem(source_label)
             output_csv_cfg = with_default(run_config.eval.output_csv, f"{base}_track.csv")
             if output_csv_cfg == "tracking_results.csv":
                 output_csv_cfg = f"{base}_tracking_results.csv"
@@ -235,10 +224,17 @@ def main():
                 run_config.eval.annotated_video = resolve_output_path(run_config.eval.annotated_video)
             track_video(run_config_to_pipeline_config(run_config))
         else:
-            if not args.video:
-                parser.error("Dla trybu track wymagany jest --video lub --config.")
-            args.video = resolve_analysis_input(args.video)
-            base = build_measurement_stem(args.video)
+            if not args.video and not args.camera:
+                parser.error("Dla trybu track wymagane jest jedno źródło: --video albo --camera.")
+            if args.video:
+                args.video = resolve_analysis_input(args.video)
+                args.source_label = args.video
+                args.is_live_source = False
+            else:
+                args.video = parse_camera_source(args.camera)
+                args.source_label = f"camera:{args.camera}"
+                args.is_live_source = True
+            base = build_measurement_stem(args.source_label)
             output_csv_value = args.output_csv
             if output_csv_value == "tracking_results.csv":
                 output_csv_value = f"{base}_tracking_results.csv"

@@ -1,5 +1,6 @@
 input:
   video: video/sledzenie_plamki.mp4
+  camera:
   calib_file:
   display: false
   interactive: false

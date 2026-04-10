@@ -10,7 +10,8 @@ from typing import Any, Dict, Optional
 class InputConfig:
     """Konfiguracja wejścia danych oraz trybu uruchomienia pipeline'u."""
 
-    video: str
+    video: Optional[str] = None
+    camera: Optional[str] = None
     calib_file: Optional[str] = None
     display: bool = False
     interactive: bool = False
@@ -168,12 +169,22 @@ def run_config_to_pipeline_config(config: RunConfig):
     """Mapuje `RunConfig` na istniejący model `PipelineConfig` używany przez tracker."""
     # Import lokalny ogranicza zależności ciężkich modułów (np. OpenCV) tylko do momentu uruchomienia trackingu.
     from .detectors import DetectorConfig as PipelineDetectorConfig
+    from .io_paths import parse_camera_source
     from .pipeline import PipelineConfig
     from .postprocess import KalmanConfig
     from .tracker_core import TrackerConfig as PipelineTrackerConfig
 
+    if bool(config.input.video) == bool(config.input.camera):
+        raise ValueError("Konfiguracja musi zawierać dokładnie jedno źródło wejścia: `input.video` albo `input.camera`.")
+
+    source_value = config.input.video if config.input.video else parse_camera_source(config.input.camera or "")
+    source_label = config.input.video if config.input.video else f"camera:{config.input.camera}"
+    is_live_source = bool(config.input.camera)
+
     return PipelineConfig(
-        video=config.input.video,
+        video=source_value,
+        source_label=source_label,
+        is_live_source=is_live_source,
         calib_file=config.input.calib_file,
         display=config.input.display,
         interactive=config.input.interactive,
@@ -207,7 +218,8 @@ def pipeline_config_to_run_config(config) -> RunConfig:
     """Mapuje `PipelineConfig` na zunifikowany model eksportowy `RunConfig`."""
     return RunConfig(
         input=InputConfig(
-            video=config.video,
+            video=None if getattr(config, "is_live_source", False) else str(config.video),
+            camera=str(config.video) if getattr(config, "is_live_source", False) else None,
             calib_file=config.calib_file,
             display=config.display,
             interactive=config.interactive,

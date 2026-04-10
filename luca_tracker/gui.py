@@ -395,7 +395,7 @@ def run_gui(args):
             out_file = self.output_dir / f"{video_name}_gui_analysis.csv"
             # Zestaw metadanych jest zgodny z trybem `track`, aby uprościć analizę porównawczą.
             run_metadata = build_run_metadata(
-                video_file=str(self.video_files[video_idx]),
+                input_source=str(self.video_files[video_idx]),
                 detector_name=self.track_mode,
                 smoother_name="none",
                 config_payload={
@@ -424,7 +424,7 @@ def run_gui(args):
                     fieldnames=[
                         "frame_index",
                         "time_sec",
-                        "video_file",
+                        "input_source",
                         "mode",
                         "track_mode",
                         "detections",
@@ -1182,7 +1182,7 @@ def run_gui(args):
                     {
                         "frame_index": self.frame_index,
                         "time_sec": self.frame_index / self.fps,
-                        "video_file": self.video_files[self.current_video_idx].name,
+                        "input_source": self.video_files[self.current_video_idx].name,
                         "mode": self.mode,
                         "track_mode": self.track_mode,
                         "detections": len(detections),

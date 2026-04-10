@@ -33,7 +33,9 @@ from .video_export import export_annotated_video
 class PipelineConfig:
     """Pełna konfiguracja pipeline'u umożliwiająca uruchamianie niezależne od CLI."""
 
-    video: str
+    video: Any
+    source_label: str = ""
+    is_live_source: bool = False
     calib_file: Optional[str] = None
     display: bool = False
     interactive: bool = False
@@ -227,10 +229,14 @@ def calibrate_camera(calib_dir: str, rows: int, cols: int, square_size: float, o
 def _resolve_config(args_or_config) -> PipelineConfig:
     """Mapuje obiekt CLI args lub PipelineConfig na spójny model konfiguracji."""
     if isinstance(args_or_config, PipelineConfig):
+        if not args_or_config.source_label:
+            args_or_config.source_label = str(args_or_config.video)
         return args_or_config
 
     return PipelineConfig(
         video=args_or_config.video,
+        source_label=getattr(args_or_config, "source_label", str(args_or_config.video)),
+        is_live_source=getattr(args_or_config, "is_live_source", False),
         calib_file=getattr(args_or_config, "calib_file", None),
         display=getattr(args_or_config, "display", False),
         interactive=getattr(args_or_config, "interactive", False),
@@ -388,7 +394,7 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
     config = _resolve_config(args_or_config)
     cap = cv2.VideoCapture(config.video)
     if not cap.isOpened():
-        raise FileNotFoundError(f"Nie udało się otworzyć pliku video: {config.video}")
+        raise FileNotFoundError(f"Nie udało się otworzyć źródła wejściowego: {config.source_label}")
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
     fps = fps if fps > 0 else 1.0
@@ -510,11 +516,14 @@ def track_video(args_or_config):
         (
             f"Start analizy | mode={config.detector.track_mode}, "
             f"multi_track={config.multi_track}, use_kalman={config.use_kalman}, "
-            f"selection_mode={config.selection_mode}"
+            f"selection_mode={config.selection_mode}, live={config.is_live_source}"
         ),
         "magenta",
     )
-    _log_stage("OK", f"Wczytywanie pliku do analizy: {config.video}", "yellow")
+    _log_stage("OK", f"Źródło analizy: {config.source_label}", "yellow")
+
+    if config.is_live_source and config.annotated_video:
+        raise ValueError("Eksport `--annotated_video` nie jest obsługiwany dla kamery na żywo.")
 
     camera_matrix = None
     dist_coeffs = None
@@ -529,11 +538,12 @@ def track_video(args_or_config):
     main_track_id = result["main_track_id"]
     # Wspólny zestaw metadanych zapisujemy zarówno do CSV, jak i do pliku `*.run.json`.
     run_metadata = build_run_metadata(
-        video_file=config.video,
+        input_source=config.source_label,
         detector_name=config.detector.track_mode,
         smoother_name="kalman" if config.use_kalman else "none",
         config_payload={
-            "video": config.video,
+            "input_source": config.source_label,
+            "is_live_source": config.is_live_source,
             "calib_file": config.calib_file,
             "multi_track": config.multi_track,
             "selection_mode": config.selection_mode,
@@ -632,7 +642,9 @@ def _build_parser() -> argparse.ArgumentParser:
     """Tworzy lekki parser standalone dla modułu pipeline."""
     detector_names = available_detector_names()
     parser = argparse.ArgumentParser(description="Standalone tracking pipeline runner.")
-    parser.add_argument("--video", required=True)
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--video")
+    source_group.add_argument("--camera", help="Kamera na żywo: indeks OpenCV albo ścieżka urządzenia")
     parser.add_argument("--output_csv", default="tracking_results.csv")
     parser.add_argument("--track_mode", choices=detector_names, default="brightness")
     parser.add_argument("--threshold", type=int, default=200)
@@ -664,6 +676,15 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     """Punkt wejścia standalone: uruchamia pełny pipeline bez warstwy CLI aplikacji."""
     args = _build_parser().parse_args(argv)
+    if args.camera:
+        from .io_paths import parse_camera_source
+
+        args.video = parse_camera_source(args.camera)
+        args.source_label = f"camera:{args.camera}"
+        args.is_live_source = True
+    else:
+        args.source_label = str(args.video)
+        args.is_live_source = False
     track_video(args)
     return 0
 

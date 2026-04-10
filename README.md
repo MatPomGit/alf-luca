@@ -1,17 +1,15 @@
 # alf-luca
 
-Narzędzia do kalibracji kamery, śledzenia plamki światła w nagraniach oraz analizy wyników.
+Narzędzia do kalibracji kamery, śledzenia plamki światła oraz analizy wyników z pliku wideo albo kamery na żywo.
 
 ## Struktura repozytorium
 
-- `luca_tracker/` - główny pakiet aplikacji z CLI, pipeline, GUI i raportami.
-- `tools/` - pomocnicze skrypty do analizy danych, QA wideo i ekstrakcji obrazów kalibracyjnych.
-- `scripts/` - gotowe skrypty uruchomieniowe dla Linux/macOS i Windows.
-- `config/` - konfiguracje GUI oraz przykładowa konfiguracja pełnego runu.
-- `video/` - przykładowe materiały wejściowe.
-- `images_calib/` - obrazy szachownicy do kalibracji kamery.
-- `track_luca.py` - historyczny wrapper CLI zachowany dla zgodności.
-- `kalman_tracker.py` - historyczny wrapper importu zachowany dla zgodności.
+- `luca_tracker/` - główny pakiet aplikacji z CLI, pipeline, GUI, raportami i ROS2.
+- `tools/` - skrypty pomocnicze do analizy CSV, QA wideo i ekstrakcji obrazów kalibracyjnych.
+- `scripts/` - gotowe skrypty uruchomieniowe.
+- `config/` - konfiguracja GUI i przykładowa konfiguracja pełnego uruchomienia.
+- `video/` - przykładowe pliki wejściowe.
+- `images_calib/` - obrazy szachownicy do kalibracji.
 - `Dockerfile` - obraz środowiska uruchomieniowego.
 
 ## Wymagania
@@ -27,19 +25,31 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-## Uruchamianie
+## CLI
 
-Preferowane uruchomienie:
+Główne wejście:
 
 ```bash
 python -m luca_tracker --help
 ```
 
-Historyczny entrypoint nadal działa:
+Śledzenie z pliku:
 
 ```bash
-python track_luca.py --help
+python -m luca_tracker track \
+  --video video/sledzenie_plamki.mp4 \
+  --track_mode brightness
 ```
+
+Śledzenie z kamery na żywo:
+
+```bash
+python -m luca_tracker track \
+  --camera 0 \
+  --display
+```
+
+`--camera` przyjmuje indeks OpenCV, np. `0`, albo ścieżkę urządzenia, np. `/dev/video0`.
 
 Kalibracja kamery:
 
@@ -52,20 +62,6 @@ python -m luca_tracker calibrate \
   --output_file camera_calib.npz
 ```
 
-Śledzenie plamki:
-
-```bash
-python -m luca_tracker track \
-  --video video/sledzenie_plamki.mp4 \
-  --track_mode brightness
-```
-
-GUI:
-
-```bash
-python -m luca_tracker gui
-```
-
 Porównanie dwóch pomiarów:
 
 ```bash
@@ -75,39 +71,51 @@ python -m luca_tracker compare \
   --output_csv output/diff.csv
 ```
 
-## Konfiguracja
+GUI:
 
-Pełny run można opisać plikiem YAML lub JSON:
+```bash
+python -m luca_tracker gui
+```
+
+GUI działa na plikach wideo i automatycznie wybiera pliki z katalogu `video/`, jeśli nie podasz `--video`.
+
+## Konfiguracja pełnego uruchomienia
+
+Przykładowa konfiguracja znajduje się w `config/run_tracking.sample.yaml`.
+
+Uruchomienie z konfiguracji:
 
 ```bash
 python -m luca_tracker track --config config/run_tracking.sample.yaml
 ```
 
-W repo znajdują się:
+W sekcji `input` ustaw dokładnie jedno źródło:
 
-- `config/gui_display.yaml` - domyślne ustawienia GUI.
-- `config/run_tracking.sample.yaml` - przykładowa konfiguracja pełnego uruchomienia trackera.
+- `video` dla pliku
+- `camera` dla kamery na żywo
 
 ## Skrypty pomocnicze
 
 - `scripts/run_gui.sh` - uruchamia GUI na Linux/macOS.
 - `scripts/run_gui.bat` - uruchamia GUI na Windows.
 - `scripts/run_cli.sh` - przykładowe uruchomienie `track` z wynikami w `output/manual/`.
-- `scripts/run_analysis.sh` - porównanie danych przez `tools/data.py` w `output/manual/`.
+- `scripts/run_analysis.sh` - porównanie danych CSV z `output/manual/`.
 
 ## Artefakty wynikowe
 
-Domyślnie wyniki trafiają do katalogu `output/` w podfolderze z timestampem. Dotyczy to między innymi:
+Domyślnie wyniki trafiają do `output/<timestamp>/`.
+
+Typowe artefakty:
 
 - CSV z trajektorią,
 - CSV z raportem,
 - PDF z raportem,
 - PNG z wykresem trajektorii,
-- MP4 z naniesioną trajektorią.
+- MP4 z naniesioną trajektorią dla wejścia plikowego.
 
-Możesz nadpisać katalog wynikowy zmienną środowiskową `LUCA_OUTPUT_DIR`.
+Możesz nadpisać katalog wynikowy zmienną `LUCA_OUTPUT_DIR`.
 
-Skrypty z katalogu `scripts/` zapisują dane do stabilnej lokalizacji `output/manual/`, żeby łatwiej było uruchamiać kolejne kroki robocze.
+Przy kamerze na żywo zakończenie analizy następuje przez `q` w oknie podglądu albo przerwanie procesu w terminalu. Eksport `--annotated_video` jest obsługiwany tylko dla wejścia plikowego.
 
 ## Narzędzia dodatkowe
 

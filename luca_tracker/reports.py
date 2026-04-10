@@ -23,7 +23,7 @@ RunMetadata = Dict[str, str]
 
 RUN_METADATA_FIELDS = (
     "run_id",
-    "video_file",
+    "input_source",
     "detector_name",
     "smoother_name",
     "config_hash",
@@ -122,7 +122,7 @@ def compute_track_metrics(points: Sequence[TrackPoint]) -> Dict[str, float]:
 
 
 def build_run_metadata(
-    video_file: str,
+    input_source: str,
     detector_name: str,
     smoother_name: str,
     config_payload: Dict[str, object],
@@ -135,7 +135,7 @@ def build_run_metadata(
     normalized_run_id = run_id or f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     return {
         "run_id": normalized_run_id,
-        "video_file": str(video_file),
+        "input_source": str(input_source),
         "detector_name": str(detector_name),
         "smoother_name": str(smoother_name),
         "config_hash": config_hash,
