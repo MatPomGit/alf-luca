@@ -178,6 +178,11 @@ Programy mogą generować m.in.:
 - Dla stabilniejszych wyników śledzenia warto użyć kalibracji kamery (`--calib_file`).
 - Tryb wieloobiektowy (`--multi_track`) pozwala śledzić wiele plamek i wybrać główną trajektorię (`--selection_mode`).
 - Narzędzie `video_tool.py` działa niezależnie od głównego pipeline'u śledzenia i może być używane osobno.
+- Dobór progowania jasności:
+  - `--threshold_mode fixed` sprawdza się przy stabilnym, równomiernym oświetleniu i gdy tło ma mało lokalnych zmian.
+  - `--threshold_mode adaptive` zwykle daje lepsze wyniki przy cieniach, hotspotach, winietowaniu albo silnie nierównomiernym świetle.
+  - `--threshold_mode otsu` to dobry punkt pośredni, gdy histogram jasności ma dwa wyraźne piki, ale nie chcesz ręcznie stroić progu.
+  - Przy trudnym oświetleniu warto dodatkowo włączyć `--use_clahe`, aby podbić lokalny kontrast przed progowaniem.
 
 ## Benchmark jakości „przed/po” zmianach (lekki framework ewaluacyjny)
 

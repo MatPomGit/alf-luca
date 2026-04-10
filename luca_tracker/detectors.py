@@ -85,15 +85,6 @@ class BrightnessDetector(BaseDetector):
         if threshold_mode not in {"fixed", "otsu", "adaptive"}:
             raise ValueError(f"Nieobsługiwany threshold_mode: {threshold_mode}")
         gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (blur, blur), 0)
-        _, mask = cv2.threshold(blurred, self.config.threshold, 255, cv2.THRESH_BINARY)
-        return _apply_morphology(
-            mask,
-            erode_iter=self.config.erode_iter,
-            dilate_iter=self.config.dilate_iter,
-            opening_kernel=self.config.opening_kernel,
-            closing_kernel=self.config.closing_kernel,
-        )
         # Opcjonalna normalizacja lokalnego kontrastu (CLAHE) poprawia separację plamki
         # przy nierównomiernym oświetleniu sceny.
         if bool(getattr(self.config, "use_clahe", False)):
