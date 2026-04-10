@@ -2,7 +2,7 @@
 setlocal
 
 set "SCRIPT_DIR=%~dp0"
-pushd "%SCRIPT_DIR%"
+pushd "%SCRIPT_DIR%\.."
 
 where py >nul 2>&1
 if %errorlevel%==0 (
