@@ -14,7 +14,8 @@ from luca_input.io_paths import (
 from luca_reporting.reports import compare_csv
 from luca_tracking.pipeline import calibrate_camera, track_video
 from luca_publishing.ros2_node import run_ros2_tracker_node
-from luca_types.config_model import load_run_config, run_config_to_pipeline_config
+from luca_types.config_model import load_run_config
+from luca_input.pipeline_config_mapping import run_config_to_pipeline_config
 
 
 def run_calibrate(calib_dir: str, rows: int, cols: int, square_size: float, output_file: str) -> None:
