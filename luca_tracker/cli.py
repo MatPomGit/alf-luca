@@ -246,6 +246,15 @@ def build_parser():
     p_ros2.add_argument("--turtle_angular_accel_limit", type=float, default=2.2, help="Limit przyspieszenia kątowego")
     p_ros2.add_argument("--turtle_log_every_n_frames", type=int, default=10, help="Log diagnostyczny sterowania co N klatek")
     p_ros2.add_argument("--turtle_search_angular_speed", type=float, default=0.0, help="(Legacy) nieużywane: przy braku detekcji turtle zatrzymuje się")
+    p_ros2.add_argument(
+        "--run_metadata_json",
+        help="Ścieżka do wcześniej przygotowanego pliku JSON (np. *.run.json) z metadanymi runu publikowanymi na ROS2.",
+    )
+    p_ros2.add_argument(
+        "--message_schema",
+        default="luca_tracker.ros2.tracking.v1",
+        help="Nazwa/sygnatura schematu JSON publikowanego na topicu ROS2.",
+    )
     p_ros2.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
     p_ros2.add_argument("--threshold", type=int, default=200, help="Próg jasności")
     p_ros2.add_argument(

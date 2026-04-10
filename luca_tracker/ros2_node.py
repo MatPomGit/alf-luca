@@ -4,6 +4,7 @@ import json
 import math
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional, Union
 
 import cv2
@@ -46,6 +47,8 @@ class Ros2TrackerConfig:
     turtle_angular_accel_limit: float = 2.2
     turtle_log_every_n_frames: int = 10
     turtle_search_angular_speed: float = 0.0
+    run_metadata_json: Optional[str] = None
+    message_schema: str = "luca_tracker.ros2.tracking.v1"
     detector: DetectorConfig = field(default_factory=DetectorConfig)
 
 
@@ -91,6 +94,8 @@ def _resolve_ros2_config(args_or_config: Any) -> Ros2TrackerConfig:
         turtle_angular_accel_limit=float(getattr(args_or_config, "turtle_angular_accel_limit", 2.2)),
         turtle_log_every_n_frames=int(getattr(args_or_config, "turtle_log_every_n_frames", 10)),
         turtle_search_angular_speed=float(getattr(args_or_config, "turtle_search_angular_speed", 0.0)),
+        run_metadata_json=getattr(args_or_config, "run_metadata_json", None),
+        message_schema=str(getattr(args_or_config, "message_schema", "luca_tracker.ros2.tracking.v1")),
         detector=DetectorConfig(
             track_mode=getattr(args_or_config, "track_mode", "brightness"),
             blur=getattr(args_or_config, "blur", 11),
@@ -131,6 +136,20 @@ def _parse_point_series(raw: Optional[str], expected_dims: int, label: str) -> O
     if len(points) < 4:
         raise ValueError(f"Do estymacji PnP potrzeba co najmniej 4 punktów referencyjnych: {label}.")
     return np.asarray(points, dtype=np.float64)
+
+
+def _load_run_metadata_json(path: Optional[str]) -> dict[str, str]:
+    """Wczytuje metadane runu z pliku JSON i normalizuje je do słownika string->string."""
+    if path is None:
+        return {}
+    file_path = Path(path)
+    if not file_path.exists():
+        raise FileNotFoundError(f"Nie znaleziono pliku metadanych runu: {file_path}")
+    payload = json.loads(file_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Plik metadanych runu musi zawierać obiekt JSON.")
+    # Ujednolicamy typy do stringów, aby publikowany JSON miał stabilny kontrakt.
+    return {str(key): str(value) for key, value in payload.items() if value is not None}
 
 
 def _estimate_pnp_pose(
@@ -229,6 +248,7 @@ class _Ros2TrackerRuntime:
         self._dist_coeffs: Optional[np.ndarray] = None
         self._pnp_rvec: Optional[np.ndarray] = None
         self._pnp_tvec: Optional[np.ndarray] = None
+        self._run_metadata = _load_run_metadata_json(config.run_metadata_json)
         self.cap = cv2.VideoCapture(config.video_source)
 
         if not self.cap.isOpened():
@@ -269,6 +289,10 @@ class _Ros2TrackerRuntime:
                     f"log_N={self.config.turtle_log_every_n_frames}"
             )
         )
+        if self._run_metadata:
+            node.get_logger().info(
+                f"Wczytano metadane publikacji z JSON: {self.config.run_metadata_json}"
+            )
 
     def _init_world_projection(self) -> None:
         """Ładuje kalibrację i przygotowuje estymację PnP do publikacji XYZ."""
@@ -470,6 +494,7 @@ class _Ros2TrackerRuntime:
         stamp = self.node.get_clock().now().to_msg()
 
         payload = {
+            "schema": self.config.message_schema,
             "stamp_sec": int(stamp.sec),
             "stamp_nanosec": int(stamp.nanosec),
             "frame_index": self.frame_index,
@@ -499,6 +524,8 @@ class _Ros2TrackerRuntime:
             "x_filtered": turtle_debug["filt_x"] if self.config.turtle_follow else None,
             "y_filtered": turtle_debug["filt_y"] if self.config.turtle_follow else None,
             "radius_filtered": turtle_debug["filt_radius"] if self.config.turtle_follow else None,
+            # Metadane są opcjonalne i pochodzą z wcześniej przygotowanego pliku `*.run.json`.
+            "run_metadata": self._run_metadata or None,
         }
 
         msg = self.message_cls()

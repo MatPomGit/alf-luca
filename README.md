@@ -160,6 +160,7 @@ python -m luca_tracker ros2 \
   --camera_index 0 \
   --topic /luca_tracker/tracking \
   --spot_id 0 \
+  --run_metadata_json output/example.run.json \
   --calib_file camera_calib.npz \
   --pnp_object_points "0,0,0;1,0,0;1,1,0;0,1,0" \
   --pnp_image_points "120,210;520,205;525,470;115,475" \
@@ -169,9 +170,11 @@ python -m luca_tracker ros2 \
 ```
 
 Publikowany JSON na topicu zawiera m.in. pola:
+- `schema` (wersja kontraktu wiadomości, konfigurowana przez `--message_schema`),
 - `spot_id`, `detected`, `x`, `y` (współrzędne ekranowe),
 - `x_world`, `y_world`, `z_world` (współrzędne 3D),
-- `frame_index`, `time_sec`, `detections_count`.
+- `frame_index`, `time_sec`, `detections_count`,
+- `run_metadata` (opcjonalny obiekt JSON pochodzący z `--run_metadata_json`, np. z plików `*.run.json`).
 
 ### 7) Gotowe skrypty startowe (Linux/macOS)
 
