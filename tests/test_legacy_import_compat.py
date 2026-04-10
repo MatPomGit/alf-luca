@@ -14,6 +14,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# Dodajemy katalogi `src`, żeby testy działały bez lokalnych duplikatów modułów.
+for src_dir in sorted((REPO_ROOT / "packages").glob("*/src")):
+    if str(src_dir) not in sys.path:
+        sys.path.insert(0, str(src_dir))
+
 
 # Najczęstsze legacy importy modułowe, które muszą się ładować.
 def test_legacy_module_import_mapping() -> None:

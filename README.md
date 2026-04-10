@@ -6,6 +6,11 @@ Narzędzia do kalibracji kamery, śledzenia plamki światła oraz analizy wynik�
 
 J2S
 
+## Dokumentacja deweloperska
+
+- Setup środowiska i zasady uruchamiania: `docs/development.md` (editable installs z `packages/*`).
+
+
 ## Struktura repozytorium
 
 - `luca_tracker/` - główny pakiet aplikacji z CLI, pipeline, GUI, raportami i ROS2.
