@@ -6,6 +6,7 @@ import sys
 import time
 from typing import List, Optional
 
+from . import __version__
 from .io_paths import (
     build_measurement_stem,
     ensure_output_dir,
@@ -56,6 +57,8 @@ def build_parser():
     parser = argparse.ArgumentParser(
         description="Śledzenie jasnej lub kolorowej plamki światła w materiale wideo albo na kamerze na żywo. Obsługuje także opcjonalne wygładzanie filtrem Kalmana."
     )
+    # Globalny przełącznik wersji pozwala szybko sprawdzić numer buildu z CLI.
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     p_cal = subparsers.add_parser("calibrate", help="Kalibracja kamery")
