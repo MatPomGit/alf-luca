@@ -34,6 +34,14 @@ class DetectorConfig:
     closing_kernel: int = 0
     min_area: float = 10.0
     max_area: float = 0.0
+    # Minimalna kolistość (0..1); wyższa wartość ogranicza wydłużone artefakty i szum krawędzi.
+    min_circularity: float = 0.0
+    # Maksymalny stosunek boków bbox (>=1); mniejsza wartość odrzuca ekstremalnie podłużne obiekty.
+    max_aspect_ratio: float = 6.0
+    # Minimalna jasność lokalnego maksimum (0..255) wewnątrz konturu; pomaga usuwać słabe refleksy.
+    min_peak_intensity: float = 0.0
+    # Minimalna zwartość konturu (area/convex_hull_area, 0..1); opcjonalnie usuwa mocno wklęsłe kształty.
+    min_solidity: Optional[float] = None
     max_spots: int = 10
     color_name: str = "red"
     hsv_lower: Optional[str] = None
