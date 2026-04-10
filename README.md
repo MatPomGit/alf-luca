@@ -150,3 +150,80 @@ Uruchomienie:
 ```bash
 docker run --rm -it alf-luca
 ```
+
+## Wyniki i artefakty
+
+Programy mogą generować m.in.:
+
+- CSV z trajektorią (`--output_csv`),
+- CSV ze statystykami (`--report_csv`),
+- PDF z raportem (`--report_pdf`),
+- PNG wykresu trajektorii (`--trajectory_png`),
+- MP4 z naniesionymi trajektoriami (`--annotated_video`),
+- JSON z analizą jakości MP4/MKV (`--report-json`).
+
+## Uwagi
+
+- Dla stabilniejszych wyników śledzenia warto użyć kalibracji kamery (`--calib_file`).
+- Tryb wieloobiektowy (`--multi_track`) pozwala śledzić wiele plamek i wybrać główną trajektorię (`--selection_mode`).
+- Narzędzie `video_tool.py` działa niezależnie od głównego pipeline'u śledzenia i może być używane osobno.
+
+## Benchmark jakości „przed/po” zmianach (lekki framework ewaluacyjny)
+
+Dodano lekki benchmark uruchamiający istniejący pipeline na **stałych konfiguracjach**,
+bez trenowania modeli i bez generowania ciężkich artefaktów (PDF/MP4).
+
+### Struktura scenariuszy
+
+- Manifest scenariuszy: `video/scenarios/scenarios.json`
+- Opis scenariuszy i zasad rozbudowy: `video/scenarios/README.md`
+
+Scenariusze obejmują m.in. przypadki:
+
+- refleksów,
+- migotania,
+- tła dynamicznego.
+
+### Uruchomienie benchmarku
+
+```bash
+python tools/quality_benchmark.py \
+  --scenarios video/scenarios/scenarios.json \
+  --output-dir output/quality_benchmark \
+  --label before_changes
+```
+
+Po wdrożeniu zmian uruchom ponownie z inną etykietą:
+
+```bash
+python tools/quality_benchmark.py \
+  --scenarios video/scenarios/scenarios.json \
+  --output-dir output/quality_benchmark \
+  --label after_changes
+```
+
+### Jakie metryki są liczone
+
+- `false_detections_per_frame` — proxy fałszywych detekcji/klatkę (niżej = lepiej),
+- `stable_track_len_frames` — długość najdłuższego stabilnego fragmentu toru (wyżej = lepiej),
+- `track_id_switches` — liczba przełączeń dominującego `track_id` (niżej = lepiej),
+- `kalman_predicted_share` — udział klatek z `kalman_predicted=1` (wartość kontekstowa).
+
+### Artefakty benchmarku
+
+Dla każdego uruchomienia tworzony jest katalog:
+
+- `benchmark_summary.csv` — pełne zestawienie metryk,
+- `benchmark_report.md` — krótki raport tabelaryczny,
+- podkatalogi z `main_track.csv` i `all_tracks.csv` dla każdej pary (scenariusz, konfiguracja).
+
+### Interpretacja „przed/po”
+
+1. Porównuj te same scenariusze i te same konfiguracje między uruchomieniami.
+2. Szukaj trendów:
+   - spadek `false_detections_per_frame`,
+   - wzrost `stable_track_len_frames`,
+   - spadek `track_id_switches`.
+3. `kalman_predicted_share` interpretuj razem z pozostałymi metrykami:
+   - wysoki udział predykcji może oznaczać lepszą ciągłość,
+   - ale też może sygnalizować, że detektor zbyt często gubi obiekt.
