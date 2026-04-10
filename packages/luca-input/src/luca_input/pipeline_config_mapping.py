@@ -3,7 +3,7 @@ from __future__ import annotations
 from argparse import Namespace
 from dataclasses import asdict
 
-from luca_types.luca_config import DetectorConfig, EvalConfig, InputConfig, PoseConfig, PostprocessConfig, RunConfig, TrackerConfig
+from luca_types import DetectorConfig, EvalConfig, InputConfig, PoseConfig, PostprocessConfig, RunConfig, TrackerConfig
 
 
 # Funkcja adaptera mapująca model uruchomienia na konfigurację runtime pipeline'u.

@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 
 from luca_processing.detector_interfaces import BaseDetector, DetectorConfig
-from luca_types.types import Detection
+from luca_types import Detection
 
 
 # Presety HSV dla najczęściej używanych kolorów plamki.

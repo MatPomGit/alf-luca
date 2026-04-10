@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from luca_tracking.application_services import run_tracking
+from luca_tracking import run_tracking
 
 
 class GUIEnvironmentError(RuntimeError):

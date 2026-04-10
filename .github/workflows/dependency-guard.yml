@@ -26,5 +26,8 @@ jobs:
       - name: Validate pyproject dependencies against imports
         run: python tools/check_declared_dependencies.py
 
+      - name: Validate architecture import policy
+        run: python tools/check_architecture_policy.py
+
       - name: Detect duplicate Python module names
         run: python tools/check_duplicate_modules.py

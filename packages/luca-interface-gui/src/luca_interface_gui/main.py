@@ -3,7 +3,7 @@ from __future__ import annotations
 import glob
 import sys
 
-from luca_input.io_paths import RuntimePathResolver
+from luca_input import RuntimePathResolver
 
 from .gui_parser import build_gui_parser
 from .gui_runner import GUIEnvironmentError, run_gui

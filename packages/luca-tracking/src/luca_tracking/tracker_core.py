@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from luca_types.types import Detection, TrackPoint
+from luca_types import Detection, TrackPoint
 
 
 @dataclass

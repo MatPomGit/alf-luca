@@ -14,7 +14,7 @@ import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 
 from . import __version__ as APP_VERSION
-from luca_types.types import TrackPoint
+from luca_types import TrackPoint
 DEFAULT_EXPORT_PATH="(output/)"
 
 MetricProfile = Literal["basic", "extended", "research"]
