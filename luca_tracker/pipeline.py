@@ -24,7 +24,7 @@ from .reports import (
     save_track_csv,
     save_track_report_pdf,
 )
-from .tracker_core import SimpleMultiTracker, TrackerConfig, choose_main_track
+from .tracker_core import SimpleMultiTracker, SingleObjectEKFTracker, TrackerConfig, choose_main_track
 from .types import TrackPoint
 from .video_export import export_annotated_video
 
@@ -284,6 +284,15 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             max_distance=getattr(args_or_config, "max_distance", 40.0),
             max_missed=getattr(args_or_config, "max_missed", 10),
             selection_mode=getattr(args_or_config, "selection_mode", "stablest"),
+            distance_weight=getattr(args_or_config, "distance_weight", 1.0),
+            area_weight=getattr(args_or_config, "area_weight", 0.35),
+            circularity_weight=getattr(args_or_config, "circularity_weight", 0.2),
+            brightness_weight=getattr(args_or_config, "brightness_weight", 0.0),
+            min_match_score=getattr(args_or_config, "min_match_score", 1.0),
+            speed_gate_gain=getattr(args_or_config, "speed_gate_gain", 1.5),
+            error_gate_gain=getattr(args_or_config, "error_gate_gain", 1.0),
+            min_dynamic_distance=getattr(args_or_config, "min_dynamic_distance", 12.0),
+            max_dynamic_distance=getattr(args_or_config, "max_dynamic_distance", 150.0),
         ),
         kalman=KalmanConfig(
             process_noise=getattr(args_or_config, "kalman_process_noise", 1e-2),
@@ -411,7 +420,17 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
     tracker = SimpleMultiTracker(
         max_distance=config.tracker.max_distance,
         max_missed=config.tracker.max_missed,
+        distance_weight=config.tracker.distance_weight,
+        area_weight=config.tracker.area_weight,
+        circularity_weight=config.tracker.circularity_weight,
+        brightness_weight=config.tracker.brightness_weight,
+        min_match_score=config.tracker.min_match_score,
+        speed_gate_gain=config.tracker.speed_gate_gain,
+        error_gate_gain=config.tracker.error_gate_gain,
+        min_dynamic_distance=config.tracker.min_dynamic_distance,
+        max_dynamic_distance=config.tracker.max_dynamic_distance,
     )
+    single_tracker = SingleObjectEKFTracker(gating_distance=config.tracker.max_distance)
     finished_tracks: Dict[int, Dict] = {}
     single_points: List[TrackPoint] = []
 
@@ -440,21 +459,26 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
             ended = tracker.update(detections, frame_index, time_sec)
             finished_tracks.update(ended)
         else:
+            # W trybie single-object korzystamy z EKF, aby lepiej odrzucać artefakty chwilowych detekcji.
+            ekf_state = single_tracker.update(detections)
             best = detections[0] if detections else None
+            predicted_only = bool(ekf_state.get("predicted_only", True))
+            x_value = ekf_state.get("x")
+            y_value = ekf_state.get("y")
             single_points.append(
                 TrackPoint(
                     frame_index=frame_index,
                     time_sec=time_sec,
-                    detected=best is not None,
-                    x=best.x if best else None,
-                    y=best.y if best else None,
+                    detected=(x_value is not None and y_value is not None),
+                    x=x_value,
+                    y=y_value,
                     area=best.area if best else None,
                     perimeter=best.perimeter if best else None,
                     circularity=best.circularity if best else None,
                     radius=best.radius if best else None,
-                    track_id=1 if best else None,
+                    track_id=1 if (x_value is not None and y_value is not None) else None,
                     rank=best.rank if best else None,
-                    kalman_predicted=0,
+                    kalman_predicted=1 if predicted_only else 0,
                 )
             )
 
@@ -670,6 +694,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_spots", type=int, default=10)
     parser.add_argument("--max_distance", type=float, default=40.0)
     parser.add_argument("--max_missed", type=int, default=10)
+    parser.add_argument("--distance_weight", type=float, default=1.0)
+    parser.add_argument("--area_weight", type=float, default=0.35)
+    parser.add_argument("--circularity_weight", type=float, default=0.2)
+    parser.add_argument("--brightness_weight", type=float, default=0.0)
+    parser.add_argument("--min_match_score", type=float, default=1.0)
+    parser.add_argument("--speed_gate_gain", type=float, default=1.5)
+    parser.add_argument("--error_gate_gain", type=float, default=1.0)
+    parser.add_argument("--min_dynamic_distance", type=float, default=12.0)
+    parser.add_argument("--max_dynamic_distance", type=float, default=150.0)
     parser.add_argument("--selection_mode", choices=["largest", "stablest", "longest"], default="stablest")
     parser.add_argument("--pnp_object_points", help="Punkty 3D świata: X,Y,Z;X,Y,Z;... (min. 4)")
     parser.add_argument("--pnp_image_points", help="Punkty 2D obrazu: x,y;x,y;... (min. 4)")
