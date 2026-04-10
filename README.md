@@ -2,6 +2,10 @@
 
 Narzędzia do kalibracji kamery, śledzenia plamki światła oraz analizy wyników z pliku wideo albo kamery na żywo.
 
+## Autor
+
+J2S
+
 ## Struktura repozytorium
 
 - `luca_tracker/` - główny pakiet aplikacji z CLI, pipeline, GUI, raportami i ROS2.
