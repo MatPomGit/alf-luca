@@ -57,6 +57,10 @@ PROFILE_METRICS = {
         "mean_radius",
         "max_radius",
         "mean_circularity",
+        "mean_confidence",
+        "p25_confidence",
+        "median_confidence",
+        "confidence_consistency",
     ),
     "research": (
         "frames_total",
@@ -76,6 +80,10 @@ PROFILE_METRICS = {
         "mean_radius",
         "max_radius",
         "mean_circularity",
+        "mean_confidence",
+        "p25_confidence",
+        "median_confidence",
+        "confidence_consistency",
         "mae_px",
         "rmse_px",
         "p95_error_px",
@@ -93,6 +101,10 @@ def compute_track_metrics(points: Sequence[TrackPoint]) -> Dict[str, float]:
         "max_step": 0.0,
         "mean_area": 0.0,
         "mean_circularity": 0.0,
+        "mean_confidence": 0.0,
+        "p25_confidence": 0.0,
+        "median_confidence": 0.0,
+        "confidence_consistency": 0.0,
         "stability_score": float("inf"),
     }
     if not detected:
@@ -112,11 +124,19 @@ def compute_track_metrics(points: Sequence[TrackPoint]) -> Dict[str, float]:
         metrics["mean_area"] = float(sum(areas) / len(areas))
     if circs:
         metrics["mean_circularity"] = float(sum(circs) / len(circs))
+    confidences = [float(p.confidence) for p in detected if p.confidence is not None]
+    if confidences:
+        metrics["mean_confidence"] = float(np.mean(confidences))
+        metrics["p25_confidence"] = float(np.percentile(confidences, 25))
+        metrics["median_confidence"] = float(np.percentile(confidences, 50))
+        # Wysoka spójność = małe rozrzuty confidence pomiędzy detekcjami.
+        metrics["confidence_consistency"] = float(max(0.0, 1.0 - np.std(confidences)))
 
     metrics["stability_score"] = float(
         metrics["mean_step"] * 2.0
         + (1.0 - metrics["detection_ratio"]) * 50.0
         + max(0.0, 0.5 - metrics["mean_circularity"]) * 20.0
+        + max(0.0, 0.6 - metrics["median_confidence"]) * 20.0
     )
     return metrics
 
@@ -173,13 +193,13 @@ def save_track_csv(points: Sequence[TrackPoint], csv_path: str, run_metadata: Op
         writer.writerow([
             "frame_index", "time_sec", "detected", "x", "y", "z",
             "x_world", "y_world", "z_world", "area",
-            "perimeter", "circularity", "radius", "track_id", "rank", "kalman_predicted"
+            "perimeter", "circularity", "radius", "confidence", "track_id", "rank", "kalman_predicted"
         ] + list(RUN_METADATA_FIELDS))
         for p in points:
             writer.writerow(_row_with_metadata([
                 p.frame_index, p.time_sec, int(p.detected), p.x, p.y, p.z_world,
                 p.x_world, p.y_world, p.z_world, p.area,
-                p.perimeter, p.circularity, p.radius, p.track_id, p.rank, p.kalman_predicted
+                p.perimeter, p.circularity, p.radius, p.confidence, p.track_id, p.rank, p.kalman_predicted
             ], run_metadata))
     if run_metadata:
         save_run_metadata(run_metadata, csv_path)
@@ -191,14 +211,14 @@ def save_all_tracks_csv(track_histories: Dict[int, Dict], csv_path: str, run_met
         writer.writerow([
             "track_id", "frame_index", "time_sec", "detected", "x", "y", "z",
             "x_world", "y_world", "z_world", "area",
-            "perimeter", "circularity", "radius", "rank", "kalman_predicted"
+            "perimeter", "circularity", "radius", "confidence", "rank", "kalman_predicted"
         ] + list(RUN_METADATA_FIELDS))
         for tid, data in sorted(track_histories.items()):
             for p in data["points"]:
                 writer.writerow(_row_with_metadata([
                     tid, p.frame_index, p.time_sec, int(p.detected), p.x, p.y, p.z_world,
                     p.x_world, p.y_world, p.z_world,
-                    p.area, p.perimeter, p.circularity, p.radius, p.rank, p.kalman_predicted
+                    p.area, p.perimeter, p.circularity, p.radius, p.confidence, p.rank, p.kalman_predicted
                 ], run_metadata))
     if run_metadata:
         save_run_metadata(run_metadata, csv_path)
@@ -356,6 +376,7 @@ def metrics_from_points_with_profile(
     radii = [p.radius for p in detected if p.radius is not None]
     areas = [p.area for p in detected if p.area is not None]
     circs = [p.circularity for p in detected if p.circularity is not None]
+    confidences = [float(p.confidence) for p in detected if p.confidence is not None]
     profile = _normalize_profile(metric_profile)
 
     frame_indices = [p.frame_index for p in ordered]
@@ -386,6 +407,10 @@ def metrics_from_points_with_profile(
         "mean_radius": float(sum(radii) / len(radii)) if radii else 0.0,
         "max_radius": float(max(radii)) if radii else 0.0,
         "mean_circularity": float(sum(circs) / len(circs)) if circs else 0.0,
+        "mean_confidence": float(np.mean(confidences)) if confidences else 0.0,
+        "p25_confidence": float(np.percentile(confidences, 25)) if confidences else 0.0,
+        "median_confidence": float(np.percentile(confidences, 50)) if confidences else 0.0,
+        "confidence_consistency": float(max(0.0, 1.0 - np.std(confidences))) if confidences else 0.0,
     }
     all_metrics.update(_compute_reference_errors(ordered, reference_points))
 
@@ -461,6 +486,7 @@ def load_tracking_csv(csv_path: str) -> List[TrackPoint]:
                     perimeter=float(row["perimeter"]) if row["perimeter"] not in {"", "None"} else None,
                     circularity=float(row["circularity"]) if row["circularity"] not in {"", "None"} else None,
                     radius=float(row["radius"]) if row["radius"] not in {"", "None"} else None,
+                    confidence=float(row["confidence"]) if row.get("confidence", "") not in {"", "None"} else None,
                     track_id=int(row["track_id"]) if row["track_id"] not in {"", "None"} else None,
                     rank=int(row["rank"]) if row.get("rank", "") not in {"", "None"} else None,
                     kalman_predicted=int(row.get("kalman_predicted", "0") or 0),

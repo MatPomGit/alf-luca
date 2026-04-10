@@ -68,6 +68,7 @@ class SimpleMultiTracker:
                     perimeter=det.perimeter,
                     circularity=det.circularity,
                     radius=det.radius,
+                    confidence=det.confidence,
                     track_id=tid,
                     rank=det.rank,
                     kalman_predicted=0,
@@ -90,6 +91,7 @@ class SimpleMultiTracker:
                         perimeter=None,
                         circularity=None,
                         radius=None,
+                        confidence=None,
                         track_id=tid,
                         rank=None,
                         kalman_predicted=0,
@@ -115,6 +117,7 @@ class SimpleMultiTracker:
                         perimeter=det.perimeter,
                         circularity=det.circularity,
                         radius=det.radius,
+                        confidence=det.confidence,
                         track_id=tid,
                         rank=det.rank,
                         kalman_predicted=0,
@@ -267,12 +270,28 @@ def choose_main_track(track_histories: Dict[int, Dict], selection_mode: str) -> 
     scored = []
     for tid, data in track_histories.items():
         metrics = _compute_track_metrics_local(data["points"])
+        # Kara rośnie wraz ze spadkiem mediany confidence i obniża ranking torów niskiej jakości.
+        confidence_penalty = max(0.0, 1.0 - metrics["median_confidence"])
         if selection_mode == "largest":
-            key = (-metrics["mean_area"], -metrics["detections"])
+            key = (
+                -metrics["mean_area"],
+                confidence_penalty,
+                -metrics["mean_confidence"],
+                -metrics["detections"],
+            )
         elif selection_mode == "longest":
-            key = (-metrics["detections"], metrics["mean_step"])
+            key = (
+                -metrics["detections"],
+                confidence_penalty,
+                -metrics["mean_confidence"],
+                metrics["mean_step"],
+            )
         elif selection_mode == "stablest":
-            key = (metrics["stability_score"], -metrics["detections"])
+            key = (
+                metrics["stability_score"] + 2.0 * confidence_penalty,
+                -metrics["confidence_consistency"],
+                -metrics["detections"],
+            )
         else:
             raise ValueError("selection_mode musi mieć wartość largest, longest albo stablest")
         scored.append((key, tid))
@@ -302,12 +321,27 @@ def _compute_track_metrics_local(points: List[TrackPoint]) -> Dict[str, float]:
         stability_score = math.sqrt(var)
     else:
         stability_score = 0.0
+    confidence_values = [float(p.confidence) for p in detected_points if p.confidence is not None]
+    if confidence_values:
+        mean_confidence = float(sum(confidence_values) / len(confidence_values))
+        confidence_p25 = float(np.percentile(confidence_values, 25))
+        median_confidence = float(np.percentile(confidence_values, 50))
+        confidence_consistency = float(max(0.0, 1.0 - np.std(confidence_values)))
+    else:
+        mean_confidence = 0.0
+        confidence_p25 = 0.0
+        median_confidence = 0.0
+        confidence_consistency = 0.0
 
     return {
         "mean_area": mean_area,
         "detections": float(detections),
         "mean_step": mean_step,
         "stability_score": stability_score,
+        "mean_confidence": mean_confidence,
+        "confidence_p25": confidence_p25,
+        "median_confidence": median_confidence,
+        "confidence_consistency": confidence_consistency,
     }
 
 

@@ -16,6 +16,7 @@ class Detection:
     bbox_y: int
     bbox_w: int
     bbox_h: int
+    confidence: float = 0.0
     ellipse_center: Optional[Tuple[float, float]] = None
     ellipse_axes: Optional[Tuple[float, float]] = None
     ellipse_angle: Optional[float] = None
@@ -33,7 +34,8 @@ class TrackPoint:
     perimeter: Optional[float]
     circularity: Optional[float]
     radius: Optional[float]
-    track_id: Optional[int]
+    confidence: Optional[float] = None
+    track_id: Optional[int] = None
     rank: Optional[int] = None
     kalman_predicted: int = 0
     x_world: Optional[float] = None
