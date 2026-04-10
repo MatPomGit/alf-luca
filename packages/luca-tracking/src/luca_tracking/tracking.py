@@ -8,7 +8,7 @@ Ten moduł utrzymuje historyczne punkty wejścia (`track_video`, `calibrate_came
 
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from luca_processing.detectors import (
+from luca_processing import (
     COLOR_PRESETS,
     DetectorConfig,
     build_mask,
@@ -21,11 +21,11 @@ from luca_processing.detectors import (
 )
 from luca_camera import calibrate_camera
 from luca_tracking.pipeline import track_video
-from luca_processing.postprocess import apply_kalman_to_points
-from luca_reporting.reports import compute_track_metrics, generate_trajectory_png, metrics_from_points, save_all_tracks_csv, save_metrics_csv, save_track_csv, save_track_report_pdf
+from luca_processing import apply_kalman_to_points
+from luca_reporting import compute_track_metrics, generate_trajectory_png, metrics_from_points, save_all_tracks_csv, save_metrics_csv, save_track_csv, save_track_report_pdf
 from luca_tracking.tracker_core import SimpleMultiTracker, SingleObjectEKFTracker, choose_main_track
-from luca_types.types import Detection, TrackPoint
-from luca_reporting.video_export import export_annotated_video
+from luca_types import Detection, TrackPoint
+from luca_reporting import export_annotated_video
 
 __all__ = [
     "COLOR_PRESETS",

@@ -4,7 +4,7 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-from luca_types.luca_config import DetectorConfig
+from luca_types import DetectorConfig
 
 
 @runtime_checkable

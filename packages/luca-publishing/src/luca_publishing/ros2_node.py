@@ -10,8 +10,8 @@ from typing import Any, Optional, Union
 import cv2
 import numpy as np
 
-from luca_processing.detector_interfaces import DetectorConfig
-from luca_processing.detectors import detect_spots_with_config
+from luca_processing import DetectorConfig
+from luca_processing import detect_spots_with_config
 
 ROS2_MESSAGE_SCHEMA_DEFAULT = "luca_tracker.ros2.tracking.v1"
 ROS2_BASE_PAYLOAD_KEYS: tuple[str, ...] = (

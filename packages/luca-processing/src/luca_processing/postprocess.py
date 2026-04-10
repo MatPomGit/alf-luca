@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
-from luca_types.types import TrackPoint
+from luca_types import TrackPoint
 
 try:
     from luca_processing.kalman import smooth_xy_sequence

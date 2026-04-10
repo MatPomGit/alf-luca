@@ -1,0 +1,15 @@
+# Polityka importów między pakietami LUCA.
+# Kluczem jest nazwa pakietu (project.name), a wartością lista dozwolonych zależności wewnętrznych.
+
+[allowed_imports]
+luca-types = []
+luca-input = ["luca-types"]
+luca-camera = ["luca-types", "luca-input"]
+luca-processing = ["luca-types", "luca-input"]
+luca-tracking = ["luca-types", "luca-input", "luca-camera", "luca-processing", "luca-reporting", "luca-publishing"]
+luca-reporting = ["luca-types"]
+luca-publishing = ["luca-types", "luca-processing"]
+luca-interface-cli = ["luca-types", "luca-input", "luca-tracking"]
+luca-interface-gui = ["luca-types", "luca-input", "luca-tracking"]
+luca-interface-ros2 = ["luca-types", "luca-input", "luca-tracking"]
+luca-suite = []

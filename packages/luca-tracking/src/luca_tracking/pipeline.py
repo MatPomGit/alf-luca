@@ -11,10 +11,10 @@ from typing import Any, Dict, List, Optional
 import cv2
 import numpy as np
 
-from luca_processing.detector_registry import available_detector_names
-from luca_processing.detectors import DetectorConfig, TemporalMaskFilter, detect_spots_with_config
-from luca_processing.postprocess import KalmanConfig, apply_kalman_to_points
-from luca_reporting.reports import (
+from luca_processing import available_detector_names
+from luca_processing import DetectorConfig, TemporalMaskFilter, detect_spots_with_config
+from luca_processing import KalmanConfig, apply_kalman_to_points
+from luca_reporting import (
     build_run_metadata,
     generate_trajectory_png,
     metrics_from_points,
@@ -24,8 +24,8 @@ from luca_reporting.reports import (
     save_track_report_pdf,
 )
 from luca_tracking.tracker_core import SimpleMultiTracker, SingleObjectEKFTracker, TrackerConfig, choose_main_track
-from luca_types.types import TrackPoint
-from luca_reporting.video_export import export_annotated_video
+from luca_types import TrackPoint
+from luca_reporting import export_annotated_video
 
 
 @dataclass

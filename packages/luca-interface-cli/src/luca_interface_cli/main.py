@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import sys
 
-from luca_input.io_paths import RuntimePathResolver
-from luca_tracking.application_services import run_calibrate, run_compare, run_ros2, run_tracking
+from luca_input import RuntimePathResolver
+from luca_tracking import run_calibrate, run_compare, run_ros2, run_tracking
 
 from .parser import build_parser
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import sys
 
-from luca_input.io_paths import RuntimePathResolver
-from luca_tracking.application_services import run_ros2
+from luca_input import RuntimePathResolver
+from luca_tracking import run_ros2
 
 
 def _build_ros2_parser() -> argparse.ArgumentParser:

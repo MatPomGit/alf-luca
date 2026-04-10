@@ -1,6 +1,7 @@
-"""Pakiet luca_camera."""
+"""Publiczne API pakietu `luca_camera`."""
 
 from luca_camera.calibration import calibrate_camera
+from luca_camera.sources import parse_camera_source
 
-# Eksponujemy kalibrację na poziomie pakietu, aby uprościć importy klientów.
-__all__ = ["calibrate_camera"]
+# Udostępniamy stabilne operacje związane z wejściem kamery i kalibracją.
+__all__ = ["calibrate_camera", "parse_camera_source"]

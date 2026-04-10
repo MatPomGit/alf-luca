@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
-from luca_types.types import TrackPoint
+from luca_types import TrackPoint
 
 
 def parse_roi(roi_text: Optional[str], frame_shape: Tuple[int, int, int]) -> Tuple[int, int, int, int]:
