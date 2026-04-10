@@ -339,16 +339,36 @@ def _estimate_pnp_pose(
     if len(object_points) != len(image_points):
         raise ValueError("Liczba punktów `pnp_object_points` i `pnp_image_points` musi być identyczna.")
 
-    # Korzystamy z klasycznego solvePnP, bo jest stabilny dla zadań ogólnych.
-    ok, rvec, tvec = cv2.solvePnP(
+    # Najpierw uruchamiamy wariant RANSAC, który lepiej odrzuca punkty odstające.
+    ok, rvec, tvec, _ = cv2.solvePnPRansac(
         objectPoints=object_points,
         imagePoints=image_points,
         cameraMatrix=camera_matrix,
         distCoeffs=dist_coeffs,
+        reprojectionError=3.0,
+        confidence=0.995,
         flags=cv2.SOLVEPNP_ITERATIVE,
     )
     if not ok:
-        raise RuntimeError("Nie udało się wyznaczyć pozycji kamery metodą solvePnP.")
+        # Fallback do klasycznego solvePnP zostawiamy dla przypadków z małą liczbą punktów referencyjnych.
+        ok, rvec, tvec = cv2.solvePnP(
+            objectPoints=object_points,
+            imagePoints=image_points,
+            cameraMatrix=camera_matrix,
+            distCoeffs=dist_coeffs,
+            flags=cv2.SOLVEPNP_ITERATIVE,
+        )
+    if not ok:
+        raise RuntimeError("Nie udało się wyznaczyć pozycji kamery metodą solvePnP/solvePnPRansac.")
+    # Refinement LM zmniejsza lokalny błąd i poprawia stabilność późniejszej rekonstrukcji XYZ.
+    rvec, tvec = cv2.solvePnPRefineLM(
+        objectPoints=object_points,
+        imagePoints=image_points,
+        cameraMatrix=camera_matrix,
+        distCoeffs=dist_coeffs,
+        rvec=rvec,
+        tvec=tvec,
+    )
     return rvec, tvec
 
 
@@ -356,18 +376,26 @@ def _pixel_to_world_on_plane(
     x_px: float,
     y_px: float,
     camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
     rvec: np.ndarray,
     tvec: np.ndarray,
     plane_z: float,
 ) -> Optional[tuple[float, float, float]]:
     """Przelicza punkt 2D (piksel) na 3D przecinając promień z płaszczyzną `Z=plane_z`."""
     rotation_matrix, _ = cv2.Rodrigues(rvec)
-    inv_rotation = np.linalg.inv(rotation_matrix)
-    inv_camera = np.linalg.inv(camera_matrix)
+    rotation_t = rotation_matrix.T
 
-    uv1 = np.array([[x_px], [y_px], [1.0]], dtype=np.float64)
-    direction_world = inv_rotation @ (inv_camera @ uv1)
-    camera_center_world = -inv_rotation @ tvec
+    # Najpierw usuwamy zniekształcenia optyczne, aby promień 3D wychodził z poprawnego punktu na sensorze.
+    undistorted = cv2.undistortPoints(
+        src=np.array([[[x_px, y_px]]], dtype=np.float64),
+        cameraMatrix=camera_matrix,
+        distCoeffs=dist_coeffs,
+    )
+    x_norm, y_norm = undistorted[0, 0]
+
+    direction_camera = np.array([[x_norm], [y_norm], [1.0]], dtype=np.float64)
+    direction_world = rotation_t @ direction_camera
+    camera_center_world = -rotation_t @ tvec
 
     denom = float(direction_world[2, 0])
     if math.isclose(denom, 0.0, abs_tol=1e-12):
@@ -378,9 +406,46 @@ def _pixel_to_world_on_plane(
     return float(point_world[0, 0]), float(point_world[1, 0]), float(point_world[2, 0])
 
 
+def _stabilize_world_coordinates(points: List[TrackPoint], max_step: float = 250.0) -> None:
+    """Wygładza skoki XYZ i uzupełnia krótkie luki, aby zapis trajektorii był stabilniejszy."""
+    last_valid: Optional[tuple[float, float, float]] = None
+    pending_gap: List[TrackPoint] = []
+
+    for point in points:
+        if point.x_world is None or point.y_world is None or point.z_world is None:
+            pending_gap.append(point)
+            continue
+
+        current = (point.x_world, point.y_world, point.z_world)
+        if last_valid is not None:
+            # Ograniczamy gwałtowne przeskoki pozycji, bo zwykle wynikają z błędnej geometrii dla pojedynczej klatki.
+            jump = math.dist(current, last_valid)
+            if jump > max_step:
+                point.x_world, point.y_world, point.z_world = last_valid
+                current = last_valid
+
+        if pending_gap and last_valid is not None:
+            # Wypełniamy krótkie przerwy liniową interpolacją między ostatnim i bieżącym poprawnym punktem.
+            gap_len = len(pending_gap)
+            for idx, gap_point in enumerate(pending_gap, start=1):
+                alpha = idx / (gap_len + 1)
+                gap_point.x_world = last_valid[0] + (current[0] - last_valid[0]) * alpha
+                gap_point.y_world = last_valid[1] + (current[1] - last_valid[1]) * alpha
+                gap_point.z_world = last_valid[2] + (current[2] - last_valid[2]) * alpha
+            pending_gap.clear()
+
+        last_valid = current
+
+    if pending_gap and last_valid is not None:
+        # Jeśli końcówka serii nie ma pomiarów, utrzymujemy ostatnią znaną pozycję dla ciągłości danych.
+        for gap_point in pending_gap:
+            gap_point.x_world, gap_point.y_world, gap_point.z_world = last_valid
+
+
 def _inject_world_coordinates(
     points: List[TrackPoint],
     camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
     rvec: np.ndarray,
     tvec: np.ndarray,
     plane_z: float,
@@ -396,6 +461,7 @@ def _inject_world_coordinates(
             x_px=point.x,
             y_px=point.y,
             camera_matrix=camera_matrix,
+            dist_coeffs=dist_coeffs,
             rvec=rvec,
             tvec=tvec,
             plane_z=plane_z,
@@ -624,10 +690,19 @@ def track_video(args_or_config):
         )
         if pnp_pose:
             rvec, tvec = pnp_pose
-            _inject_world_coordinates(main_points, camera_matrix, rvec, tvec, config.pnp_world_plane_z)
+            _inject_world_coordinates(main_points, camera_matrix, dist_coeffs, rvec, tvec, config.pnp_world_plane_z)
+            _stabilize_world_coordinates(main_points)
             if config.multi_track:
                 for track_data in result["finished_tracks"].values():
-                    _inject_world_coordinates(track_data["points"], camera_matrix, rvec, tvec, config.pnp_world_plane_z)
+                    _inject_world_coordinates(
+                        track_data["points"],
+                        camera_matrix,
+                        dist_coeffs,
+                        rvec,
+                        tvec,
+                        config.pnp_world_plane_z,
+                    )
+                    _stabilize_world_coordinates(track_data["points"])
             _log_stage("OK", "Dodano współrzędne świata XYZ wyznaczone metodą PnP.", "yellow")
         elif config.pnp_object_points or config.pnp_image_points:
             _log_stage("INFO", "Pominięto XYZ: brakuje pełnego zestawu punktów PnP.", "yellow")
