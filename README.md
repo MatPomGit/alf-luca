@@ -96,10 +96,19 @@ W sekcji `input` ustaw dokładnie jedno źródło:
 
 ## Skrypty pomocnicze
 
-- `scripts/run_gui.sh` - uruchamia GUI na Linux/macOS.
-- `scripts/run_gui.bat` - uruchamia GUI na Windows.
+Linux/macOS:
+
+- `scripts/run_gui.sh` - uruchamia GUI.
 - `scripts/run_cli.sh` - przykładowe uruchomienie `track` z wynikami w `output/manual/`.
 - `scripts/run_analysis.sh` - porównanie danych CSV z `output/manual/`.
+
+Windows:
+
+- `scripts/run_gui.bat` - uruchamia GUI.
+- `scripts/run_cli.bat` - uruchamia analizę przykładowego pliku `video/sledzenie_plamki.mkv`.
+- `scripts/run_camera.bat` - uruchamia szybki start z kamery `--camera 0 --display`.
+
+Skrypty `run_cli` i `run_camera` automatycznie dodają `--calib_file camera_calib.npz`, jeśli plik kalibracji istnieje w katalogu repozytorium.
 
 ## Artefakty wynikowe
 
@@ -112,6 +121,8 @@ Typowe artefakty:
 - PDF z raportem,
 - PNG z wykresem trajektorii,
 - MP4 z naniesioną trajektorią dla wejścia plikowego.
+
+Skrypty z katalogu `scripts/` zapisują wyniki do `output/manual/`.
 
 Możesz nadpisać katalog wynikowy zmienną `LUCA_OUTPUT_DIR`.
 
