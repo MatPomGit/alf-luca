@@ -222,8 +222,9 @@ def build_parser():
     p_ros2 = subparsers.add_parser("ros2", help="ROS2 node: śledzenie z kamery fizycznej i publikacja danych")
     p_ros2.add_argument("--video_device", default="/dev/video0", help="Źródło kamery (np. /dev/video0 albo numer kamery)")
     p_ros2.add_argument("--camera_index", type=int, help="Indeks kamery OpenCV, np. 0 (ma priorytet nad --video_device)")
-    p_ros2.add_argument("--node_name", default="luca_tracker_node", help="Nazwa ROS2 node")
+    p_ros2.add_argument("--node_name", default="detector_node", help="Nazwa ROS2 node")
     p_ros2.add_argument("--topic", default="/luca_tracker/tracking", help="Topic ROS2 dla danych trackingu (std_msgs/String JSON)")
+    p_ros2.add_argument("--spot_id", type=int, default=0, help="ID (indeks) detekcji do publikacji jako obiekt główny")
     p_ros2.add_argument("--fps", type=float, default=30.0, help="Docelowa częstotliwość odczytu/publikacji")
     p_ros2.add_argument("--frame_width", type=int, default=0, help="Szerokość klatki (0 = domyślna kamery)")
     p_ros2.add_argument("--frame_height", type=int, default=0, help="Wysokość klatki (0 = domyślna kamery)")
@@ -271,6 +272,10 @@ def build_parser():
     p_ros2.add_argument("--color_name", choices=[*gui_colors, "custom"], default="red", help="Preset koloru lub custom")
     p_ros2.add_argument("--hsv_lower", help="Dolna granica HSV np. 0,80,80")
     p_ros2.add_argument("--hsv_upper", help="Górna granica HSV np. 10,255,255")
+    p_ros2.add_argument("--calib_file", help="Plik kalibracji .npz z camera_matrix i dist_coeffs")
+    p_ros2.add_argument("--pnp_object_points", help="Punkty 3D świata: X,Y,Z;X,Y,Z;... (min. 4)")
+    p_ros2.add_argument("--pnp_image_points", help="Punkty 2D obrazu: x,y;x,y;... (min. 4)")
+    p_ros2.add_argument("--pnp_world_plane_z", type=float, default=0.0, help="Płaszczyzna świata Z dla rekonstrukcji XYZ")
     return parser
 
 
@@ -381,6 +386,8 @@ def main():
     elif args.command == "ros2":
         from .ros2_node import run_ros2_tracker_node
 
+        if getattr(args, "calib_file", None):
+            args.calib_file = resolve_analysis_input(args.calib_file)
         run_ros2_tracker_node(args)
     else:
         parser.print_help()
