@@ -29,6 +29,145 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
+## Szybki start krok po kroku (co uruchamiać po kolei)
+
+Poniżej najkrótsza, praktyczna ścieżka od zera do działającego śledzenia:
+
+1. Wejdź do katalogu projektu i zainstaluj zależności:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+2. (Opcjonalnie, ale zalecane) wykonaj kalibrację kamery, jeśli pracujesz z kamerą fizyczną:
+
+```bash
+python -m luca_tracker calibrate \
+  --calib_dir images_calib \
+  --rows 6 \
+  --cols 9 \
+  --square_size 1.0 \
+  --output_file camera_calib.npz
+```
+
+3. Uruchom tracking na materiale testowym z repozytorium (najprostszy start):
+
+```bash
+python -m luca_tracker track \
+  --video video/sledzenie_plamki.mp4 \
+  --track_mode brightness \
+  --output_csv output/manual/tracking_results.csv \
+  --report_csv output/manual/report.csv \
+  --trajectory_png output/manual/trajectory.png
+```
+
+4. Sprawdź wyniki w katalogu `output/manual/` albo domyślnie `output/<timestamp>/`.
+
+5. Dla pracy na żywo z kamerą uruchom:
+
+```bash
+python -m luca_tracker track \
+  --camera 0 \
+  --display \
+  --calib_file camera_calib.npz
+```
+
+6. Zakończ tryb podglądu klawiszem `q` (okno OpenCV) albo przerwaniem procesu (`Ctrl+C`).
+
+## Gdzie są wystawione informacje o aktualnej pozycji plamki (w tym XYZ)
+
+Aktualna pozycja śledzonego obiektu jest dostępna w kilku miejscach – zależnie od trybu uruchomienia:
+
+1. **CSV głównej trajektorii (`--output_csv`)**
+   - zawiera pozycję 2D (`x`, `y`) i pola rekonstrukcji 3D (`x_world`, `y_world`, `z_world`),
+   - to podstawowe źródło do analizy offline po zakończeniu przebiegu.
+
+2. **CSV wszystkich torów (`--all_tracks_csv`)**
+   - przydatne w `--multi_track`, gdy trzeba analizować wiele obiektów równolegle,
+   - zawiera analogiczne pola pozycyjne dla każdego `track_id`.
+
+3. **ROS2 topic (`python -m luca_tracker ros2`)**
+   - node publikuje JSON (`std_msgs/String`) na topicu `--topic` (domyślnie `/luca_tracker/tracking`),
+   - wiadomości zawierają bieżące dane klatkowe, m.in. `x`, `y`, `radius`, `detected`, `frame_index`, `time_sec`,
+   - to główne źródło danych "online" dla integracji z innymi systemami.
+
+4. **Podgląd GUI / OpenCV (`--display` lub `gui`)**
+   - umożliwia obserwację pozycji i jakości detekcji w czasie rzeczywistym,
+   - traktuj jako szybki podgląd operatorski (nie jako docelowy interfejs integracyjny).
+
+> Uwaga: pola `x_world/y_world/z_world` są wyliczane, gdy podasz dane PnP (`--pnp_object_points`, `--pnp_image_points`) i poprawną geometrię płaszczyzny (`--pnp_world_plane_z`). Bez tego kolumny świata mogą być puste.
+
+## Przykłady uruchamiania aplikacji w różnych trybach
+
+### 1) Tryb CLI – plik wideo (jasność)
+
+```bash
+python -m luca_tracker track \
+  --video video/sledzenie_plamki.mp4 \
+  --track_mode brightness \
+  --threshold_mode adaptive \
+  --use_clahe \
+  --display
+```
+
+### 2) Tryb CLI – plik wideo (kolor)
+
+```bash
+python -m luca_tracker track \
+  --video video/luca_kolory.mp4 \
+  --track_mode color \
+  --color_name red \
+  --output_csv output/manual/color_track.csv
+```
+
+### 3) Tryb CLI – kamera na żywo
+
+```bash
+python -m luca_tracker track \
+  --camera 0 \
+  --track_mode brightness \
+  --display
+```
+
+### 4) Tryb GUI (strojenie parametrów)
+
+```bash
+python -m luca_tracker gui --video video/sledzenie_plamki.mp4
+```
+
+### 5) Tryb konfiguracji YAML (powtarzalne uruchomienia)
+
+```bash
+python -m luca_tracker track --config config/run_tracking.sample.yaml
+```
+
+### 6) Tryb ROS2 (strumień online + publikacja pozycji)
+
+```bash
+python -m luca_tracker ros2 \
+  --camera_index 0 \
+  --topic /luca_tracker/tracking \
+  --fps 30 \
+  --display
+```
+
+### 7) Gotowe skrypty startowe (Linux/macOS)
+
+```bash
+bash scripts/run_gui.sh
+bash scripts/run_cli.sh
+bash scripts/run_analysis.sh
+```
+
+### 8) Gotowe skrypty startowe (Windows)
+
+```bat
+scripts\run_gui.bat
+scripts\run_cli.bat
+scripts\run_camera.bat
+```
+
 ## CLI
 
 Główne wejście:
@@ -149,7 +288,7 @@ python tools/video_tool.py --input video/sledzenie_plamki.mp4 --analyze-only
 Wykresy porównawcze z wielu CSV:
 
 ```bash
-python tools/data.py output/a.csv output/b.csv --x-col frame --y-cols x y speed
+python tools/data_tool.py output/a.csv output/b.csv --x-col frame --y-cols x y speed
 ```
 
 ## Docker
