@@ -443,6 +443,15 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
         )
         # Stabilizacja temporalna obniża migotanie maski, ale kosztem opóźnienia reakcji o kilka klatek.
         _log_stage("INFO", "Włączono filtr temporalny maski (mniej szumu, większa bezwładność).", "yellow")
+    if config.detector.opening_kernel > 1 or config.detector.closing_kernel > 1:
+        _log_stage(
+            "INFO",
+            (
+                "Włączono morfologię opening/closing "
+                f"(opening={config.detector.opening_kernel}, closing={config.detector.closing_kernel})."
+            ),
+            "yellow",
+        )
 
     while True:
         ok, frame = cap.read()
