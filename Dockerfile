@@ -51,4 +51,4 @@ RUN python -m pip install -r requirements.txt
 
 COPY . .
 
-CMD ["python", "track_luca.py"]
+CMD ["python", "-m", "luca_tracker"]

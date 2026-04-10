@@ -64,7 +64,7 @@ def _validate_gui_runtime_environment() -> None:
     raise GUIEnvironmentError(
         "Brak aktywnego serwera graficznego (DISPLAY/WAYLAND_DISPLAY). "
         "Uruchom aplikację w sesji desktopowej lub skonfiguruj X11/Wayland, "
-        "a następnie powtórz uruchomienie z logowaniem debug (np. `python track_luca.py gui -d`)."
+        "a następnie powtórz uruchomienie z logowaniem debug (np. `python -m luca_tracker gui -d`)."
     )
 
 

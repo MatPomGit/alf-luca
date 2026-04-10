@@ -1,0 +1,53 @@
+input:
+  video: video/sledzenie_plamki.mp4
+  calib_file:
+  display: false
+  interactive: false
+
+detector:
+  track_mode: brightness
+  blur: 11
+  threshold: 200
+  threshold_mode: fixed
+  adaptive_block_size: 31
+  adaptive_c: 5.0
+  use_clahe: false
+  erode_iter: 2
+  dilate_iter: 4
+  opening_kernel: 0
+  closing_kernel: 0
+  min_area: 20.0
+  max_area: 0.0
+  max_spots: 10
+  color_name: red
+  hsv_lower:
+  hsv_upper:
+  roi:
+  temporal_stabilization: false
+  temporal_window: 3
+  temporal_mode: majority
+
+tracker:
+  multi_track: false
+  max_distance: 40.0
+  max_missed: 10
+  selection_mode: stablest
+
+postprocess:
+  use_kalman: false
+  kalman_process_noise: 0.03
+  kalman_measurement_noise: 0.05
+  draw_all_tracks: false
+
+pose:
+  pnp_object_points:
+  pnp_image_points:
+  pnp_world_plane_z: 0.0
+
+eval:
+  output_csv: tracking_results.csv
+  trajectory_png:
+  report_csv:
+  report_pdf:
+  all_tracks_csv:
+  annotated_video:

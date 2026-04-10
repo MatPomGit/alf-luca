@@ -8,4 +8,4 @@ source "$SCRIPT_DIR/common.sh"
 cd "$REPO_ROOT"
 
 # Start GUI bez dodatkowych parametrów; domyślny wybór pliku jest po stronie CLI.
-run_python track_luca.py gui
+run_python -m luca_tracker gui

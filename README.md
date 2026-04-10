@@ -4,14 +4,14 @@ Narzędzia do kalibracji kamery, śledzenia plamki światła w nagraniach oraz a
 
 ## Struktura repozytorium
 
-- `luca_tracker/` - główny pakiet aplikacji: CLI, pipeline, GUI, raporty i integracje.
+- `luca_tracker/` - główny pakiet aplikacji z CLI, pipeline, GUI i raportami.
 - `tools/` - pomocnicze skrypty do analizy danych, QA wideo i ekstrakcji obrazów kalibracyjnych.
 - `scripts/` - gotowe skrypty uruchomieniowe dla Linux/macOS i Windows.
-- `config/` - konfiguracje YAML dla GUI i kalibracji.
+- `config/` - konfiguracje GUI oraz przykładowa konfiguracja pełnego runu.
 - `video/` - przykładowe materiały wejściowe.
 - `images_calib/` - obrazy szachownicy do kalibracji kamery.
-- `track_luca.py` - główny entrypoint CLI.
-- `kalman_tracker.py` - filtr Kalmana używany przez tracker.
+- `track_luca.py` - historyczny wrapper CLI zachowany dla zgodności.
+- `kalman_tracker.py` - historyczny wrapper importu zachowany dla zgodności.
 - `Dockerfile` - obraz środowiska uruchomieniowego.
 
 ## Wymagania
@@ -27,12 +27,24 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-## Szybki start
+## Uruchamianie
+
+Preferowane uruchomienie:
+
+```bash
+python -m luca_tracker --help
+```
+
+Historyczny entrypoint nadal działa:
+
+```bash
+python track_luca.py --help
+```
 
 Kalibracja kamery:
 
 ```bash
-python track_luca.py calibrate \
+python -m luca_tracker calibrate \
   --calib_dir images_calib \
   --rows 6 \
   --cols 9 \
@@ -43,7 +55,7 @@ python track_luca.py calibrate \
 Śledzenie plamki:
 
 ```bash
-python track_luca.py track \
+python -m luca_tracker track \
   --video video/sledzenie_plamki.mp4 \
   --track_mode brightness
 ```
@@ -51,24 +63,37 @@ python track_luca.py track \
 GUI:
 
 ```bash
-python track_luca.py gui
+python -m luca_tracker gui
 ```
 
 Porównanie dwóch pomiarów:
 
 ```bash
-python track_luca.py compare \
+python -m luca_tracker compare \
   --reference output/ref.csv \
   --candidate output/test.csv \
   --output_csv output/diff.csv
 ```
 
+## Konfiguracja
+
+Pełny run można opisać plikiem YAML lub JSON:
+
+```bash
+python -m luca_tracker track --config config/run_tracking.sample.yaml
+```
+
+W repo znajdują się:
+
+- `config/gui_display.yaml` - domyślne ustawienia GUI.
+- `config/run_tracking.sample.yaml` - przykładowa konfiguracja pełnego uruchomienia trackera.
+
 ## Skrypty pomocnicze
 
 - `scripts/run_gui.sh` - uruchamia GUI na Linux/macOS.
 - `scripts/run_gui.bat` - uruchamia GUI na Windows.
-- `scripts/run_cli.sh` - przykładowe uruchomienie trybu `track`.
-- `scripts/run_analysis.sh` - porównanie danych przez `tools/data.py`.
+- `scripts/run_cli.sh` - przykładowe uruchomienie `track` z wynikami w `output/manual/`.
+- `scripts/run_analysis.sh` - porównanie danych przez `tools/data.py` w `output/manual/`.
 
 ## Artefakty wynikowe
 
@@ -81,6 +106,8 @@ Domyślnie wyniki trafiają do katalogu `output/` w podfolderze z timestampem. D
 - MP4 z naniesioną trajektorią.
 
 Możesz nadpisać katalog wynikowy zmienną środowiskową `LUCA_OUTPUT_DIR`.
+
+Skrypty z katalogu `scripts/` zapisują dane do stabilnej lokalizacji `output/manual/`, żeby łatwiej było uruchamiać kolejne kroki robocze.
 
 ## Narzędzia dodatkowe
 

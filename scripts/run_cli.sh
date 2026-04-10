@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Ładujemy współdzielone funkcje uruchomieniowe dla skryptów automatycznych.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
 cd "$REPO_ROOT"
+mkdir -p "$OUTPUT_ROOT"
 
-# Domyślny przebieg śledzenia dla środowiska testowego/roboczego.
-run_python track_luca.py track \
+run_python -m luca_tracker track \
   --video video/sledzenie_plamki.mkv \
   --track_mode brightness \
-  --output_csv tracking_results.csv \
-  --trajectory_png trajectory.png \
-  --report_csv report.csv \
-  --report_pdf report.pdf
+  --output_csv "$OUTPUT_ROOT/tracking_results.csv" \
+  --trajectory_png "$OUTPUT_ROOT/trajectory.png" \
+  --report_csv "$OUTPUT_ROOT/report.csv" \
+  --report_pdf "$OUTPUT_ROOT/report.pdf"
