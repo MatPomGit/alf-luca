@@ -1,26 +1,27 @@
 from __future__ import annotations
 
-from argparse import Namespace
 from dataclasses import asdict
 
 from luca_types.luca_config import DetectorConfig, EvalConfig, InputConfig, PoseConfig, PostprocessConfig, RunConfig, TrackerConfig
 
 
 # Funkcja adaptera mapująca model uruchomienia na konfigurację runtime pipeline'u.
-def run_config_to_pipeline_config(config: RunConfig) -> Namespace:
-    """Mapuje kanoniczny `RunConfig` na obiekt zgodny z wejściem `track_video` bez zależności od `luca_tracking`."""
+def run_config_to_pipeline_config(config: RunConfig):
+    """Mapuje kanoniczny `RunConfig` na model `PipelineConfig` wykorzystywany podczas śledzenia."""
     from luca_input.io_paths import parse_camera_source
+    from luca_processing.detectors import DetectorConfig as PipelineDetectorConfig
+    from luca_processing.postprocess import KalmanConfig
+    from luca_tracking.pipeline import PipelineConfig
+    from luca_tracking.tracker_core import TrackerConfig as PipelineTrackerConfig
 
     if bool(config.input.video) == bool(config.input.camera):
         raise ValueError("Konfiguracja musi zawierać dokładnie jedno źródło wejścia: `input.video` albo `input.camera`.")
 
-    # Normalizujemy źródło, aby warstwa trackingu nie musiała rozróżniać form wejścia.
     source_value = config.input.video if config.input.video else parse_camera_source(config.input.camera or "")
     source_label = config.input.video if config.input.video else f"camera:{config.input.camera}"
     is_live_source = bool(config.input.camera)
 
-    # Zwracamy płaską przestrzeń nazw odpowiadającą argumentom CLI akceptowanym przez `track_video`.
-    return Namespace(
+    return PipelineConfig(
         video=source_value,
         source_label=source_label,
         is_live_source=is_live_source,
@@ -41,44 +42,25 @@ def run_config_to_pipeline_config(config: RunConfig) -> Namespace:
         pnp_object_points=config.pose.pnp_object_points,
         pnp_image_points=config.pose.pnp_image_points,
         pnp_world_plane_z=config.pose.pnp_world_plane_z,
-        track_mode=config.detector.track_mode,
-        blur=config.detector.blur,
-        threshold=config.detector.threshold,
-        threshold_mode=config.detector.threshold_mode,
-        adaptive_block_size=config.detector.adaptive_block_size,
-        adaptive_c=config.detector.adaptive_c,
-        use_clahe=config.detector.use_clahe,
-        erode_iter=config.detector.erode_iter,
-        dilate_iter=config.detector.dilate_iter,
-        opening_kernel=config.detector.opening_kernel,
-        closing_kernel=config.detector.closing_kernel,
-        min_area=config.detector.min_area,
-        max_area=config.detector.max_area,
-        min_circularity=config.detector.min_circularity,
-        max_aspect_ratio=config.detector.max_aspect_ratio,
-        min_peak_intensity=config.detector.min_peak_intensity,
-        min_solidity=config.detector.min_solidity,
-        max_spots=config.detector.max_spots,
-        color_name=config.detector.color_name,
-        hsv_lower=config.detector.hsv_lower,
-        hsv_upper=config.detector.hsv_upper,
-        roi=config.detector.roi,
-        temporal_stabilization=config.detector.temporal_stabilization,
-        temporal_window=config.detector.temporal_window,
-        temporal_mode=config.detector.temporal_mode,
-        max_distance=config.tracker.max_distance,
-        max_missed=config.tracker.max_missed,
-        distance_weight=config.tracker.distance_weight,
-        area_weight=config.tracker.area_weight,
-        circularity_weight=config.tracker.circularity_weight,
-        brightness_weight=config.tracker.brightness_weight,
-        min_match_score=config.tracker.min_match_score,
-        speed_gate_gain=config.tracker.speed_gate_gain,
-        error_gate_gain=config.tracker.error_gate_gain,
-        min_dynamic_distance=config.tracker.min_dynamic_distance,
-        max_dynamic_distance=config.tracker.max_dynamic_distance,
-        kalman_process_noise=config.postprocess.kalman_process_noise,
-        kalman_measurement_noise=config.postprocess.kalman_measurement_noise,
+        detector=PipelineDetectorConfig(**asdict(config.detector)),
+        tracker=PipelineTrackerConfig(
+            max_distance=config.tracker.max_distance,
+            max_missed=config.tracker.max_missed,
+            selection_mode=config.tracker.selection_mode,
+            distance_weight=config.tracker.distance_weight,
+            area_weight=config.tracker.area_weight,
+            circularity_weight=config.tracker.circularity_weight,
+            brightness_weight=config.tracker.brightness_weight,
+            min_match_score=config.tracker.min_match_score,
+            speed_gate_gain=config.tracker.speed_gate_gain,
+            error_gate_gain=config.tracker.error_gate_gain,
+            min_dynamic_distance=config.tracker.min_dynamic_distance,
+            max_dynamic_distance=config.tracker.max_dynamic_distance,
+        ),
+        kalman=KalmanConfig(
+            process_noise=config.postprocess.kalman_process_noise,
+            measurement_noise=config.postprocess.kalman_measurement_noise,
+        ),
     )
 
 
