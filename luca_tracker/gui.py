@@ -12,6 +12,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
+from . import __version__
 from .config_model import RunConfig, load_run_config, save_run_config
 from .reports import RUN_METADATA_FIELDS, build_run_metadata, save_run_metadata
 from .tracking import COLOR_PRESETS, SimpleMultiTracker, SingleObjectEKFTracker, detect_spots, ensure_odd, parse_roi
@@ -421,6 +422,8 @@ def run_gui(args):
     class TrackerGUIApp(App):
         def __init__(self):
             super().__init__()
+            # Tytuł okna zawiera wersję, aby operator zawsze widział aktywny build GUI.
+            self.title = f"Luca Tracker v{__version__}"
             self.video_files = video_files
             self.output_dir = output_dir
             self.camera_matrix = camera_matrix
@@ -1210,15 +1213,12 @@ def run_gui(args):
                 try:
                     target()
                 except Exception as exc:  # noqa: BLE001
+                    # Wspólny tor błędu: status + traceback + finalny stan zadania.
                     self.status_emitter.error(f"{name}: {exc}", details=traceback.format_exc())
+                    self._set_job_state("error", progress=100)
                     return
                 self.status_emitter.success(success_message)
-                    self._set_job_state("error", progress=100)
-                    self._set_status("error", f"{name}: {exc}")
-                    self._append_log("error", traceback.format_exc())
-                    return
                 self._set_job_state("finished", progress=100)
-                self._set_status("success", success_message)
 
             threading.Thread(target=_job, daemon=True).start()
 
@@ -1873,6 +1873,17 @@ def run_gui(args):
             tabs.add_widget(ros2_tab)
 
             status_panel = BoxLayout(orientation="vertical", size_hint_y=None, height=max(200, int(self.gui_font_size * 8)))
+            # Stała etykieta wersji ułatwia weryfikację numeru podczas testów operatora.
+            self.version_label = Label(
+                text=f"Wersja aplikacji: {__version__}",
+                size_hint_y=None,
+                height=max(24, int(self.gui_font_size * 1.2)),
+                halign="left",
+                valign="middle",
+                font_size=max(14, int(self.gui_font_size * 0.75)),
+            )
+            self.version_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+            status_panel.add_widget(self.version_label)
             self.status_label = Label(
                 text="Ready",
                 size_hint_y=None,
