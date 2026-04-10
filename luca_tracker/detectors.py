@@ -202,10 +202,12 @@ class TemporalMaskFilter:
         self.window_size = int(window_size)
         self.mode = mode
         self._buffer: Deque[np.ndarray] = deque(maxlen=self.window_size)
+        self._shape: Optional[Tuple[int, int]] = None
 
     def reset(self) -> None:
         """Czyści historię masek; używamy np. przy zmianie źródła wideo/ROI."""
         self._buffer.clear()
+        self._shape = None
 
     def apply(self, mask: np.ndarray) -> np.ndarray:
         """Zwraca maskę przefiltrowaną po czasie.
@@ -214,7 +216,16 @@ class TemporalMaskFilter:
         - mniejszy szum migotania pojedynczych pikseli/artefaktów,
         - ale większe opóźnienie reakcji (do ~N klatek dla okna N).
         """
-        self._buffer.append(mask.copy())
+        if mask.ndim != 2:
+            raise ValueError("TemporalMaskFilter oczekuje maski jednowarstwowej (H, W).")
+        current_shape = (int(mask.shape[0]), int(mask.shape[1]))
+        if self._shape is not None and self._shape != current_shape:
+            # Zmiana rozmiaru ROI/kadru oznacza inną geometrię pikseli.
+            # Reset zapobiega mieszaniu nieporównywalnych masek historycznych.
+            self.reset()
+        self._shape = current_shape
+        binary_mask = np.where(mask > 0, 255, 0).astype(np.uint8)
+        self._buffer.append(binary_mask)
         stack = np.stack(list(self._buffer), axis=0)
         if self.mode == "and":
             fused = np.min(stack, axis=0)
@@ -460,10 +471,18 @@ def detect_spots(
         hsv_upper=hsv_upper,
     )
     mask_roi = detector_cls(detector_config).detect_mask(roi_frame)
+    # Pilnujemy binarności maski przed filtracją czasową, żeby uniknąć narastania półtonów.
+    mask_roi = np.where(mask_roi > 0, 255, 0).astype(np.uint8)
     if temporal_filter is not None:
         # Filtr temporalny działa wyłącznie na wycinku ROI, żeby nie "przenosić" szumu spoza obszaru zainteresowania.
         mask_roi = temporal_filter.apply(mask_roi)
     mask = _embed_mask_in_frame(mask_roi, frame.shape, (x0, y0, w, h))
+    # Dodatkowo czyścimy obszary poza ROI po złożeniu pełnej maski (ochrona przed
+    # ewentualną przyszłą zmianą implementacji filtra temporalnego).
+    mask[:y0, :] = 0
+    mask[y0 + h :, :] = 0
+    mask[y0 : y0 + h, :x0] = 0
+    mask[y0 : y0 + h, x0 + w :] = 0
     gray_roi = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
     contours, _ = cv2.findContours(mask_roi.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
