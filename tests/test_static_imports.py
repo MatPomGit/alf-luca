@@ -139,3 +139,32 @@ def test_no_circular_dependencies_in_packages() -> None:
     graph = _build_internal_import_graph()
     cycles = _find_cycles(graph)
     assert not cycles, f"Wykryto cykliczne zależności importów: {cycles}"
+
+
+
+def test_low_level_packages_do_not_import_tracking() -> None:
+    """Weryfikuje warstwowanie architektury: pakiety bazowe nie mogą zależeć od trackingu."""
+    # Te pakiety są fundamentem i powinny pozostać niezależne od warstwy `luca_tracking`.
+    low_level_packages = {"luca_camera", "luca_input", "luca_types"}
+    blocked_prefixes = ("luca_tracking", "luca_tracker")
+
+    for path in _iter_python_files():
+        module_name = _module_name_from_path(path)
+        top_package = module_name.split(".", 1)[0]
+        if top_package not in low_level_packages:
+            continue
+
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported_names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                imported_names = [node.module] if node.module else []
+            else:
+                continue
+
+            for imported_name in imported_names:
+                if imported_name and imported_name.startswith(blocked_prefixes):
+                    raise AssertionError(
+                        f"Niedozwolony import warstwy tracking w {path}: {imported_name}"
+                    )
