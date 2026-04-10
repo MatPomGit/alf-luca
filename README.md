@@ -16,6 +16,23 @@ J2S
 - `images_calib/` - obrazy szachownicy do kalibracji.
 - `Dockerfile` - obraz środowiska uruchomieniowego.
 
+
+## Pakiety Python (monorepo)
+
+| Pakiet | Odpowiedzialność | Kluczowe zależności | Entrypointy |
+|---|---|---|---|
+| `luca-types` | Modele konfiguracji i typy domenowe współdzielone przez pozostałe moduły. | `pydantic` | brak CLI (import biblioteczny) |
+| `luca-input` | Mapowanie konfiguracji i ścieżek wejścia/wyjścia. | `pyyaml`, `luca-types` | brak CLI (import biblioteczny) |
+| `luca-camera` | Obsługa źródeł obrazu i kalibracji kamery. | `opencv-python`, `numpy`, `luca-input`, `luca-tracking` | brak CLI (import biblioteczny) |
+| `luca-processing` | Detektory, postprocess i logika filtracji śledzenia. | `opencv-python`, `numpy`, `luca-types` | brak CLI (import biblioteczny) |
+| `luca-tracking` | Pipeline śledzenia i serwisy aplikacyjne. | `luca-types`, `luca-input`, `luca-processing` | brak CLI (import biblioteczny) |
+| `luca-reporting` | Raporty CSV/PDF i eksport materiałów wynikowych. | `pandas`, `matplotlib`, `fpdf2`, `opencv-python`, `luca-types` | brak CLI (import biblioteczny) |
+| `luca-publishing` | Integracja publikacji zdarzeń śledzenia (ROS2/adaptory). | `opencv-python`, `numpy`, `luca-processing` | brak CLI (import biblioteczny) |
+| `luca-interface-cli` | Interfejs uruchomieniowy CLI dla usług LUCA. | `luca-tracking`, `luca-tracker` | `luca-cli` |
+| `luca-interface-gui` | Interfejs GUI dla usług LUCA. | `luca-tracking`, `luca-tracker` | `luca-gui` |
+| `luca-interface-ros2` | Interfejs ROS2 dla uruchamiania i publikacji danych online. | `luca-tracking`, `luca-tracker` | `luca-ros2` |
+| `luca-suite` | Metapakiet spinający kompatybilne wersje wszystkich modułów. | Wszystkie pakiety `luca-*` w zakresie `>=0.1.0,<0.2.0` | brak CLI (meta-zależności) |
+
 ## Wymagania
 
 - Python 3.10+
