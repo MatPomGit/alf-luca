@@ -1,5 +1,6 @@
+# Artefakty lokalnych uruchomień i nagrań testowych
 output/
-.mkv
+*.mkv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -208,5 +209,7 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
-video/luca_kolory.mkv
-video/luca_regal.mkv
+
+# Dodatkowe porządki dla lokalnych plików tymczasowych
+*.tmp
+*.temp
