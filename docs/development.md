@@ -80,12 +80,16 @@ Kontrakt konfiguracji ma jedno źródło prawdy: `RunConfig` i mapowanie
 Każdy adapter (`cli`, `gui`, `ros2`) najpierw składa dane do tego modelu,
 a dopiero później przekazuje je niżej do pipeline'u lub publikacji.
 
-| Parametr (przykład CLI) | Warstwa odpowiedzialna | Uwagi |
-| --- | --- | --- |
-| `--video`, `--camera`, `--video_device`, `--camera_index` | `luca-interface-*` + `luca_types.run_config_from_entrypoint` | Adapter zbiera dane, a `luca_types` normalizuje źródło wejścia do `input.video/input.camera`. |
-| `--track_mode`, `--threshold`, `--hsv_*`, `--roi`, `--max_spots` | `luca_types.DetectorConfig` | Walidacja zakresów/formatów odbywa się na poziomie modelu konfiguracji. |
-| `--multi_track`, `--max_distance`, `--selection_mode` | `luca_types.TrackerConfig` | Kontrakt wyboru i parametrów torów jest trzymany w modelu wspólnym. |
-| `--use_kalman`, `--kalman_*` | `luca_types.PostprocessConfig` | Parametry postprocessingu są mapowane raz i używane przez pipeline. |
-| `--pnp_object_points`, `--pnp_image_points`, `--pnp_world_plane_z`, `--calib_file` | `luca_types.PoseConfig` + `luca-input` | `luca-input` wykonuje walidację międzywarstwową (np. PnP wymaga kalibracji). |
-| `--output_csv`, `--trajectory_png`, `--report_*`, `--annotated_video` | `luca_types.EvalConfig` + `luca-tracking.application_services` | Ścieżki są normalizowane przez resolver runtime, zanim trafią do pipeline. |
-| `RunConfig -> PipelineConfig` | `packages/luca-input/src/luca_input/pipeline_config_mapping.py` | To miejsce jest bramką kontraktu i zwraca jasne błędy mapowania (banan-check dla spójności). |
+| Obszar | Opcje (adaptery) | `run_config_from_entrypoint(...)` | `pipeline_config_mapping.py` |
+| --- | --- | --- | --- |
+| Źródło wejścia | `--video`, `--camera`, `--camera_index`, `--video_device` | `input.video` / `input.camera` | `video`, `is_live_source`, `source_label` |
+| Detekcja | `--track_mode`, `--threshold*`, `--blur`, `--morphology*`, `--hsv_*`, `--temporal_*` | `detector.*` | `track_mode`, `threshold*`, `opening_kernel`, `closing_kernel`, `min_detection_*`, `temporal_*` |
+| Tracking | `--multi_track`, `--max_distance`, `--max_missed`, `--selection_mode` | `tracker.*` | `multi_track`, `max_distance`, `max_missed`, `selection_mode` |
+| Kalibracja/PnP | `--calib_file`, `--pnp_*` | `input.calib_file`, `pose.*` | `calib_file`, `pnp_*` |
+| Raportowanie | `--output_csv`, `--trajectory_png`, `--report_*`, `--all_tracks_csv`, `--annotated_video` | `eval.*` | `output_csv`, `trajectory_png`, `report_*`, `all_tracks_csv`, `annotated_video` |
+| Publikacja (ROS2 runtime) | `--topic`, `--node_name`, `--fps`, `--frame_*` | runtime-only (nie trafia do `RunConfig`) | używane bezpośrednio przez adapter ROS2 |
+
+Pełna matryca kontraktu (z mapowaniem pola-po-polu) jest utrzymywana w
+`packages/luca-input/src/luca_input/entrypoint_option_contract.py` jako `PARAMETER_MATRIX`.
+Test kontraktowy sprawdzający tę matrycę oraz przykładowe konfiguracje znajdziesz w
+`tests/test_configuration_contract.py`.

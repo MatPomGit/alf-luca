@@ -20,8 +20,8 @@ for _package_src in (
 ):
     sys.path.insert(0, str(_REPO_ROOT / _package_src))
 
-from luca_input import run_config_to_pipeline_config
-from luca_types import run_config_from_entrypoint
+from luca_input import PARAMETER_MATRIX, run_config_to_pipeline_config
+from luca_types import load_run_config, run_config_from_entrypoint
 
 
 def _load_module_from_path(module_name: str, relative_path: str):
@@ -60,6 +60,23 @@ def _build_shared_option_set() -> list[str]:
         "1",
         "--dilate_iter",
         "3",
+        "--opening_kernel",
+        "3",
+        "--closing_kernel",
+        "3",
+        "--min_detection_confidence",
+        "0.25",
+        "--min_detection_score",
+        "0.15",
+        "--temporal_stabilization",
+        "--temporal_window",
+        "5",
+        "--temporal_mode",
+        "majority",
+        "--min_persistence_frames",
+        "2",
+        "--persistence_radius_px",
+        "9.0",
         "--roi",
         "1,2,100,80",
         "--color_name",
@@ -126,3 +143,30 @@ def test_pipeline_mapping_validates_multitrack_contract() -> None:
         assert "max_spots" in str(exc)
     else:
         raise AssertionError("Oczekiwano błędu walidacji kontraktu dla multi_track/max_spots.")
+
+
+def test_parameter_matrix_contract_rows_cover_pipeline_mapping() -> None:
+    """Pilnuje, żeby matryca parametrów miała mapowanie do pipeline dla pól wejściowych RunConfig."""
+    tracked_domains = {"input", "detection", "tracking", "calibration", "reporting", "publication"}
+    assert {row.domain for row in PARAMETER_MATRIX} == tracked_domains
+
+    # Wiersze runtime-only (publikacja ROS2) nie mają odpowiednika w RunConfig/PipelineConfig.
+    rows_with_mapping = [row for row in PARAMETER_MATRIX if row.run_config_path.startswith("(") is False]
+    assert all(row.pipeline_field for row in rows_with_mapping)
+
+
+def test_sample_yaml_configs_roundtrip_to_pipeline_namespace() -> None:
+    """Ładuje przykładowe YAML-e i sprawdza, czy dają poprawny `RunConfig` oraz mapowanie pipeline."""
+    sample_paths = (
+        "config/run_tracking.sample.yaml",
+        "config/run_tracking.sledzenie_low_fp.yaml",
+    )
+
+    for relative_path in sample_paths:
+        run_config = load_run_config(_REPO_ROOT / relative_path)
+        namespace = run_config_to_pipeline_config(run_config)
+
+        # banan-guard: szybka asercja kontraktowa na polach krytycznych dla downstream.
+        assert getattr(namespace, "output_csv") == run_config.eval.output_csv
+        assert getattr(namespace, "threshold") == run_config.detector.threshold
+        assert bool(getattr(namespace, "is_live_source")) is False
