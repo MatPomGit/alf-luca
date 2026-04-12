@@ -28,6 +28,8 @@ from .gui_models import (
 from .gui_services import GUIServiceLayer
 from .gui_status import UIStatusEmitter, UIStatusEvent
 from .io_paths import ensure_output_dir
+from luca_processing import estimate_pnp_pose, pixel_to_world_on_plane
+from luca_types.calibration_status import CalibrationStatus
 
 GUI_MODES = ["calibration", "processing", "compare"]
 GUI_SELECTION_MODES = ["largest", "stablest", "longest"]
@@ -366,6 +368,127 @@ def _clip_slider(value: float, min_value: float, max_value: float) -> float:
     return max(min_value, min(max_value, value))
 
 
+def _draw_world_map_panel(
+    width: int,
+    height: int,
+    world_points: Sequence[Optional[Tuple[float, float]]],
+    current_world_point: Optional[Tuple[float, float]],
+    status_lines: Sequence[str],
+    show_grid: bool,
+    show_scale: bool,
+    banan_debug_overlay: bool,
+) -> np.ndarray:
+    """Renderuje panel mapy świata (rzut z góry) używany obok podglądu wideo."""
+    panel = np.full((height, width, 3), (18, 20, 26), dtype=np.uint8)
+    cv2.rectangle(panel, (0, 0), (width - 1, height - 1), (65, 72, 86), 1, cv2.LINE_AA)
+    cv2.putText(panel, "World map (top view)", (12, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (230, 230, 230), 2, cv2.LINE_AA)
+
+    map_top = 40
+    map_bottom = height - 78
+    map_left = 12
+    map_right = width - 12
+    cv2.rectangle(panel, (map_left, map_top), (map_right, map_bottom), (44, 48, 60), 1, cv2.LINE_AA)
+    map_w = max(1, map_right - map_left)
+    map_h = max(1, map_bottom - map_top)
+
+    valid_points = [pt for pt in world_points if pt is not None]
+    if current_world_point is not None:
+        valid_points.append(current_world_point)
+    if not valid_points:
+        cv2.putText(
+            panel,
+            "Brak danych XY swiata do wyswietlenia.",
+            (map_left + 10, map_top + 24),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.52,
+            (180, 186, 200),
+            1,
+            cv2.LINE_AA,
+        )
+    else:
+        xs = [float(pt[0]) for pt in valid_points]
+        ys = [float(pt[1]) for pt in valid_points]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        span_x = max(1.0, max_x - min_x)
+        span_y = max(1.0, max_y - min_y)
+        padding = 0.12
+        min_x -= span_x * padding
+        max_x += span_x * padding
+        min_y -= span_y * padding
+        max_y += span_y * padding
+        span_x = max(1.0, max_x - min_x)
+        span_y = max(1.0, max_y - min_y)
+
+        def _to_px(pt: Tuple[float, float]) -> Tuple[int, int]:
+            px = map_left + int(((pt[0] - min_x) / span_x) * map_w)
+            py = map_bottom - int(((pt[1] - min_y) / span_y) * map_h)
+            return int(np.clip(px, map_left, map_right)), int(np.clip(py, map_top, map_bottom))
+
+        if show_grid:
+            grid_div = 8
+            for idx in range(grid_div + 1):
+                gx = map_left + int(idx * map_w / grid_div)
+                gy = map_top + int(idx * map_h / grid_div)
+                cv2.line(panel, (gx, map_top), (gx, map_bottom), (33, 38, 52), 1, cv2.LINE_AA)
+                cv2.line(panel, (map_left, gy), (map_right, gy), (33, 38, 52), 1, cv2.LINE_AA)
+
+        prev_px: Optional[Tuple[int, int]] = None
+        for point in world_points:
+            if point is None:
+                prev_px = None
+                continue
+            current_px = _to_px(point)
+            if prev_px is not None:
+                cv2.line(panel, prev_px, current_px, (84, 197, 255), 2, cv2.LINE_AA)
+            prev_px = current_px
+
+        if current_world_point is not None:
+            curr_px = _to_px(current_world_point)
+            cv2.circle(panel, curr_px, 6, (0, 218, 140), -1, cv2.LINE_AA)
+            cv2.circle(panel, curr_px, 9, (0, 72, 52), 1, cv2.LINE_AA)
+            cv2.putText(
+                panel,
+                f"x={current_world_point[0]:.2f}, y={current_world_point[1]:.2f}",
+                (map_left + 8, map_bottom - 12),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (215, 240, 230),
+                1,
+                cv2.LINE_AA,
+            )
+
+        if show_scale:
+            scale_text = f"zakres X={span_x:.2f}, Y={span_y:.2f}"
+            cv2.putText(
+                panel,
+                scale_text,
+                (map_left + 8, map_top + 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.48,
+                (178, 210, 255),
+                1,
+                cv2.LINE_AA,
+            )
+        if banan_debug_overlay:
+            cv2.putText(
+                panel,
+                f"banan_debug_overlay: points={len(valid_points)}",
+                (map_left + 8, map_top + 40),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.46,
+                (255, 196, 90),
+                1,
+                cv2.LINE_AA,
+            )
+
+    line_y = height - 48
+    for line in status_lines:
+        cv2.putText(panel, line, (12, line_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (190, 197, 210), 1, cv2.LINE_AA)
+        line_y += 18
+    return panel
+
+
 def run_gui(args):
     # Ustawienia providerów Kivy ograniczają ostrzeżenia o deprecjacji pygame oraz mtdev.
     os.environ.setdefault("KIVY_TEXT", "sdl2,pil")
@@ -445,6 +568,16 @@ def run_gui(args):
             )
             self.single_track_history: List[TrackPoint] = []
             self.texture: Optional[Texture] = None
+            # Bufor punktów świata z separatorami `None`, aby zachować przerwy przy braku detekcji.
+            self.world_track_history: List[Optional[Tuple[float, float]]] = []
+            self.world_rvec: Optional[np.ndarray] = None
+            self.world_tvec: Optional[np.ndarray] = None
+            self.world_projection_enabled = False
+            self.world_status_reason = "PnP nie został zainicjalizowany."
+            self.world_show_grid = True
+            self.world_show_scale = True
+            # Flaga stricte deweloperska (nie jest częścią kontraktu użytkownika).
+            self.banan_debug_overlay = bool(_cfg_value(gui_cfg, "banan_debug_overlay", False))
 
             self.mode = GUI_MODES[1]
             self.track_mode = args.track_mode
@@ -498,6 +631,7 @@ def run_gui(args):
             self.calibration_status_label: Optional[Label] = None
             # Emiter statusów agreguje logikę przekazywania komunikatów do paska statusu i logu zdarzeń.
             self.status_emitter = UIStatusEmitter(self._on_status_event)
+            self._initialize_world_projection()
             # Mapper izoluje translację kontrolek GUI <-> model RunConfig.
             self.run_config_mapper = RunConfigFormMapper(
                 parse_required=self._parse_required,
@@ -569,6 +703,9 @@ def run_gui(args):
                         "detections",
                         "main_x",
                         "main_y",
+                        "x_world",
+                        "y_world",
+                        "z_world",
                         "threshold",
                         "threshold_mode",
                         "adaptive_block_size",
@@ -621,6 +758,7 @@ def run_gui(args):
                 max_prediction_frames=max(15, int(args.max_missed) * 3),
             )
             self.single_track_history = []
+            self.world_track_history = []
             if self.run_config_fields:
                 current_video = str(self.video_files[self.current_video_idx])
                 stem = self.video_files[self.current_video_idx].stem
@@ -2097,6 +2235,59 @@ def run_gui(args):
             self.use_clahe = state == "down"
             self.btn_clahe.text = f"CLAHE: {'ON' if self.use_clahe else 'OFF'}"
 
+        def _initialize_world_projection(self) -> None:
+            """Konfiguruje rekonstrukcję XY świata z tych samych danych co pipeline tracking."""
+            self.world_rvec = None
+            self.world_tvec = None
+            self.world_projection_enabled = False
+
+            if self.camera_matrix is None or self.dist_coeffs is None:
+                self.world_status_reason = "Brak intrinsics kamery (camera_matrix/dist_coeffs)."
+                return
+            if not args.pnp_object_points or not args.pnp_image_points:
+                self.world_status_reason = "Brak punktów PnP (pose.pnp_object_points / pose.pnp_image_points)."
+                return
+
+            try:
+                pnp_pose = estimate_pnp_pose(
+                    camera_matrix=self.camera_matrix,
+                    dist_coeffs=self.dist_coeffs,
+                    object_points_raw=args.pnp_object_points,
+                    image_points_raw=args.pnp_image_points,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.world_status_reason = f"PnP solve error: {exc}"
+                return
+
+            if pnp_pose is None:
+                self.world_status_reason = "PnP solve zwrócił None."
+                return
+            self.world_rvec, self.world_tvec = pnp_pose
+            self.world_projection_enabled = True
+            self.world_status_reason = "World projection aktywne."
+
+        def _compute_world_point(self, tracked_xy: Optional[Tuple[float, float]]) -> Optional[Tuple[float, float, float]]:
+            """Liczy punkt świata dla bieżącej pozycji 2D bez ponownej detekcji."""
+            if (
+                tracked_xy is None
+                or not self.world_projection_enabled
+                or self.world_rvec is None
+                or self.world_tvec is None
+                or self.camera_matrix is None
+                or self.dist_coeffs is None
+            ):
+                return None
+            world_xyz = pixel_to_world_on_plane(
+                x_px=float(tracked_xy[0]),
+                y_px=float(tracked_xy[1]),
+                camera_matrix=self.camera_matrix,
+                dist_coeffs=self.dist_coeffs,
+                rvec=self.world_rvec,
+                tvec=self.world_tvec,
+                plane_z=float(args.pnp_world_plane_z),
+            )
+            return world_xyz
+
         def _restart_video(self):
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             self.frame_index = 0
@@ -2111,6 +2302,7 @@ def run_gui(args):
                 max_prediction_frames=max(15, int(args.max_missed) * 3),
             )
             self.single_track_history = []
+            self.world_track_history = []
 
         def _build_current_run_config(self) -> RunConfig:
             """Buduje pełny model konfiguracji korzystając z mappera kontrolek RunConfig."""
@@ -2387,6 +2579,23 @@ def run_gui(args):
                 draw_polyline_history(mask_bgr, self.single_track_history, (80, 230, 255), max_tail=120)
             _draw_single_track_marker(annotated, tracked_xy, predicted_only, label="EKF")
             _draw_single_track_marker(mask_bgr, tracked_xy, predicted_only, label="EKF")
+            world_xyz = self._compute_world_point(tracked_xy)
+            current_world_xy: Optional[Tuple[float, float]] = None
+            if world_xyz is not None:
+                current_world_xy = (float(world_xyz[0]), float(world_xyz[1]))
+
+            # Przerwa trajektorii świata: wymaganie diagnostyczne dla braku detekcji/punktu.
+            has_detection = bool(detections)
+            if not has_detection:
+                self.world_track_history.append(None)
+            elif current_world_xy is not None and not predicted_only:
+                self.world_track_history.append(current_world_xy)
+            elif predicted_only:
+                self.world_track_history.append(None)
+            elif current_world_xy is None:
+                self.world_track_history.append(None)
+            if len(self.world_track_history) > 600:
+                self.world_track_history = self.world_track_history[-600:]
 
             if self.mode == "calibration":
                 preview = _stack_h([frame, processed])
@@ -2447,6 +2656,39 @@ def run_gui(args):
                 color_view = _draw_detection_layer(processed, det_color, label_prefix="C ", color=(80, 255, 80))
                 preview = _stack_h([bright_view, color_view, mask_bgr])
 
+            world_status_lines: List[str]
+            if not self.world_projection_enabled:
+                world_status_lines = [
+                    "Diag: World projection OFF",
+                    f"Powod: {self.world_status_reason}",
+                ]
+            elif not has_detection:
+                world_status_lines = [
+                    "Diag: brak detekcji w biezacej klatce",
+                    "Trajektoria: przerwa (None segment)",
+                ]
+            elif current_world_xy is None:
+                world_status_lines = [
+                    "Diag: pixel->world niedostepne",
+                    "Sprawdz PnP / plane_z / kalibracje.",
+                ]
+            else:
+                world_status_lines = [
+                    f"Xw={current_world_xy[0]:.3f}, Yw={current_world_xy[1]:.3f}",
+                    f"plane_z={float(args.pnp_world_plane_z):.3f}",
+                ]
+            world_panel = _draw_world_map_panel(
+                width=max(280, int(preview.shape[1] * 0.35)),
+                height=preview.shape[0],
+                world_points=self.world_track_history,
+                current_world_point=current_world_xy if has_detection and not predicted_only else None,
+                status_lines=world_status_lines,
+                show_grid=self.world_show_grid,
+                show_scale=self.world_show_scale,
+                banan_debug_overlay=self.banan_debug_overlay,
+            )
+            preview = _stack_h([preview, world_panel])
+
             _draw_hud_panel(
                 preview,
                 [
@@ -2472,6 +2714,9 @@ def run_gui(args):
                         "detections": len(detections),
                         "main_x": round(float(tracked_xy[0]), 3),
                         "main_y": round(float(tracked_xy[1]), 3),
+                        "x_world": (round(float(world_xyz[0]), 5) if world_xyz is not None else None),
+                        "y_world": (round(float(world_xyz[1]), 5) if world_xyz is not None else None),
+                        "z_world": (round(float(world_xyz[2]), 5) if world_xyz is not None else None),
                         "threshold": self.threshold,
                         "threshold_mode": self.threshold_mode,
                         "adaptive_block_size": self.adaptive_block_size,
@@ -2502,10 +2747,9 @@ def run_gui(args):
             self.image_widget.texture = self.texture
             self.status_label.text = (
                 f"{self.video_files[self.current_video_idx].name} | detections={len(detections)} | "
-                f"frame={self.frame_index} | analyze={'ON' if self.analyze_enabled else 'OFF'}"
+                f"frame={self.frame_index} | analyze={'ON' if self.analyze_enabled else 'OFF'} | "
+                f"world={'ON' if self.world_projection_enabled else 'OFF'}"
             )
-
-            """TODO :zrobić mapę pozycji 3D (rzut z góry)"""
 
         def on_stop(self):
             if self.cap:
