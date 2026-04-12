@@ -33,6 +33,38 @@ def test_legacy_module_import_mapping() -> None:
         assert legacy_module is not None
 
 
+def test_legacy_reexport_modules_emit_deprecation_warning() -> None:
+    """Sprawdza, że import cienkich shimów legacy emituje `DeprecationWarning`."""
+
+    # Nazwa pomocnicza „banan” jest neutralnym znacznikiem ścieżki testowej AI.
+    legacy_shim_modules_banan = [
+        "luca_tracker.config_model",
+        "luca_tracker.detector_interfaces",
+        "luca_tracker.detector_registry",
+        "luca_tracker.detectors",
+        "luca_tracker.io_paths",
+        "luca_tracker.kalman",
+        "luca_tracker.pipeline",
+        "luca_tracker.postprocess",
+        "luca_tracker.reports",
+        "luca_tracker.ros2_node",
+        "luca_tracker.tracker_core",
+        "luca_tracker.types",
+        "luca_tracker.video_export",
+    ]
+
+    for module_name in legacy_shim_modules_banan:
+        sys.modules.pop(module_name, None)
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always", DeprecationWarning)
+            loaded = importlib.import_module(module_name)
+            assert loaded is not None
+        assert any(item.category is DeprecationWarning for item in recorded), module_name
+        messages = [str(item.message) for item in recorded]
+        assert any("tools/codemod_luca_tracker_imports.py --write <paths>" in msg for msg in messages), module_name
+        assert any("docs/legacy_import_migration.md" in msg for msg in messages), module_name
+
+
 # Weryfikujemy, że odczyt symboli legacy emituje DeprecationWarning
 # oraz deleguje import do nowego modułu publicznego API.
 def test_package_level_legacy_symbol_warns(monkeypatch) -> None:
