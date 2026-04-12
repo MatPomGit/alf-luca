@@ -21,6 +21,10 @@ Każdy wpis zawiera:
 - `tags` — etykiety opisujące typ trudności,
 - `notes` — krótki opis kontekstu testu.
 
+Uzupełniająco plik `threshold_profiles.json` zawiera profile progów **must-pass**
+dla trzech klas zmian (`detection_algorithm`, `tracking_filters`, `interface_only`).
+Te profile są używane przez benchmark lokalny i workflow CI.
+
 ## Dobre praktyki rozbudowy zestawu
 
 1. Dodawaj nowe scenariusze jako osobne wpisy JSON (bez usuwania starych).

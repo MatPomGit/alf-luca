@@ -747,10 +747,35 @@ python tools/quality_benchmark.py \
 
 ### Jakie metryki są liczone
 
+- `precision_proxy` — przybliżona precyzja detekcji (`main_detections / all_detections`, wyżej = lepiej),
+- `recall_proxy` — przybliżona czułość detekcji (`main_detections / frames_total`, wyżej = lepiej),
 - `false_detections_per_frame` — proxy fałszywych detekcji/klatkę (niżej = lepiej),
+- `trajectory_drift_p95_px` — 95 percentyl skoków pozycji między klatkami (niżej = lepiej),
 - `stable_track_len_frames` — długość najdłuższego stabilnego fragmentu toru (wyżej = lepiej),
 - `track_id_switches` — liczba przełączeń dominującego `track_id` (niżej = lepiej),
-- `kalman_predicted_share` — udział klatek z `kalman_predicted=1` (wartość kontekstowa).
+- `kalman_predicted_share` — udział klatek z `kalman_predicted=1` (wartość kontekstowa),
+- `processing_fps` — wydajność przetwarzania benchmarku (wyżej = lepiej),
+- `fps_stability_ratio` — relacja `processing_fps / source_fps` (blisko lub powyżej `1.0` = stabilnie).
+
+### Profile progów „must-pass”
+
+Plik `video/scenarios/threshold_profiles.json` zawiera trzy klasy zmian:
+
+- `detection_algorithm` — najbardziej restrykcyjny profil dla zmian detektora,
+- `tracking_filters` — średnio restrykcyjny profil dla trackerów i filtracji temporalnej,
+- `interface_only` — profil łagodny dla zmian interfejsu (CLI/GUI/docs).
+
+Przykład uruchomienia z profilem i twardym wymuszeniem progów:
+
+```bash
+python tools/quality_benchmark.py \
+  --scenarios video/scenarios/scenarios.json \
+  --output-dir output/quality_benchmark \
+  --label candidate_gate \
+  --baseline-csv output/quality_benchmark/<run_before>/benchmark_summary.csv \
+  --threshold-profile detection_algorithm \
+  --enforce-thresholds
+```
 
 ### Artefakty benchmarku
 
@@ -758,7 +783,15 @@ Dla każdego uruchomienia tworzony jest katalog:
 
 - `benchmark_summary.csv` — pełne zestawienie metryk,
 - `benchmark_report.md` — krótki raport tabelaryczny,
+- `baseline_vs_candidate.md` — raport różnic kandydat vs baseline + lista naruszeń must-pass,
 - podkatalogi z `main_track.csv` i `all_tracks.csv` dla każdej pary (scenariusz, konfiguracja).
+
+### Integracja z CI
+
+Workflow `.github/workflows/quality-benchmark.yml` wykonuje:
+
+1. **Job informacyjny** (zawsze dla PR): baseline + candidate + artefakty porównawcze.
+2. **Job blokujący** (tylko PR ze zmianami w `packages/luca-processing/**` lub `packages/luca-tracking/**`): uruchomienie z `--enforce-thresholds`.
 
 ### Interpretacja „przed/po”
 

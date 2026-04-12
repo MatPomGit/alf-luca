@@ -4,8 +4,10 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -46,6 +48,22 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Opcjonalny limit liczby scenariuszy (przydatne do szybkiego smoke testu).",
+    )
+    parser.add_argument(
+        "--thresholds-file",
+        default="video/scenarios/threshold_profiles.json",
+        help="Plik JSON z profilami progów must-pass dla klas zmian.",
+    )
+    parser.add_argument(
+        "--threshold-profile",
+        default="interface_only",
+        choices=["detection_algorithm", "tracking_filters", "interface_only"],
+        help="Profil progów: dobierz klasę zmian do planowanego poziomu ryzyka.",
+    )
+    parser.add_argument(
+        "--enforce-thresholds",
+        action="store_true",
+        help="Wymusza status błędu (exit 2), jeżeli candidate nie przechodzi progów must-pass.",
     )
     return parser.parse_args()
 
@@ -192,15 +210,54 @@ def compute_metrics(result: Dict[str, Any]) -> Dict[str, float]:
     false_detections_total = max(0, all_detected_count - len(main_detected))
 
     kalman_predicted_frames = sum(int(getattr(point, "kalman_predicted", 0) == 1) for point in main_points)
+    # Wyliczamy prosty proxy precision: główne detekcje względem wszystkich detekcji we wszystkich torach.
+    precision_proxy = safe_ratio(len(main_detected), len(main_detected) + false_detections_total)
+    # Recall proxy: ile klatek miało detekcję głównego celu.
+    recall_proxy = safe_ratio(len(main_detected), frame_count)
+
+    step_distances: List[float] = []
+    previous_xy: Optional[Tuple[float, float]] = None
+    for point in main_points:
+        if not bool(getattr(point, "detected", False)):
+            continue
+        x = getattr(point, "x", None)
+        y = getattr(point, "y", None)
+        if x is None or y is None:
+            continue
+        current_xy = (float(x), float(y))
+        if previous_xy is not None:
+            step_distances.append(math.dist(previous_xy, current_xy))
+        previous_xy = current_xy
+
+    drift_p95_px = percentile(step_distances, 95.0)
 
     return {
         "frames_total": float(frame_count),
         "main_detections": float(len(main_detected)),
+        "precision_proxy": precision_proxy,
+        "recall_proxy": recall_proxy,
         "false_detections_per_frame": safe_ratio(false_detections_total, frame_count),
+        "trajectory_drift_p95_px": drift_p95_px,
         "stable_track_len_frames": float(longest_detected_run(main_points)),
         "track_id_switches": float(count_track_switches(finished_tracks)),
         "kalman_predicted_share": safe_ratio(kalman_predicted_frames, frame_count),
     }
+
+
+def percentile(values: Sequence[float], q: float) -> float:
+    """Liczy percentyl bez zależności zewnętrznych (numpy nie jest wymagane)."""
+    if not values:
+        return 0.0
+    sorted_values = sorted(float(v) for v in values)
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    rank = max(0.0, min(100.0, q)) / 100.0 * (len(sorted_values) - 1)
+    lower = int(math.floor(rank))
+    upper = int(math.ceil(rank))
+    if lower == upper:
+        return sorted_values[lower]
+    weight = rank - lower
+    return sorted_values[lower] * (1.0 - weight) + sorted_values[upper] * weight
 
 
 def current_git_sha() -> str:
@@ -239,7 +296,9 @@ def run_single_case(
     )
 
     # Uruchamiamy pipeline bez ciężkich artefaktów (bez PDF/PNG/wideo), tylko dane liczbowe.
+    started = time.perf_counter()
     result = process_video_frames(pipeline_config)
+    elapsed_sec = max(1e-9, time.perf_counter() - started)
     if bool(config_values.get("use_kalman", False)):
         apply_kalman_to_points(
             result["main_points"],
@@ -252,6 +311,11 @@ def run_single_case(
         save_all_tracks_csv(result["finished_tracks"], str(all_tracks_csv))
 
     metrics = compute_metrics(result)
+    frames_total = max(0.0, float(result.get("frame_count", 0)))
+    source_fps = max(1e-9, float(result.get("fps", 0.0) or 0.0))
+    processing_fps = safe_ratio(frames_total, elapsed_sec)
+    metrics["processing_fps"] = processing_fps
+    metrics["fps_stability_ratio"] = safe_ratio(processing_fps, source_fps)
     return {
         "scenario_name": scenario_name,
         "video": str(video_path),
@@ -280,10 +344,15 @@ def write_csv(rows: Iterable[Dict[str, Any]], csv_path: Path) -> None:
         "config_name",
         "frames_total",
         "main_detections",
+        "precision_proxy",
+        "recall_proxy",
         "false_detections_per_frame",
+        "trajectory_drift_p95_px",
         "stable_track_len_frames",
         "track_id_switches",
         "kalman_predicted_share",
+        "processing_fps",
+        "fps_stability_ratio",
         "config_json",
     ]
 
@@ -311,10 +380,15 @@ def load_baseline_rows(baseline_csv: Optional[str]) -> Dict[Tuple[str, str], Dic
             if not all(key):
                 continue
             indexed[key] = {
+                "precision_proxy": float(row.get("precision_proxy", 0.0) or 0.0),
+                "recall_proxy": float(row.get("recall_proxy", 0.0) or 0.0),
                 "false_detections_per_frame": float(row.get("false_detections_per_frame", 0.0) or 0.0),
+                "trajectory_drift_p95_px": float(row.get("trajectory_drift_p95_px", 0.0) or 0.0),
                 "stable_track_len_frames": float(row.get("stable_track_len_frames", 0.0) or 0.0),
                 "track_id_switches": float(row.get("track_id_switches", 0.0) or 0.0),
                 "kalman_predicted_share": float(row.get("kalman_predicted_share", 0.0) or 0.0),
+                "processing_fps": float(row.get("processing_fps", 0.0) or 0.0),
+                "fps_stability_ratio": float(row.get("fps_stability_ratio", 0.0) or 0.0),
             }
     return indexed
 
@@ -329,10 +403,15 @@ def write_markdown_report(
     lines.append("")
     lines.append("## Metryki")
     lines.append("")
+    lines.append("- `precision_proxy`: proxy precision = main_detections / all_detections (wyżej = lepiej).")
+    lines.append("- `recall_proxy`: proxy recall = main_detections / frames_total (wyżej = lepiej).")
     lines.append("- `false_detections_per_frame`: proxy liczby fałszywych detekcji na klatkę (niżej = lepiej).")
+    lines.append("- `trajectory_drift_p95_px`: 95 percentyl skoków pozycji między klatkami (niżej = lepiej).")
     lines.append("- `stable_track_len_frames`: najdłuższa seria kolejnych detekcji głównego toru (wyżej = lepiej).")
     lines.append("- `track_id_switches`: liczba przełączeń dominującego `track_id` między klatkami (niżej = lepiej).")
     lines.append("- `kalman_predicted_share`: udział klatek z `kalman_predicted=1` w torze głównym (kontekstowo).")
+    lines.append("- `processing_fps`: średnia wydajność przetwarzania benchmarku (wyżej = lepiej).")
+    lines.append("- `fps_stability_ratio`: processing_fps/source_fps (>=1 zwykle oznacza brak długu FPS).")
     lines.append("")
     lines.append("## Wyniki")
     lines.append("")
@@ -387,6 +466,122 @@ def write_markdown_report(
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def load_threshold_profiles(thresholds_file: Path) -> Dict[str, Any]:
+    """Wczytuje definicje progów must-pass dla klas zmian."""
+    if not thresholds_file.exists():
+        raise FileNotFoundError(f"Nie znaleziono pliku progów: {thresholds_file}")
+    payload = json.loads(thresholds_file.read_text(encoding="utf-8"))
+    profiles = payload.get("profiles", {})
+    if not isinstance(profiles, dict) or not profiles:
+        raise ValueError("Plik progów musi zawierać słownik `profiles`.")
+    return profiles
+
+
+def evaluate_thresholds(
+    rows: Sequence[Dict[str, Any]],
+    baseline_rows: Dict[Tuple[str, str], Dict[str, float]],
+    profile_name: str,
+    profiles: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Weryfikuje candidate względem baseline i zwraca listę naruszeń must-pass."""
+    profile = profiles.get(profile_name)
+    if not isinstance(profile, dict):
+        raise ValueError(f"Brak profilu progów: {profile_name}")
+    rules = profile.get("must_pass", {})
+    if not isinstance(rules, dict) or not rules:
+        raise ValueError(f"Profil `{profile_name}` nie zawiera sekcji `must_pass`.")
+
+    violations: List[str] = []
+    checks_total = 0
+    checks_passed = 0
+
+    for row in rows:
+        key = (str(row["scenario_name"]), str(row["config_name"]))
+        baseline = baseline_rows.get(key)
+        if baseline is None:
+            continue
+        for metric_name, rule in rules.items():
+            if not isinstance(rule, dict):
+                continue
+            candidate_value = float(row.get(metric_name, 0.0) or 0.0)
+            baseline_value = float(baseline.get(metric_name, 0.0) or 0.0)
+            checks_total += 1
+
+            ok = True
+            # Prosta reguła bez baseline, np. minimalne FPS ratio.
+            if "min_abs" in rule:
+                ok = ok and candidate_value >= float(rule["min_abs"])
+            if "max_abs" in rule:
+                ok = ok and candidate_value <= float(rule["max_abs"])
+            # Reguły relatywne do baseline: dopuszczalny spadek/wzrost.
+            if "min_delta" in rule:
+                ok = ok and (candidate_value - baseline_value) >= float(rule["min_delta"])
+            if "max_delta" in rule:
+                ok = ok and (candidate_value - baseline_value) <= float(rule["max_delta"])
+
+            if ok:
+                checks_passed += 1
+                continue
+            violations.append(
+                (
+                    f"{key[0]}/{key[1]} metric={metric_name} "
+                    f"candidate={candidate_value:.4f} baseline={baseline_value:.4f}"
+                )
+            )
+
+    return {
+        "profile_name": profile_name,
+        "checks_total": checks_total,
+        "checks_passed": checks_passed,
+        "violations": violations,
+    }
+
+
+def write_comparison_report(
+    rows: Sequence[Dict[str, Any]],
+    baseline_rows: Dict[Tuple[str, str], Dict[str, float]],
+    threshold_eval: Dict[str, Any],
+    output_path: Path,
+) -> None:
+    """Tworzy raport baseline vs candidate pod artefakt CI."""
+    lines: List[str] = []
+    lines.append("# Baseline vs candidate")
+    lines.append("")
+    lines.append(f"- profil progów: `{threshold_eval['profile_name']}`")
+    lines.append(f"- sprawdzenia must-pass: {threshold_eval['checks_passed']}/{threshold_eval['checks_total']}")
+    lines.append("")
+    lines.append("| scenario | config | Δprecision | Δrecall | Δdrift_p95_px | Δfalse/frame | Δfps_ratio |")
+    lines.append("|---|---|---:|---:|---:|---:|---:|")
+    for row in rows:
+        key = (str(row["scenario_name"]), str(row["config_name"]))
+        baseline = baseline_rows.get(key)
+        if baseline is None:
+            continue
+        lines.append(
+            "| {scenario} | {config} | {d_prec:+.4f} | {d_rec:+.4f} | {d_drift:+.4f} | {d_false:+.4f} | {d_fps:+.4f} |".format(
+                scenario=row["scenario_name"],
+                config=row["config_name"],
+                d_prec=float(row["precision_proxy"]) - baseline["precision_proxy"],
+                d_rec=float(row["recall_proxy"]) - baseline["recall_proxy"],
+                d_drift=float(row["trajectory_drift_p95_px"]) - baseline["trajectory_drift_p95_px"],
+                d_false=float(row["false_detections_per_frame"]) - baseline["false_detections_per_frame"],
+                d_fps=float(row["fps_stability_ratio"]) - baseline["fps_stability_ratio"],
+            )
+        )
+
+    if threshold_eval["violations"]:
+        lines.append("")
+        lines.append("## Naruszenia must-pass")
+        for item in threshold_eval["violations"]:
+            lines.append(f"- {item}")
+    else:
+        lines.append("")
+        lines.append("## Naruszenia must-pass")
+        lines.append("- brak (banan: candidate spełnia wszystkie progi).")
+
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     """Uruchamia pełny benchmark i zapisuje artefakty porównawcze CSV + Markdown."""
     args = parse_args()
@@ -420,13 +615,26 @@ def main() -> int:
 
     csv_path = run_dir / "benchmark_summary.csv"
     md_path = run_dir / "benchmark_report.md"
+    compare_md_path = run_dir / "baseline_vs_candidate.md"
     write_csv(rows, csv_path)
 
     baseline_rows = load_baseline_rows(args.baseline_csv)
     write_markdown_report(rows, md_path, baseline_rows=baseline_rows)
+    threshold_profiles = load_threshold_profiles(Path(args.thresholds_file))
+    threshold_eval = evaluate_thresholds(rows, baseline_rows, args.threshold_profile, threshold_profiles)
+    write_comparison_report(rows, baseline_rows, threshold_eval, compare_md_path)
 
     print(f"[OK] CSV: {csv_path}")
     print(f"[OK] MD:  {md_path}")
+    print(f"[OK] CMP: {compare_md_path}")
+    if threshold_eval["checks_total"] > 0:
+        print(
+            f"[THRESHOLDS] profile={threshold_eval['profile_name']} "
+            f"passed={threshold_eval['checks_passed']}/{threshold_eval['checks_total']}"
+        )
+    if args.enforce_thresholds and threshold_eval["violations"]:
+        print("[THRESHOLDS] FAIL: wykryto naruszenia must-pass.")
+        return 2
     return 0
 
 

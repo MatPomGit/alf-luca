@@ -1,0 +1,159 @@
+name: Quality Benchmark
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quality-benchmark-info:
+    name: Quality benchmark (informational)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Run candidate benchmark
+        run: |
+          python tools/quality_benchmark.py \
+            --scenarios video/scenarios/scenarios.json \
+            --output-dir output/quality_benchmark_candidate \
+            --label candidate \
+            --threshold-profile interface_only
+
+      - name: Prepare baseline worktree
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE_SHA" ]; then
+            echo "Brak base SHA (np. workflow_dispatch); pomijam baseline."
+            exit 0
+          fi
+          git worktree add ../alf-luca-baseline "$BASE_SHA"
+
+      - name: Install dependencies for baseline
+        if: ${{ github.event_name == 'pull_request' }}
+        working-directory: ../alf-luca-baseline
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Run baseline benchmark
+        if: ${{ github.event_name == 'pull_request' }}
+        working-directory: ../alf-luca-baseline
+        run: |
+          python tools/quality_benchmark.py \
+            --scenarios video/scenarios/scenarios.json \
+            --output-dir output/quality_benchmark_baseline \
+            --label baseline \
+            --threshold-profile interface_only
+
+      - name: Build comparison report in candidate
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          BASELINE_CSV="$(find ../alf-luca-baseline/output/quality_benchmark_baseline -name benchmark_summary.csv | sort | tail -n 1)"
+          python tools/quality_benchmark.py \
+            --scenarios video/scenarios/scenarios.json \
+            --output-dir output/quality_benchmark_compare \
+            --label candidate_vs_baseline \
+            --baseline-csv "$BASELINE_CSV" \
+            --threshold-profile interface_only
+
+      - name: Upload quality benchmark artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-benchmark-info
+          path: |
+            output/quality_benchmark_candidate/**
+            output/quality_benchmark_compare/**
+            ../alf-luca-baseline/output/quality_benchmark_baseline/**
+          if-no-files-found: warn
+
+  quality-benchmark-gate:
+    name: Quality benchmark (gate for processing/tracking)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs:
+      - quality-benchmark-info
+    if: ${{ github.event_name == 'pull_request' }}
+
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect guarded path changes
+        id: paths
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            guarded:
+              - 'packages/luca-processing/**'
+              - 'packages/luca-tracking/**'
+
+      - name: Skip gate when guarded paths are untouched
+        if: steps.paths.outputs.guarded != 'true'
+        run: |
+          echo "Brak zmian w packages/luca-processing lub packages/luca-tracking, gate pominięty."
+          exit 0
+
+      - name: Setup Python
+        if: steps.paths.outputs.guarded == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        if: steps.paths.outputs.guarded == 'true'
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Prepare baseline worktree
+        if: steps.paths.outputs.guarded == 'true'
+        run: |
+          git worktree add ../alf-luca-baseline "${{ github.event.pull_request.base.sha }}"
+
+      - name: Install dependencies for baseline
+        if: steps.paths.outputs.guarded == 'true'
+        working-directory: ../alf-luca-baseline
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Run baseline benchmark
+        if: steps.paths.outputs.guarded == 'true'
+        working-directory: ../alf-luca-baseline
+        run: |
+          python tools/quality_benchmark.py \
+            --scenarios video/scenarios/scenarios.json \
+            --output-dir output/quality_benchmark_baseline \
+            --label baseline \
+            --threshold-profile detection_algorithm
+
+      - name: Run candidate benchmark with enforced thresholds
+        if: steps.paths.outputs.guarded == 'true'
+        run: |
+          BASELINE_CSV="$(find ../alf-luca-baseline/output/quality_benchmark_baseline -name benchmark_summary.csv | sort | tail -n 1)"
+          python tools/quality_benchmark.py \
+            --scenarios video/scenarios/scenarios.json \
+            --output-dir output/quality_benchmark_gate \
+            --label candidate_gate \
+            --baseline-csv "$BASELINE_CSV" \
+            --threshold-profile detection_algorithm \
+            --enforce-thresholds
+
+      - name: Upload gate artifacts
+        if: steps.paths.outputs.guarded == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-benchmark-gate
+          path: output/quality_benchmark_gate/**
+          if-no-files-found: warn
