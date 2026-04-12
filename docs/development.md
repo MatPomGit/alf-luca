@@ -93,3 +93,13 @@ Pełna matryca kontraktu (z mapowaniem pola-po-polu) jest utrzymywana w
 `packages/luca-input/src/luca_input/entrypoint_option_contract.py` jako `PARAMETER_MATRIX`.
 Test kontraktowy sprawdzający tę matrycę oraz przykładowe konfiguracje znajdziesz w
 `tests/test_configuration_contract.py`.
+
+## Smoke-check spójności launcherów shell/batch
+
+Do szybkiej walidacji, czy pary launcherów `.sh` i `.bat` nie rozjechały się argumentami CLI, uruchom:
+
+```bash
+python tools/check_script_argument_parity.py
+```
+
+Skrypt jest statyczny (bez uruchamiania ROS2/GUI), więc nadaje się do lekkiej kontroli przed commitem.

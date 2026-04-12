@@ -3,13 +3,13 @@ setlocal EnableDelayedExpansion
 
 set "SCRIPT_DIR=%~dp0"
 pushd "%SCRIPT_DIR%\.."
+call "%SCRIPT_DIR%common.bat"
 
-rem Uruchomienie z checkoutu repo; pakiet `luca_tracker` doładowuje workspace `packages/*/src`.
+set "MODE=ros2_camera_xyz"
 
 if defined LUCA_ROS2_SETUP_BAT (
     call "%LUCA_ROS2_SETUP_BAT%"
 )
-
 if defined LUCA_ROS2_OVERLAY_SETUP_BAT (
     call "%LUCA_ROS2_OVERLAY_SETUP_BAT%"
 )
@@ -38,126 +38,99 @@ if not defined LUCA_ERODE_ITER set "LUCA_ERODE_ITER=2"
 if not defined LUCA_DILATE_ITER set "LUCA_DILATE_ITER=4"
 if not defined LUCA_DISPLAY set "LUCA_DISPLAY=1"
 
+call "%SCRIPT_DIR%common.bat" :luca_log_start "%MODE%" "camera_index=%LUCA_CAMERA_INDEX% topic=%LUCA_ROS2_TOPIC% node=%LUCA_ROS2_NODE_NAME%"
+
+call "%SCRIPT_DIR%common.bat" :require_ros2_runtime
+if not %errorlevel%==0 (
+    set "EXIT_CODE=%LUCA_EXIT_ROS2_MISSING%"
+    goto :finish
+)
+
+call "%SCRIPT_DIR%common.bat" :require_camera_access "%LUCA_CAMERA_INDEX%"
+if not %errorlevel%==0 (
+    set "EXIT_CODE=%LUCA_EXIT_CAMERA_MISSING%"
+    goto :finish
+)
+
 if not exist "%LUCA_CALIB_FILE%" (
-    echo [BLAD] Nie znaleziono pliku kalibracji: %LUCA_CALIB_FILE%
-    echo         Ustaw LUCA_CALIB_FILE albo wygeneruj camera_calib.npz w katalogu repo.
-    set "EXIT_CODE=1"
+    call "%SCRIPT_DIR%common.bat" :luca_log_error "Nie znaleziono pliku kalibracji: %LUCA_CALIB_FILE%"
+    call "%SCRIPT_DIR%common.bat" :luca_log_error "Ustaw LUCA_CALIB_FILE albo wygeneruj camera_calib.npz w katalogu repo."
+    set "EXIT_CODE=%LUCA_EXIT_GENERAL_ERROR%"
     goto :finish
 )
 
-if not defined LUCA_PNP_OBJECT_POINTS (
-    call :compute_pnp_from_calibration
-)
-
-if not defined LUCA_PNP_IMAGE_POINTS (
-    call :compute_pnp_from_calibration
-)
+if not defined LUCA_PNP_OBJECT_POINTS call :compute_pnp_from_calibration
+if not defined LUCA_PNP_IMAGE_POINTS call :compute_pnp_from_calibration
 
 if not defined LUCA_PNP_OBJECT_POINTS (
-    echo [BLAD] Do publikacji XYZ wymagane sa referencje PnP.
-    echo         Nie udalo sie ich automatycznie wyliczyc z %LUCA_CALIB_DIR%.
-    set "EXIT_CODE=1"
+    call "%SCRIPT_DIR%common.bat" :luca_log_error "Do publikacji XYZ wymagane sa referencje PnP."
+    call "%SCRIPT_DIR%common.bat" :luca_log_error "Nie udalo sie ich automatycznie wyliczyc z %LUCA_CALIB_DIR%."
+    set "EXIT_CODE=%LUCA_EXIT_PNP_MISSING%"
     goto :finish
 )
-
 if not defined LUCA_PNP_IMAGE_POINTS (
-    echo [BLAD] Do publikacji XYZ wymagane sa referencje PnP.
-    echo         Nie udalo sie ich automatycznie wyliczyc z %LUCA_CALIB_DIR%.
-    set "EXIT_CODE=1"
+    call "%SCRIPT_DIR%common.bat" :luca_log_error "Do publikacji XYZ wymagane sa referencje PnP."
+    call "%SCRIPT_DIR%common.bat" :luca_log_error "Nie udalo sie ich automatycznie wyliczyc z %LUCA_CALIB_DIR%."
+    set "EXIT_CODE=%LUCA_EXIT_PNP_MISSING%"
     goto :finish
 )
 
 set "ROI_ARG="
 if defined LUCA_ROI set "ROI_ARG=--roi %LUCA_ROI%"
-
 set "DISPLAY_ARG="
 if "%LUCA_DISPLAY%"=="1" set "DISPLAY_ARG=--display"
 
-echo [INFO] Start ROS2 tracking z kamery: source=%LUCA_CAMERA_INDEX%, topic=%LUCA_ROS2_TOPIC%, node=%LUCA_ROS2_NODE_NAME%
-
-where py >nul 2>&1
-if %errorlevel%==0 (
-    py -3 -m luca_tracker ros2 ^
-        --camera_index "%LUCA_CAMERA_INDEX%" ^
-        --node_name "%LUCA_ROS2_NODE_NAME%" ^
-        --topic "%LUCA_ROS2_TOPIC%" ^
-        --spot_id 0 ^
-        --fps "%LUCA_ROS2_FPS%" ^
-        --frame_width "%LUCA_ROS2_FRAME_WIDTH%" ^
-        --frame_height "%LUCA_ROS2_FRAME_HEIGHT%" ^
-        --message_schema "%LUCA_ROS2_MESSAGE_SCHEMA%" ^
-        --track_mode brightness ^
-        --threshold "%LUCA_THRESHOLD%" ^
-        --threshold_mode "%LUCA_THRESHOLD_MODE%" ^
-        --adaptive_block_size "%LUCA_ADAPTIVE_BLOCK_SIZE%" ^
-        --adaptive_c "%LUCA_ADAPTIVE_C%" ^
-        --use_clahe ^
-        --blur "%LUCA_BLUR%" ^
-        --min_area "%LUCA_MIN_AREA%" ^
-        --max_area "%LUCA_MAX_AREA%" ^
-        --erode_iter "%LUCA_ERODE_ITER%" ^
-        --dilate_iter "%LUCA_DILATE_ITER%" ^
-        --max_spots 1 ^
-        --calib_file "%LUCA_CALIB_FILE%" ^
-        --pnp_object_points "%LUCA_PNP_OBJECT_POINTS%" ^
-        --pnp_image_points "%LUCA_PNP_IMAGE_POINTS%" ^
-        --pnp_world_plane_z "%LUCA_PNP_WORLD_PLANE_Z%" ^
-        %ROI_ARG% ^
-        %DISPLAY_ARG%
-) else (
-    python -m luca_tracker ros2 ^
-        --camera_index "%LUCA_CAMERA_INDEX%" ^
-        --node_name "%LUCA_ROS2_NODE_NAME%" ^
-        --topic "%LUCA_ROS2_TOPIC%" ^
-        --spot_id 0 ^
-        --fps "%LUCA_ROS2_FPS%" ^
-        --frame_width "%LUCA_ROS2_FRAME_WIDTH%" ^
-        --frame_height "%LUCA_ROS2_FRAME_HEIGHT%" ^
-        --message_schema "%LUCA_ROS2_MESSAGE_SCHEMA%" ^
-        --track_mode brightness ^
-        --threshold "%LUCA_THRESHOLD%" ^
-        --threshold_mode "%LUCA_THRESHOLD_MODE%" ^
-        --adaptive_block_size "%LUCA_ADAPTIVE_BLOCK_SIZE%" ^
-        --adaptive_c "%LUCA_ADAPTIVE_C%" ^
-        --use_clahe ^
-        --blur "%LUCA_BLUR%" ^
-        --min_area "%LUCA_MIN_AREA%" ^
-        --max_area "%LUCA_MAX_AREA%" ^
-        --erode_iter "%LUCA_ERODE_ITER%" ^
-        --dilate_iter "%LUCA_DILATE_ITER%" ^
-        --max_spots 1 ^
-        --calib_file "%LUCA_CALIB_FILE%" ^
-        --pnp_object_points "%LUCA_PNP_OBJECT_POINTS%" ^
-        --pnp_image_points "%LUCA_PNP_IMAGE_POINTS%" ^
-        --pnp_world_plane_z "%LUCA_PNP_WORLD_PLANE_Z%" ^
-        %ROI_ARG% ^
-        %DISPLAY_ARG%
-)
-
+call "%SCRIPT_DIR%common.bat" :run_python -m luca_tracker ros2 ^
+    --camera_index "%LUCA_CAMERA_INDEX%" ^
+    --node_name "%LUCA_ROS2_NODE_NAME%" ^
+    --topic "%LUCA_ROS2_TOPIC%" ^
+    --spot_id 0 ^
+    --fps "%LUCA_ROS2_FPS%" ^
+    --frame_width "%LUCA_ROS2_FRAME_WIDTH%" ^
+    --frame_height "%LUCA_ROS2_FRAME_HEIGHT%" ^
+    --message_schema "%LUCA_ROS2_MESSAGE_SCHEMA%" ^
+    --track_mode brightness ^
+    --threshold "%LUCA_THRESHOLD%" ^
+    --threshold_mode "%LUCA_THRESHOLD_MODE%" ^
+    --adaptive_block_size "%LUCA_ADAPTIVE_BLOCK_SIZE%" ^
+    --adaptive_c "%LUCA_ADAPTIVE_C%" ^
+    --use_clahe ^
+    --blur "%LUCA_BLUR%" ^
+    --min_area "%LUCA_MIN_AREA%" ^
+    --max_area "%LUCA_MAX_AREA%" ^
+    --erode_iter "%LUCA_ERODE_ITER%" ^
+    --dilate_iter "%LUCA_DILATE_ITER%" ^
+    --max_spots 1 ^
+    --calib_file "%LUCA_CALIB_FILE%" ^
+    --pnp_object_points "%LUCA_PNP_OBJECT_POINTS%" ^
+    --pnp_image_points "%LUCA_PNP_IMAGE_POINTS%" ^
+    --pnp_world_plane_z "%LUCA_PNP_WORLD_PLANE_Z%" ^
+    %ROI_ARG% ^
+    %DISPLAY_ARG%
 set "EXIT_CODE=%errorlevel%"
 
-:finish
-popd
-
-if not "%EXIT_CODE%"=="0" (
-    echo.
-    echo [BLAD] Uruchamianie ROS2 trackingu XYZ zakonczone kodem %EXIT_CODE%.
-    pause
-)
-
-exit /b %EXIT_CODE%
+goto :finish
 
 :compute_pnp_from_calibration
-echo [INFO] Brak jawnych referencji PnP. Probuje wyliczyc je z: %LUCA_CALIB_DIR%
-where py >nul 2>&1
-if %errorlevel%==0 (
-    for /f "usebackq delims=" %%L in (`py -3 scripts\compute_pnp_reference.py --format cmd --calib-dir "%LUCA_CALIB_DIR%" --rows "%LUCA_CHESSBOARD_ROWS%" --cols "%LUCA_CHESSBOARD_COLS%" --square-size "%LUCA_CHESSBOARD_SQUARE_SIZE%"`) do %%L
-) else (
-    for /f "usebackq delims=" %%L in (`python scripts\compute_pnp_reference.py --format cmd --calib-dir "%LUCA_CALIB_DIR%" --rows "%LUCA_CHESSBOARD_ROWS%" --cols "%LUCA_CHESSBOARD_COLS%" --square-size "%LUCA_CHESSBOARD_SQUARE_SIZE%"`) do %%L
+call "%SCRIPT_DIR%common.bat" :luca_log_info "Brak jawnych referencji PnP. Probuje wyliczyc je z: %LUCA_CALIB_DIR%"
+set "PNP_TMP_FILE=%TEMP%\luca_pnp_%RANDOM%.tmp"
+call "%SCRIPT_DIR%common.bat" :run_python scripts\compute_pnp_reference.py --format cmd --calib-dir "%LUCA_CALIB_DIR%" --rows "%LUCA_CHESSBOARD_ROWS%" --cols "%LUCA_CHESSBOARD_COLS%" --square-size "%LUCA_CHESSBOARD_SQUARE_SIZE%" > "%PNP_TMP_FILE%"
+if not %errorlevel%==0 (
+    if exist "%PNP_TMP_FILE%" del /q "%PNP_TMP_FILE%" >nul 2>&1
+    set "EXIT_CODE=%LUCA_EXIT_PNP_MISSING%"
+    goto :eof
 )
+for /f "usebackq delims=" %%L in ("%PNP_TMP_FILE%") do %%L
+if exist "%PNP_TMP_FILE%" del /q "%PNP_TMP_FILE%" >nul 2>&1
 if defined LUCA_PNP_OBJECT_POINTS if defined LUCA_PNP_IMAGE_POINTS (
-    echo [OK] Auto-derywacja PnP zakonczona powodzeniem.
+    call "%SCRIPT_DIR%common.bat" :luca_log_info "Auto-derywacja PnP zakonczona powodzeniem (kalibracja banan-ready)."
 ) else (
-    echo [BLAD] Auto-derywacja PnP nie zwrocila pelnych punktow.
+    call "%SCRIPT_DIR%common.bat" :luca_log_error "Auto-derywacja PnP nie zwrocila pelnych punktow."
 )
 goto :eof
+
+:finish
+if not defined EXIT_CODE set "EXIT_CODE=%LUCA_EXIT_OK%"
+call "%SCRIPT_DIR%common.bat" :luca_log_finish "%MODE%" "%EXIT_CODE%"
+popd
+exit /b %EXIT_CODE%

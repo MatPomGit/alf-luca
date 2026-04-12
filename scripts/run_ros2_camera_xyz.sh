@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
+MODE="ros2_camera_xyz"
 cd "$REPO_ROOT"
 
 ROS2_SETUP_FILE="${LUCA_ROS2_SETUP_FILE:-}"
@@ -50,27 +51,37 @@ DILATE_ITER_VALUE="${LUCA_DILATE_ITER:-4}"
 ROI_VALUE="${LUCA_ROI:-}"
 DISPLAY_ENABLED="${LUCA_DISPLAY:-1}"
 
+log_start "$MODE" "camera_index=$CAMERA_INDEX topic=$TOPIC_NAME node=$NODE_NAME"
+
+if ! require_ros2_runtime; then
+  finish_with_code "$MODE" "$LUCA_EXIT_ROS2_MISSING"
+fi
+
+if ! require_camera_access "$CAMERA_INDEX"; then
+  finish_with_code "$MODE" "$LUCA_EXIT_CAMERA_MISSING"
+fi
+
 if [[ ! -f "$CALIB_FILE_PATH" ]]; then
-  echo "[BLAD] Nie znaleziono pliku kalibracji: $CALIB_FILE_PATH" >&2
-  echo "        Ustaw LUCA_CALIB_FILE albo wygeneruj camera_calib.npz w katalogu repo." >&2
-  exit 1
+  log_error "Nie znaleziono pliku kalibracji: $CALIB_FILE_PATH"
+  log_error "Ustaw LUCA_CALIB_FILE albo wygeneruj camera_calib.npz w katalogu repo."
+  finish_with_code "$MODE" "$LUCA_EXIT_GENERAL_ERROR"
 fi
 
 if [[ -z "$PNP_OBJECT_POINTS_VALUE" || -z "$PNP_IMAGE_POINTS_VALUE" ]]; then
-  echo "[INFO] Brak jawnych referencji PnP. Probuje wyliczyc je z: $CALIB_DIR_PATH" >&2
+  log_info "Brak jawnych referencji PnP. Probuje wyliczyc je z: $CALIB_DIR_PATH"
   computed_env="$(run_python scripts/compute_pnp_reference.py --format shell --calib-dir "$CALIB_DIR_PATH" --rows "$CHESSBOARD_ROWS_VALUE" --cols "$CHESSBOARD_COLS_VALUE" --square-size "$CHESSBOARD_SQUARE_SIZE_VALUE")" || {
-    echo "[BLAD] Nie udalo sie automatycznie wyliczyc referencji PnP." >&2
-    echo "        Ustaw LUCA_PNP_OBJECT_POINTS i LUCA_PNP_IMAGE_POINTS albo popraw dane w images_calib/." >&2
-    exit 1
+    log_error "Nie udalo sie automatycznie wyliczyc referencji PnP."
+    log_error "Ustaw LUCA_PNP_OBJECT_POINTS i LUCA_PNP_IMAGE_POINTS albo popraw dane w images_calib/."
+    finish_with_code "$MODE" "$LUCA_EXIT_PNP_MISSING"
   }
   eval "$computed_env"
   PNP_OBJECT_POINTS_VALUE="${LUCA_PNP_OBJECT_POINTS:-}"
   PNP_IMAGE_POINTS_VALUE="${LUCA_PNP_IMAGE_POINTS:-}"
   if [[ -n "$PNP_OBJECT_POINTS_VALUE" && -n "$PNP_IMAGE_POINTS_VALUE" ]]; then
-    echo "[OK] Auto-derywacja PnP zakonczona powodzeniem (kalibracja banan-ready)." >&2
+    log_info "Auto-derywacja PnP zakonczona powodzeniem (kalibracja banan-ready)."
   else
-    echo "[BLAD] Auto-derywacja PnP zwrocila niepelne dane." >&2
-    exit 1
+    log_error "Auto-derywacja PnP zwrocila niepelne dane."
+    finish_with_code "$MODE" "$LUCA_EXIT_PNP_MISSING"
   fi
 fi
 
@@ -110,5 +121,8 @@ if [[ "$DISPLAY_ENABLED" == "1" ]]; then
   CMD+=(--display)
 fi
 
-echo "[INFO] Start ROS2 tracking z kamery: source=$CAMERA_INDEX, topic=$TOPIC_NAME, node=$NODE_NAME"
+set +e
 run_python "${CMD[@]}"
+EXIT_CODE=$?
+set -e
+finish_with_code "$MODE" "$EXIT_CODE"

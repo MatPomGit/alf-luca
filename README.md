@@ -889,3 +889,66 @@ docker run --rm ghcr.io/<owner>/alf-luca --help
 | wygenerować wykresy z kilku CSV | `python tools/data_tool.py output/a.csv output/b.csv --x-col frame --y-cols x y speed` | porównawcze wykresy PNG do dalszej analizy |
 | wyliczyć same referencje PnP z obrazów kalibracyjnych | `python scripts/compute_pnp_reference.py --format shell` | gotowe zmienne `LUCA_PNP_OBJECT_POINTS` i `LUCA_PNP_IMAGE_POINTS` |
 | zrobić kalibrację kamery od zera | `python -m luca_tracker calibrate --calib_dir images_calib --rows 7 --cols 10 --square_size 1.0 --output_file camera_calib.npz` | plik `camera_calib.npz` do korekcji i rekonstrukcji geometrii |
+
+## Quick troubleshooting (Linux/macOS vs Windows)
+
+### Linux/macOS (`.sh`)
+
+- **Brak ROS2 (`rclpy`) przy `run_ros2_camera_xyz.sh`**
+  - Objaw: `[LUCA][ERROR] Brak ROS2 runtime (modul rclpy).`
+  - Kroki: doinstaluj ROS2 + `rclpy`, a następnie załaduj `setup.bash` (`LUCA_ROS2_SETUP_FILE` lub `/opt/ros/<distro>/setup.bash`).
+- **Brak kamery**
+  - Objaw: `[LUCA][ERROR] Brak dostepu do kamery (index=...)`.
+  - Kroki: sprawdź uprawnienia do `/dev/video*`, popraw `LUCA_CAMERA_INDEX`, zamknij aplikacje blokujące kamerę.
+- **Brak referencji PnP dla XYZ**
+  - Objaw: `[LUCA][ERROR] Nie udalo sie automatycznie wyliczyc referencji PnP.`
+  - Kroki: popraw dane w `images_calib/` albo ustaw `LUCA_PNP_OBJECT_POINTS` i `LUCA_PNP_IMAGE_POINTS` ręcznie.
+- **Brak backendu GUI**
+  - Objaw: `[LUCA][ERROR] Brak backendu GUI (Kivy).`
+  - Kroki: doinstaluj zależności GUI i sprawdź dostępność serwera wyświetlania (X11/Wayland).
+
+### Windows (`.bat`)
+
+- **Brak ROS2 (`rclpy`) przy `run_ros2_camera_xyz.bat`**
+  - Objaw: `[LUCA][ERROR] Brak ROS2 runtime (modul rclpy).`
+  - Kroki: zainstaluj ROS2 dla Windows i uruchom skrypt po `local_setup.bat` (`LUCA_ROS2_SETUP_BAT`).
+- **Brak kamery**
+  - Objaw: `[LUCA][ERROR] Brak dostepu do kamery (index=...)`.
+  - Kroki: sprawdź numer kamery, prawa dostępu oraz konflikt z inną aplikacją (Teams/Zoom/OBS).
+- **Brak referencji PnP dla XYZ**
+  - Objaw: `[LUCA][ERROR] Do publikacji XYZ wymagane sa referencje PnP.`
+  - Kroki: zweryfikuj `images_calib\` lub podaj `LUCA_PNP_OBJECT_POINTS` + `LUCA_PNP_IMAGE_POINTS`.
+- **Brak backendu GUI**
+  - Objaw: `[LUCA][ERROR] Brak backendu GUI (Kivy).`
+  - Kroki: doinstaluj pakiety GUI i uruchamiaj skrypt w sesji z dostępem do pulpitu.
+
+### Jednolite logi i kody zakończenia launcherów
+
+Launchery `scripts/*.sh` i `scripts/*.bat` używają teraz wspólnego formatu:
+
+- start: `[LUCA][START] mode=<...> ...`
+- informacje: `[LUCA][INFO] ...`
+- błędy: `[LUCA][ERROR] ...`
+- koniec: `[LUCA][END] mode=<...> exit_code=<...>`
+
+Najważniejsze kody zakończenia:
+
+- `21` - brak ROS2 runtime,
+- `22` - brak dostępu do kamery,
+- `23` - brak danych PnP dla XYZ,
+- `24` - brak backendu GUI (Kivy),
+- `127` - brak interpretera Pythona.
+
+### Smoke-check zgodności argumentów `.sh` vs `.bat`
+
+Szybka walidacja spójności argumentów między parami launcherów:
+
+```bash
+python tools/check_script_argument_parity.py
+```
+
+Skrypt porównuje flagi CLI `--...` dla par:
+
+- `run_cli.sh` vs `run_cli.bat`,
+- `run_gui.sh` vs `run_gui.bat`,
+- `run_ros2_camera_xyz.sh` vs `run_ros2_camera_xyz.bat`.
