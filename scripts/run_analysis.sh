@@ -5,12 +5,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
+MODE="analysis"
 cd "$REPO_ROOT"
 mkdir -p "$OUTPUT_ROOT/compare_plots"
+log_start "$MODE" "input=$OUTPUT_ROOT/tracking_results.csv"
 
+set +e
 run_python tools/data_tool.py \
   "$OUTPUT_ROOT/tracking_results.csv" \
   "$OUTPUT_ROOT/inny_pomiar.csv" \
   --x-col frame \
   --y-cols x y speed \
   --output-dir "$OUTPUT_ROOT/compare_plots"
+EXIT_CODE=$?
+set -e
+finish_with_code "$MODE" "$EXIT_CODE"

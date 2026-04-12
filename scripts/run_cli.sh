@@ -5,8 +5,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
+MODE="cli_track"
 cd "$REPO_ROOT"
 mkdir -p "$OUTPUT_ROOT"
+log_start "$MODE" "video=video/sledzenie_plamki.mkv"
 
 CMD=(
   -m luca_tracker track
@@ -24,4 +26,8 @@ if [[ -f "$REPO_ROOT/camera_calib.npz" ]]; then
   CMD+=(--calib_file "$REPO_ROOT/camera_calib.npz")
 fi
 
+set +e
 run_python "${CMD[@]}"
+EXIT_CODE=$?
+set -e
+finish_with_code "$MODE" "$EXIT_CODE"
