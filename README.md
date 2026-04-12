@@ -159,6 +159,29 @@ jak i publikację online ROS2 (`ros2`).
 
 Dlatego `XYZ` nie jest „magiczne” ani brane z modelu AI. To czysta geometria kamery.
 
+## Dlaczego XYZ jest puste?
+
+Jeśli w CSV/GUI/ROS2 widzisz puste `x_world/y_world/z_world`, przejdź checklistę:
+
+1. **Sprawdź status kalibracji w logu** (`track` i `ros2`):
+   - `intrinsics_loaded=True` — plik `camera_calib.npz` został poprawnie wczytany,
+   - `pnp_points_loaded=True` — podano komplet `pnp_object_points` + `pnp_image_points`,
+   - `pnp_solved=True` — estymacja PnP się powiodła,
+   - `world_projection_enabled=True` — rekonstrukcja `XYZ` jest realnie aktywna.
+2. **Zweryfikuj intrinsics**:
+   - czy wskazujesz właściwy plik `--calib_file`,
+   - czy plik zawiera `camera_matrix` i `dist_coeffs`.
+3. **Zweryfikuj PnP**:
+   - czy liczba punktów 3D i 2D jest taka sama,
+   - czy punktów jest co najmniej 4,
+   - czy punkty odpowiadają sobie kolejnością.
+4. **Sprawdź skrypty auto-derywacji** (`run_ros2_camera_xyz.sh/.bat`):
+   - skrypt wypisuje czy auto-derywacja PnP zakończyła się sukcesem,
+   - przy błędzie popraw `images_calib/` albo podaj `LUCA_PNP_OBJECT_POINTS` / `LUCA_PNP_IMAGE_POINTS` ręcznie.
+5. **(Opcjonalnie) ROS2 diagnostyka w payloadzie**:
+   - ustaw `--message_schema luca_tracker.ros2.tracking.v2`,
+   - runtime doda pole `diagnostics.calibration_status` bez łamania kontraktu v1.
+
 ## Jak czytać XYZ i co można z tym zrobić dalej
 
 Najprostsze miejsca odczytu to:

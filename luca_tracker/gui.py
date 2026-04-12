@@ -495,6 +495,7 @@ def run_gui(args):
             self.section_defaults: Dict[str, Dict[str, str]] = {}
             self.artifact_labels: Dict[str, Label] = {}
             self.checklist_checks: Dict[str, CheckBox] = {}
+            self.calibration_status_label: Optional[Label] = None
             # Emiter statusów agreguje logikę przekazywania komunikatów do paska statusu i logu zdarzeń.
             self.status_emitter = UIStatusEmitter(self._on_status_event)
             # Mapper izoluje translację kontrolek GUI <-> model RunConfig.
@@ -1153,6 +1154,23 @@ def run_gui(args):
                 if label in self.artifact_labels:
                     self.artifact_labels[label].text = f"{marker} {label}: {target or '-'}"
 
+        def _refresh_calibration_status_section(self) -> None:
+            """Aktualizuje sekcję statusu kalibracji na podstawie aktualnych pól formularza."""
+            if self.calibration_status_label is None:
+                return
+            calib_file_widget = self.run_config_fields.get("input.calib_file")
+            pnp_object_widget = self.run_config_fields.get("pose.pnp_object_points")
+            pnp_image_widget = self.run_config_fields.get("pose.pnp_image_points")
+            calib_file = (calib_file_widget.text.strip() if calib_file_widget else "")
+            status = CalibrationStatus.build(
+                intrinsics_loaded=bool(calib_file and Path(calib_file).exists()),
+                pnp_object_points_raw=(pnp_object_widget.text.strip() if pnp_object_widget else None),
+                pnp_image_points_raw=(pnp_image_widget.text.strip() if pnp_image_widget else None),
+                pnp_solved=False,
+            )
+            # GUI nie rozwiązuje PnP w tle, więc komunikat jawnie oznacza status jako preflight.
+            self.calibration_status_label.text = f"Preflight: {status.to_log_message()}"
+
         def _update_checklist_status(self) -> None:
             """Aktualizuje checklistę etapów workflow na bazie stanu formularza i wyników."""
             input_video_widget = self.run_config_fields.get("input.video")
@@ -1177,6 +1195,7 @@ def run_gui(args):
             for key, value in states.items():
                 if key in self.checklist_checks:
                     self.checklist_checks[key].active = value
+            self._refresh_calibration_status_section()
 
         def _parse_required(self, raw: str, name: str) -> str:
             """Waliduje pole wymagane i zwraca oczyszczoną wartość."""
@@ -1894,6 +1913,16 @@ def run_gui(args):
             )
             self.status_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
             status_panel.add_widget(self.status_label)
+            self.calibration_status_label = Label(
+                text="Preflight: CalibrationStatus(intrinsics_loaded=False, pnp_points_loaded=False, pnp_solved=False, world_projection_enabled=False)",
+                size_hint_y=None,
+                height=max(36, int(self.gui_font_size * 1.3)),
+                halign="left",
+                valign="middle",
+                color=(0.8, 0.9, 1.0, 1.0),
+            )
+            self.calibration_status_label.bind(size=lambda inst, _: setattr(inst, "text_size", inst.size))
+            status_panel.add_widget(self.calibration_status_label)
             self.job_state_label = Label(
                 text="Job: IDLE (0%)",
                 size_hint_y=None,

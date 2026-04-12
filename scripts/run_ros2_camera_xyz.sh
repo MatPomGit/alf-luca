@@ -66,6 +66,12 @@ if [[ -z "$PNP_OBJECT_POINTS_VALUE" || -z "$PNP_IMAGE_POINTS_VALUE" ]]; then
   eval "$computed_env"
   PNP_OBJECT_POINTS_VALUE="${LUCA_PNP_OBJECT_POINTS:-}"
   PNP_IMAGE_POINTS_VALUE="${LUCA_PNP_IMAGE_POINTS:-}"
+  if [[ -n "$PNP_OBJECT_POINTS_VALUE" && -n "$PNP_IMAGE_POINTS_VALUE" ]]; then
+    echo "[OK] Auto-derywacja PnP zakonczona powodzeniem (kalibracja banan-ready)." >&2
+  else
+    echo "[BLAD] Auto-derywacja PnP zwrocila niepelne dane." >&2
+    exit 1
+  fi
 fi
 
 CMD=(
