@@ -313,6 +313,21 @@ python -m luca_tracker gui --video video/sledzenie_plamki.mp4
 python -m luca_tracker track --config config/run_tracking.sample.yaml
 ```
 
+### 5a) Gotowy preset anti-false-positive (video/sledzenie_plamki.mp4)
+
+Jeśli chcesz szybciej ograniczyć przypadkowe artefakty i pojedyncze „błyski”, użyj gotowego presetu:
+
+```bash
+python -m luca_tracker track --config config/run_tracking.sledzenie_low_fp.yaml
+```
+
+W tym presecie celowo podniesiono progi jakości detekcji (`min_detection_confidence`, `min_detection_score`), dodano filtr trwałości (`min_persistence_frames`) i lekko zaostrzono gating trackera.
+Jeżeli tracking stanie się zbyt „ostrożny” (za dużo braków detekcji), najpierw poluzuj:
+
+1. `min_detection_confidence` (np. z `0.62` do `0.50`),
+2. `min_persistence_frames` (np. z `3` do `2`),
+3. `min_match_score` (np. z `0.62` do `0.55`).
+
 ### 6) Tryb ROS2 (strumień online + publikacja pozycji)
 
 ```bash
