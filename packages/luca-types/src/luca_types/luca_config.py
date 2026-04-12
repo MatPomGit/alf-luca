@@ -179,6 +179,7 @@ class TrackerConfig:
     error_gate_gain: float = 1.0
     min_dynamic_distance: float = 12.0
     max_dynamic_distance: float = 150.0
+    min_track_start_confidence: float = 0.35
 
 
 @dataclass

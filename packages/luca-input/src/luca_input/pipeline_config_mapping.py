@@ -77,6 +77,7 @@ def run_config_to_pipeline_config(config: RunConfig) -> Namespace:
         error_gate_gain=config.tracker.error_gate_gain,
         min_dynamic_distance=config.tracker.min_dynamic_distance,
         max_dynamic_distance=config.tracker.max_dynamic_distance,
+        min_track_start_confidence=config.tracker.min_track_start_confidence,
         kalman_process_noise=config.postprocess.kalman_process_noise,
         kalman_measurement_noise=config.postprocess.kalman_measurement_noise,
     )
@@ -109,6 +110,7 @@ def pipeline_config_to_run_config(config) -> RunConfig:
             error_gate_gain=config.tracker.error_gate_gain,
             min_dynamic_distance=config.tracker.min_dynamic_distance,
             max_dynamic_distance=config.tracker.max_dynamic_distance,
+            min_track_start_confidence=config.tracker.min_track_start_confidence,
         ),
         postprocess=PostprocessConfig(
             use_kalman=config.use_kalman,
