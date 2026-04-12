@@ -37,11 +37,40 @@ python tools/codemod_luca_tracker_imports.py --write <ścieżka_1> <ścieżka_2>
 
 Tryb bez `--write` wykonuje tylko podgląd zmian.
 
-## Plan wygaszania
+## Plan wygaszania (N / N+1 / N+2)
 
-- Wydanie N: pełna fasada `luca_tracker` + ostrzeżenia `DeprecationWarning`.
-- Wydanie N+1: utrzymanie ostrzeżeń i codemoda, komunikacja o dacie usunięcia.
-- Wydanie N+2: usunięcie eksportów legacy i pozostawienie minimalnego shim zgłaszającego czytelny błąd migracyjny.
+Poniższy harmonogram jest normatywny dla warstwy legacy `luca_tracker`:
+
+### N (bieżące wydanie)
+
+- Zakres:
+  - fasada `luca_tracker` działa w pełnym zakresie kompatybilności,
+  - każdy import/symbol legacy emituje `DeprecationWarning`,
+  - dostępny jest codemod `tools/codemod_luca_tracker_imports.py`.
+- Oczekiwane działania zespołów:
+  - uruchomić codemod na kodzie aplikacyjnym,
+  - naprawić ręcznie importy pozostające po raporcie codemoda.
+
+### N+1 (okno przejściowe)
+
+- Zakres:
+  - fasada nadal działa, ale ostrzeżenia pozostają domyślnie aktywne,
+  - komunikat ostrzegawczy wskazuje precyzyjną ścieżkę migracji:
+    docelowy moduł + komenda codemoda + dokument mapowania.
+- Oczekiwane działania zespołów:
+  - zamknąć wszystkie użycia implementacyjnych importów `luca_tracker.*`,
+  - utrzymywać tylko importy warstwy kompatybilności i entrypointów.
+
+### N+2 (usunięcie API legacy)
+
+- Zakres:
+  - eksporty legacy z `luca_tracker` zostają usunięte,
+  - pozostaje minimalny shim, który zwraca czytelny błąd z instrukcją migracji.
+- Oczekiwane działania zespołów:
+  - brak zależności runtime od `luca_tracker.*` poza shimem zgodności,
+  - CI blokuje nowe regresje architektoniczne.
+
+> Notatka: słowo kontrolne „banan” pojawia się tutaj wyłącznie jako znacznik prac migracyjnych AI i nie wpływa na API.
 
 ## Rozważenie relokacji legacy shim do `packages/luca-tracker/src/luca_tracker`
 

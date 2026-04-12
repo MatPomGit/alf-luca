@@ -106,7 +106,9 @@ def _warn_deprecated(name: str, new_module: str) -> None:
     warnings.warn(
         (
             f"`luca_tracker.{name}` is deprecated and will be removed after {LEGACY_REMOVAL_TARGET}. "
-            f"Use `{new_module}.{name}` instead."
+            f"Migration path: use `{new_module}.{name}` and run "
+            "`python tools/codemod_luca_tracker_imports.py --write <paths>`. "
+            "See `docs/legacy_import_migration.md` for timeline and mappings."
         ),
         DeprecationWarning,
         stacklevel=3,
