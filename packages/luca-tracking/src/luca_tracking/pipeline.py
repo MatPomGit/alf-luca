@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 
 from luca_processing import available_detector_names
-from luca_processing import DetectorConfig, TemporalMaskFilter, detect_spots_with_config
+from luca_processing import DetectionPersistenceFilter, DetectorConfig, TemporalMaskFilter, detect_spots_with_config
 from luca_processing import KalmanConfig, apply_kalman_to_points
 from luca_reporting import (
     build_run_metadata,
@@ -159,6 +159,16 @@ def interactive_track_config(args):
     args.temporal_stabilization = ask_bool("Włączyć stabilizację temporalną maski?", args.temporal_stabilization)
     args.temporal_window = ask_value("Rozmiar bufora temporalnego (klatki)", int, args.temporal_window)
     args.temporal_mode = ask_value("Tryb stabilizacji temporalnej (majority/and)", str, args.temporal_mode)
+    args.min_persistence_frames = ask_value(
+        "Liczba klatek potwierdzających detekcję (>=1)",
+        int,
+        getattr(args, "min_persistence_frames", 1),
+    )
+    args.persistence_radius_px = ask_value(
+        "Promień spójności centroidu [px] dla filtra trwałości",
+        float,
+        getattr(args, "persistence_radius_px", 12.0),
+    )
     args.multi_track = ask_bool("Śledzić wiele plamek jednocześnie?", args.multi_track)
     args.use_single_object_ekf = ask_bool(
         "W trybie single-object użyć EKF (większa odporność na artefakty)?",
@@ -242,6 +252,8 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             temporal_stabilization=getattr(args_or_config, "temporal_stabilization", False),
             temporal_window=getattr(args_or_config, "temporal_window", 3),
             temporal_mode=getattr(args_or_config, "temporal_mode", "majority"),
+            min_persistence_frames=getattr(args_or_config, "min_persistence_frames", 1),
+            persistence_radius_px=getattr(args_or_config, "persistence_radius_px", 12.0),
         ),
         tracker=TrackerConfig(
             max_distance=getattr(args_or_config, "max_distance", 40.0),
@@ -466,6 +478,7 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
 
     frame_index = 0
     temporal_filter: Optional[TemporalMaskFilter] = None
+    persistence_filter: Optional[DetectionPersistenceFilter] = None
     if config.detector.temporal_stabilization:
         temporal_filter = TemporalMaskFilter(
             window_size=config.detector.temporal_window,
@@ -482,6 +495,20 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
             ),
             "yellow",
         )
+    if config.detector.min_persistence_frames > 1:
+        persistence_filter = DetectionPersistenceFilter(
+            min_persistence_frames=config.detector.min_persistence_frames,
+            persistence_radius_px=config.detector.persistence_radius_px,
+        )
+        # Filtr trwałości redukuje przypadkowe false positives, ale dokłada latencję startu śledzenia.
+        _log_stage(
+            "INFO",
+            (
+                "Włączono filtr trwałości detekcji "
+                f"(min_frames={config.detector.min_persistence_frames}, radius={config.detector.persistence_radius_px:.1f}px)."
+            ),
+            "yellow",
+        )
 
     while True:
         ok, frame = cap.read()
@@ -491,7 +518,12 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
         if camera_matrix is not None and dist_coeffs is not None:
             frame = cv2.undistort(frame, camera_matrix, dist_coeffs)
 
-        detections, mask, roi_box = detect_spots_with_config(frame, config.detector, temporal_filter=temporal_filter)
+        detections, mask, roi_box = detect_spots_with_config(
+            frame,
+            config.detector,
+            temporal_filter=temporal_filter,
+            persistence_filter=persistence_filter,
+        )
         time_sec = frame_index / fps
 
         if config.multi_track:
@@ -745,6 +777,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--temporal_stabilization", action="store_true", help="Włącza filtr temporalny maski")
     parser.add_argument("--temporal_window", type=int, default=3, help="Rozmiar bufora temporalnego (liczba klatek)")
     parser.add_argument("--temporal_mode", choices=["majority", "and"], default="majority")
+    parser.add_argument("--min_persistence_frames", type=int, default=1, help="Ile kolejnych klatek musi potwierdzić detekcję (1 = tryb zgodny wstecznie)")
+    parser.add_argument("--persistence_radius_px", type=float, default=12.0, help="Maksymalny skok centroidu [px] między klatkami dla filtra trwałości")
     parser.add_argument("--multi_track", action="store_true")
     parser.add_argument("--use_single_object_ekf", action="store_true", default=True)
     parser.add_argument("--no_single_object_ekf", action="store_false", dest="use_single_object_ekf")

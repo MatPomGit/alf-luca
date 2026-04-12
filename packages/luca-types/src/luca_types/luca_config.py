@@ -116,6 +116,8 @@ class DetectorConfig:
     temporal_stabilization: bool = False
     temporal_window: int = 3
     temporal_mode: str = "majority"
+    min_persistence_frames: int = 1
+    persistence_radius_px: float = 12.0
 
     def __post_init__(self) -> None:
         """Waliduje pola krytyczne dla detekcji, by szybciej wykrywać błędy konfiguracji."""
@@ -147,6 +149,10 @@ class DetectorConfig:
             raise ValueError("Pole `temporal_window` musi być dodatnie.")
         if self.temporal_mode not in {"majority", "and"}:
             raise ValueError("Pole `temporal_mode` musi mieć wartość `majority` albo `and`.")
+        if self.min_persistence_frames <= 0:
+            raise ValueError("Pole `min_persistence_frames` musi być dodatnie.")
+        if self.persistence_radius_px < 0:
+            raise ValueError("Pole `persistence_radius_px` nie może być ujemne.")
         if self.roi:
             _parse_roi_text(self.roi)
         if self.hsv_lower:
