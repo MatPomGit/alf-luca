@@ -14,7 +14,11 @@ import numpy as np
 from luca_processing import available_detector_names
 from luca_processing import DetectionPersistenceFilter, DetectorConfig, TemporalMaskFilter, detect_spots_with_config
 from luca_processing import KalmanConfig, apply_kalman_to_points
-from luca_processing import estimate_pnp_pose, pixel_to_world_on_plane
+from luca_processing import (
+    estimate_pnp_pose_with_status,
+    pixel_to_world_on_plane_with_status,
+    world_projection_reason_from_codes,
+)
 from luca_reporting import (
     build_run_metadata,
     generate_trajectory_png,
@@ -326,15 +330,16 @@ def _inject_world_coordinates(
     rvec: np.ndarray,
     tvec: np.ndarray,
     plane_z: float,
-) -> None:
-    """Wzbogaca listę punktów trajektorii o współrzędne świata XYZ wyznaczone z PnP."""
+) -> str:
+    """Wzbogaca listę punktów trajektorii o XYZ i zwraca kod statusu etapu ray-plane."""
+    ray_plane_status_code = "RAY_PLANE_UNKNOWN"
     for point in points:
         if not point.detected or point.x is None or point.y is None:
             point.x_world = None
             point.y_world = None
             point.z_world = None
             continue
-        world_point = pixel_to_world_on_plane(
+        world_result = pixel_to_world_on_plane_with_status(
             x_px=point.x,
             y_px=point.y,
             camera_matrix=camera_matrix,
@@ -343,12 +348,17 @@ def _inject_world_coordinates(
             tvec=tvec,
             plane_z=plane_z,
         )
-        if world_point is None:
+        if world_result.ray_plane_status.code != "RAY_PLANE_OK" and ray_plane_status_code == "RAY_PLANE_UNKNOWN":
+            ray_plane_status_code = world_result.ray_plane_status.code
+        if world_result.world_point is None:
             point.x_world = None
             point.y_world = None
             point.z_world = None
             continue
-        point.x_world, point.y_world, point.z_world = world_point
+        point.x_world, point.y_world, point.z_world = world_result.world_point
+        if ray_plane_status_code == "RAY_PLANE_UNKNOWN":
+            ray_plane_status_code = "RAY_PLANE_OK"
+    return ray_plane_status_code
 
 
 def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -> Dict[str, Any]:
@@ -553,6 +563,11 @@ def track_video(args_or_config):
         pnp_object_points_raw=config.pnp_object_points,
         pnp_image_points_raw=config.pnp_image_points,
         pnp_solved=False,
+        intrinsics_status_code="INTRINSICS_OK" if camera_matrix is not None and dist_coeffs is not None else "INTRINSICS_MISSING",
+        pnp_points_status_code="PNP_POINTS_UNKNOWN",
+        solvepnp_status_code="SOLVEPNP_SKIPPED",
+        ray_plane_status_code="RAY_PLANE_PREREQUISITES_MISSING",
+        world_projection_reason="Oczekiwanie na komplet danych do rekonstrukcji XYZ.",
     )
 
     result = process_video_frames(config, camera_matrix=camera_matrix, dist_coeffs=dist_coeffs)
@@ -587,21 +602,34 @@ def track_video(args_or_config):
         _log_stage("OK", "Zastosowano filtrację Kalmana.", "yellow")
 
     if camera_matrix is not None and dist_coeffs is not None:
-        pnp_pose = estimate_pnp_pose(
+        pnp_result = estimate_pnp_pose_with_status(
             camera_matrix=camera_matrix,
             dist_coeffs=dist_coeffs,
             object_points_raw=config.pnp_object_points,
             image_points_raw=config.pnp_image_points,
         )
+        ray_plane_status_code = "RAY_PLANE_PREREQUISITES_MISSING"
         calibration_status = CalibrationStatus.build(
             intrinsics_loaded=True,
             pnp_object_points_raw=config.pnp_object_points,
             pnp_image_points_raw=config.pnp_image_points,
-            pnp_solved=pnp_pose is not None,
+            pnp_solved=pnp_result.success,
+            intrinsics_status_code=pnp_result.intrinsics_status.code,
+            pnp_points_status_code=pnp_result.pnp_points_status.code,
+            solvepnp_status_code=pnp_result.solvepnp_status.code,
+            ray_plane_status_code=ray_plane_status_code,
+            world_projection_reason=world_projection_reason_from_codes(
+                pnp_result.intrinsics_status.code,
+                pnp_result.pnp_points_status.code,
+                pnp_result.solvepnp_status.code,
+                ray_plane_status_code,
+            ),
         )
-        if pnp_pose:
-            rvec, tvec = pnp_pose
-            _inject_world_coordinates(main_points, camera_matrix, dist_coeffs, rvec, tvec, config.pnp_world_plane_z)
+        if pnp_result.success and pnp_result.rvec is not None and pnp_result.tvec is not None:
+            rvec, tvec = pnp_result.rvec, pnp_result.tvec
+            ray_plane_status_code = _inject_world_coordinates(
+                main_points, camera_matrix, dist_coeffs, rvec, tvec, config.pnp_world_plane_z
+            )
             _stabilize_world_coordinates(main_points)
             if config.multi_track:
                 for track_data in result["finished_tracks"].values():
@@ -614,9 +642,29 @@ def track_video(args_or_config):
                         config.pnp_world_plane_z,
                     )
                     _stabilize_world_coordinates(track_data["points"])
+            calibration_status = CalibrationStatus.build(
+                intrinsics_loaded=True,
+                pnp_object_points_raw=config.pnp_object_points,
+                pnp_image_points_raw=config.pnp_image_points,
+                pnp_solved=True,
+                intrinsics_status_code=pnp_result.intrinsics_status.code,
+                pnp_points_status_code=pnp_result.pnp_points_status.code,
+                solvepnp_status_code=pnp_result.solvepnp_status.code,
+                ray_plane_status_code=ray_plane_status_code,
+                world_projection_reason=world_projection_reason_from_codes(
+                    pnp_result.intrinsics_status.code,
+                    pnp_result.pnp_points_status.code,
+                    pnp_result.solvepnp_status.code,
+                    ray_plane_status_code,
+                ),
+            )
             _log_stage("OK", "Dodano współrzędne świata XYZ wyznaczone metodą PnP.", "yellow")
-        elif config.pnp_object_points or config.pnp_image_points:
-            _log_stage("INFO", "Pominięto XYZ: brakuje pełnego zestawu punktów PnP.", "yellow")
+        else:
+            _log_stage(
+                "INFO",
+                f"Pominięto XYZ: {calibration_status.world_projection_reason}",
+                "yellow",
+            )
 
     _log_stage("INFO", calibration_status.to_log_message(), "cyan")
 
