@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 
 # Funkcja pomocnicza wydzielona do walidacji zakresów liczbowych w modelach konfiguracyjnych.
@@ -248,6 +248,113 @@ class RunConfig:
             pose=PoseConfig(**data.get("pose", {})),
             eval=EvalConfig(**data.get("eval", {})),
         )
+
+
+# Pomocnicza funkcja odczytuje pole z mapy/obiektu, żeby zunifikować wejścia CLI/GUI/ROS2.
+def _read_value(source: Any, field_name: str, default: Any = None) -> Any:
+    """Odczytuje wartość pola z obiektu `argparse.Namespace` lub słownika."""
+    if isinstance(source, Mapping):
+        return source.get(field_name, default)
+    return getattr(source, field_name, default)
+
+
+def run_config_from_entrypoint(source: Any, *, entrypoint: str) -> RunConfig:
+    """Buduje kanoniczny `RunConfig` z argumentów wejściowych adapterów.
+
+    Parametr `entrypoint` określa sposób interpretacji źródła:
+    - `track`/`gui`: oczekuje `video` albo `camera`,
+    - `ros2`: oczekuje `camera_index` albo `video_device`.
+    """
+    if entrypoint not in {"track", "gui", "ros2"}:
+        raise ValueError(f"Nieobsługiwany entrypoint `{entrypoint}`. Dozwolone: track/gui/ros2.")
+
+    video_value = _read_value(source, "video")
+    camera_value = _read_value(source, "camera")
+    if entrypoint == "ros2":
+        camera_index = _read_value(source, "camera_index")
+        video_device = _read_value(source, "video_device", "/dev/video0")
+        if camera_index is not None:
+            camera_value = str(int(camera_index))
+        else:
+            camera_value = str(video_device).strip()
+        video_value = None
+
+    return RunConfig(
+        input=InputConfig(
+            video=video_value,
+            camera=camera_value,
+            calib_file=_read_value(source, "calib_file"),
+            display=bool(_read_value(source, "display", False)),
+            interactive=bool(_read_value(source, "interactive", False)),
+        ),
+        detector=DetectorConfig(
+            track_mode=_read_value(source, "track_mode", "brightness"),
+            blur=int(_read_value(source, "blur", 11)),
+            threshold=int(_read_value(source, "threshold", 200)),
+            threshold_mode=_read_value(source, "threshold_mode", "fixed"),
+            adaptive_block_size=int(_read_value(source, "adaptive_block_size", 31)),
+            adaptive_c=float(_read_value(source, "adaptive_c", 5.0)),
+            use_clahe=bool(_read_value(source, "use_clahe", False)),
+            erode_iter=int(_read_value(source, "erode_iter", 2)),
+            dilate_iter=int(_read_value(source, "dilate_iter", 4)),
+            opening_kernel=int(_read_value(source, "opening_kernel", 0)),
+            closing_kernel=int(_read_value(source, "closing_kernel", 0)),
+            min_area=float(_read_value(source, "min_area", 10.0)),
+            max_area=float(_read_value(source, "max_area", 0.0)),
+            min_circularity=float(_read_value(source, "min_circularity", 0.25)),
+            max_aspect_ratio=float(_read_value(source, "max_aspect_ratio", 3.0)),
+            min_peak_intensity=float(_read_value(source, "min_peak_intensity", 160.0)),
+            min_detection_confidence=float(_read_value(source, "min_detection_confidence", 0.0)),
+            min_detection_score=float(_read_value(source, "min_detection_score", 0.0)),
+            min_solidity=_read_value(source, "min_solidity", 0.8),
+            max_spots=int(_read_value(source, "max_spots", 1)),
+            color_name=_read_value(source, "color_name", "red"),
+            hsv_lower=_read_value(source, "hsv_lower"),
+            hsv_upper=_read_value(source, "hsv_upper"),
+            roi=_read_value(source, "roi"),
+            temporal_stabilization=bool(_read_value(source, "temporal_stabilization", False)),
+            temporal_window=int(_read_value(source, "temporal_window", 3)),
+            temporal_mode=_read_value(source, "temporal_mode", "majority"),
+            min_persistence_frames=int(_read_value(source, "min_persistence_frames", 1)),
+            persistence_radius_px=float(_read_value(source, "persistence_radius_px", 12.0)),
+        ),
+        tracker=TrackerConfig(
+            multi_track=bool(_read_value(source, "multi_track", False)),
+            use_single_object_ekf=bool(_read_value(source, "use_single_object_ekf", True)),
+            max_distance=float(_read_value(source, "max_distance", 40.0)),
+            max_missed=int(_read_value(source, "max_missed", 10)),
+            selection_mode=_read_value(source, "selection_mode", "stablest"),
+            distance_weight=float(_read_value(source, "distance_weight", 1.0)),
+            area_weight=float(_read_value(source, "area_weight", 0.35)),
+            circularity_weight=float(_read_value(source, "circularity_weight", 0.2)),
+            brightness_weight=float(_read_value(source, "brightness_weight", 0.0)),
+            min_match_score=float(_read_value(source, "min_match_score", 0.5)),
+            speed_gate_gain=float(_read_value(source, "speed_gate_gain", 1.5)),
+            error_gate_gain=float(_read_value(source, "error_gate_gain", 1.0)),
+            min_dynamic_distance=float(_read_value(source, "min_dynamic_distance", 12.0)),
+            max_dynamic_distance=float(_read_value(source, "max_dynamic_distance", 150.0)),
+            min_track_start_confidence=float(_read_value(source, "min_track_start_confidence", 0.35)),
+        ),
+        postprocess=PostprocessConfig(
+            use_kalman=bool(_read_value(source, "use_kalman", False)),
+            kalman_process_noise=float(_read_value(source, "kalman_process_noise", 3e-2)),
+            kalman_measurement_noise=float(_read_value(source, "kalman_measurement_noise", 5e-2)),
+            draw_all_tracks=bool(_read_value(source, "draw_all_tracks", False)),
+        ),
+        pose=PoseConfig(
+            pnp_object_points=_read_value(source, "pnp_object_points"),
+            pnp_image_points=_read_value(source, "pnp_image_points"),
+            pnp_world_plane_z=float(_read_value(source, "pnp_world_plane_z", 0.0)),
+        ),
+        eval=EvalConfig(
+            output_csv=_read_value(source, "output_csv", "tracking_results.csv"),
+            trajectory_png=_read_value(source, "trajectory_png"),
+            report_csv=_read_value(source, "report_csv"),
+            report_pdf=_read_value(source, "report_pdf"),
+            all_tracks_csv=_read_value(source, "all_tracks_csv"),
+            annotated_video=_read_value(source, "annotated_video"),
+        ),
+    )
 
 
 # Funkcja jest celowo wydzielona, aby centralnie obsługiwać opcjonalny import PyYAML.

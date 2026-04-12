@@ -10,6 +10,7 @@ from .config_model import (
     RunConfig,
     TrackerConfig,
     load_run_config,
+    run_config_from_entrypoint,
     save_run_config,
 )
 
@@ -23,6 +24,7 @@ __all__ = [
     "PoseConfig",
     "EvalConfig",
     "RunConfig",
+    "run_config_from_entrypoint",
     "load_run_config",
     "save_run_config",
 ]
