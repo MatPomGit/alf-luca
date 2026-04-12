@@ -6,6 +6,9 @@ from typing import Callable, Dict, List, Optional
 
 from .config_model import DetectorConfig, EvalConfig, InputConfig, PoseConfig, PostprocessConfig, RunConfig, TrackerConfig
 
+# Kanoniczne defaulty detektora pobieramy z modelu typów, aby GUI nie dryfowało względem CLI/pipeline.
+_DETECTOR_DEFAULTS = DetectorConfig()
+
 
 @dataclass(frozen=True)
 class CalibrationConfigDTO:
@@ -78,12 +81,18 @@ class RunConfigFormMapper:
                 closing_kernel=self._parse_int(text("detector.closing_kernel"), "detector.closing_kernel", 0),
                 min_area=self._parse_float(text("detector.min_area"), "detector.min_area", 0),
                 max_area=self._parse_float(text("detector.max_area"), "detector.max_area", 0),
-                min_circularity=self._parse_float(text("detector.min_circularity"), "detector.min_circularity", 0),
-                max_aspect_ratio=self._parse_float(text("detector.max_aspect_ratio"), "detector.max_aspect_ratio", 1),
-                min_peak_intensity=self._parse_float(text("detector.min_peak_intensity"), "detector.min_peak_intensity", 0),
+                min_circularity=self._parse_float(text("detector.min_circularity"), "detector.min_circularity", 0)
+                if text("detector.min_circularity").strip()
+                else _DETECTOR_DEFAULTS.min_circularity,
+                max_aspect_ratio=self._parse_float(text("detector.max_aspect_ratio"), "detector.max_aspect_ratio", 1)
+                if text("detector.max_aspect_ratio").strip()
+                else _DETECTOR_DEFAULTS.max_aspect_ratio,
+                min_peak_intensity=self._parse_float(text("detector.min_peak_intensity"), "detector.min_peak_intensity", 0)
+                if text("detector.min_peak_intensity").strip()
+                else _DETECTOR_DEFAULTS.min_peak_intensity,
                 min_solidity=self._parse_float(text("detector.min_solidity"), "detector.min_solidity", 0)
                 if text("detector.min_solidity").strip()
-                else None,
+                else _DETECTOR_DEFAULTS.min_solidity,
                 max_spots=self._parse_int(text("detector.max_spots"), "detector.max_spots", 1),
                 color_name=self._parse_required(text("detector.color_name"), "detector.color_name"),
                 hsv_lower=self._parse_optional(text("detector.hsv_lower")),

@@ -94,20 +94,20 @@ def build_parser():
     p_track.add_argument(
         "--min_circularity",
         type=float,
-        default=0.0,
-        help="Minimalna kolistość (0..1); wyższa wartość redukuje fałszywe trafienia o nieregularnym kształcie.",
+        default=0.25,
+        help="Minimalna kolistość (0..1). Domyślnie anti-false-positive; poluzuj przy realnym celu o nieregularnym kształcie.",
     )
     p_track.add_argument(
         "--max_aspect_ratio",
         type=float,
-        default=6.0,
-        help="Maksymalny stosunek boków bbox; niższa wartość odrzuca podłużne artefakty i smugi.",
+        default=3.0,
+        help="Maksymalny stosunek boków bbox. Domyślnie anti-false-positive; podnieś gdy prawdziwa plamka bywa wydłużona (np. ruch/smuga).",
     )
     p_track.add_argument(
         "--min_peak_intensity",
         type=float,
-        default=0.0,
-        help="Minimalna jasność lokalnego maksimum (0..255); zwiększenie odcina słabe odblaski i szum.",
+        default=160.0,
+        help="Minimalna jasność lokalnego maksimum (0..255) dla trybu brightness. Domyślnie anti-false-positive; obniż przy ciemnej scenie.",
     )
     p_track.add_argument(
         "--min_detection_confidence",
@@ -124,8 +124,8 @@ def build_parser():
     p_track.add_argument(
         "--min_solidity",
         type=float,
-        default=None,
-        help="Opcjonalna minimalna zwartość konturu (0..1); pomaga usuwać mocno postrzępione/wnękowe kształty.",
+        default=0.8,
+        help="Minimalna zwartość konturu (0..1). Domyślnie anti-false-positive; obniż gdy cel ma naturalnie postrzępiony obrys.",
     )
     p_track.add_argument("--erode_iter", type=int, default=2, help="Liczba iteracji erozji")
     p_track.add_argument("--dilate_iter", type=int, default=4, help="Liczba iteracji dylatacji")
@@ -208,26 +208,26 @@ def build_parser():
     p_gui.add_argument(
         "--min_circularity",
         type=float,
-        default=0.0,
-        help="Minimalna kolistość (0..1); większa wartość zmniejsza liczbę nieregularnych fałszywych trafień.",
+        default=0.25,
+        help="Minimalna kolistość (0..1). Domyślnie anti-false-positive; poluzuj przy realnym celu o nieregularnym kształcie.",
     )
     p_gui.add_argument(
         "--max_aspect_ratio",
         type=float,
-        default=6.0,
-        help="Maksymalny stosunek boków bbox; niższa wartość odrzuca smugi i wydłużone artefakty.",
+        default=3.0,
+        help="Maksymalny stosunek boków bbox. Domyślnie anti-false-positive; podnieś gdy prawdziwa plamka bywa wydłużona (np. ruch/smuga).",
     )
     p_gui.add_argument(
         "--min_peak_intensity",
         type=float,
-        default=0.0,
-        help="Minimalna jasność lokalnego maksimum (0..255); podniesienie progu filtruje słabe refleksy.",
+        default=160.0,
+        help="Minimalna jasność lokalnego maksimum (0..255) dla trybu brightness. Domyślnie anti-false-positive; obniż przy ciemnej scenie.",
     )
     p_gui.add_argument(
         "--min_solidity",
         type=float,
-        default=None,
-        help="Opcjonalna minimalna zwartość (0..1); pomaga usunąć postrzępione lub wklęsłe kontury.",
+        default=0.8,
+        help="Minimalna zwartość (0..1). Domyślnie anti-false-positive; obniż gdy cel ma naturalnie postrzępiony obrys.",
     )
     p_gui.add_argument("--erode_iter", type=int, default=2)
     p_gui.add_argument("--dilate_iter", type=int, default=4)
