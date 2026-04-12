@@ -175,6 +175,11 @@ def interactive_track_config(args):
         getattr(args, "use_single_object_ekf", True),
     )
     args.max_spots = ask_value("Maksymalna liczba plamek na klatkę", int, args.max_spots)
+    args.min_track_start_confidence = ask_value(
+        "Minimalne confidence do startu nowego toru [0..1]",
+        float,
+        getattr(args, "min_track_start_confidence", 0.35),
+    )
     args.selection_mode = ask_value(
         "Jak wybrać trajektorię główną? (largest/stablest/longest)", str, args.selection_mode
     )
@@ -268,6 +273,7 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             error_gate_gain=getattr(args_or_config, "error_gate_gain", 1.0),
             min_dynamic_distance=getattr(args_or_config, "min_dynamic_distance", 12.0),
             max_dynamic_distance=getattr(args_or_config, "max_dynamic_distance", 150.0),
+            min_track_start_confidence=getattr(args_or_config, "min_track_start_confidence", 0.35),
         ),
         kalman=KalmanConfig(
             process_noise=getattr(args_or_config, "kalman_process_noise", 1e-2),
@@ -470,6 +476,7 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
         error_gate_gain=config.tracker.error_gate_gain,
         min_dynamic_distance=config.tracker.min_dynamic_distance,
         max_dynamic_distance=config.tracker.max_dynamic_distance,
+        min_track_start_confidence=config.tracker.min_track_start_confidence,
     )
     # EKF dla trybu single-object poprawia odporność na krótkie artefakty oraz chwilowy brak detekcji.
     single_tracker = SingleObjectEKFTracker(gating_distance=config.tracker.max_distance)
@@ -794,6 +801,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--error_gate_gain", type=float, default=1.0)
     parser.add_argument("--min_dynamic_distance", type=float, default=12.0)
     parser.add_argument("--max_dynamic_distance", type=float, default=150.0)
+    parser.add_argument(
+        "--min_track_start_confidence",
+        type=float,
+        default=0.35,
+        help="Minimalne confidence detekcji wymagane do utworzenia nowego toru.",
+    )
     parser.add_argument("--selection_mode", choices=["largest", "stablest", "longest"], default="stablest")
     parser.add_argument("--pnp_object_points", help="Punkty 3D świata: X,Y,Z;X,Y,Z;... (min. 4)")
     parser.add_argument("--pnp_image_points", help="Punkty 2D obrazu: x,y;x,y;... (min. 4)")

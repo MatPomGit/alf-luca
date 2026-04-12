@@ -29,6 +29,7 @@ class TrackerConfig:
     error_gate_gain: float = 1.0
     min_dynamic_distance: float = 12.0
     max_dynamic_distance: float = 150.0
+    min_track_start_confidence: float = 0.35
 
 
 class SimpleMultiTracker:
@@ -47,6 +48,7 @@ class SimpleMultiTracker:
         error_gate_gain: float = 1.0,
         min_dynamic_distance: float = 12.0,
         max_dynamic_distance: float = 150.0,
+        min_track_start_confidence: float = 0.35,
     ):
         # Parametry sterują zasięgiem dopasowania i żywotnością torów.
         self.max_distance = max_distance
@@ -61,6 +63,9 @@ class SimpleMultiTracker:
         self.error_gate_gain = max(0.0, float(error_gate_gain))
         self.min_dynamic_distance = max(1.0, float(min_dynamic_distance))
         self.max_dynamic_distance = max(self.min_dynamic_distance, float(max_dynamic_distance))
+        # Minimalne confidence detekcji wymagane do rozpoczęcia nowego toru.
+        # Dzięki temu jednorazowe artefakty nie "rozmnażają" torów (mniej false positives).
+        self.min_track_start_confidence = max(0.0, min(1.0, float(min_track_start_confidence)))
         self.next_id = 1
         self.tracks: Dict[int, Dict] = {}
 
@@ -181,6 +186,8 @@ class SimpleMultiTracker:
 
         for j, det in enumerate(detections):
             if j in assigned_detections:
+                continue
+            if float(det.confidence or 0.0) < self.min_track_start_confidence:
                 continue
             tid = self.next_id
             self.next_id += 1
@@ -458,6 +465,7 @@ def run_tracker_with_config(
         error_gate_gain=config.error_gate_gain,
         min_dynamic_distance=config.min_dynamic_distance,
         max_dynamic_distance=config.max_dynamic_distance,
+        min_track_start_confidence=config.min_track_start_confidence,
     )
     finished_tracks: Dict[int, Dict] = {}
 
@@ -492,6 +500,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--error_gate_gain", type=float, default=1.0)
     parser.add_argument("--min_dynamic_distance", type=float, default=12.0)
     parser.add_argument("--max_dynamic_distance", type=float, default=150.0)
+    parser.add_argument(
+        "--min_track_start_confidence",
+        type=float,
+        default=0.35,
+        help="Minimalne confidence detekcji potrzebne do utworzenia nowego toru.",
+    )
     parser.add_argument("--selection_mode", choices=["largest", "stablest", "longest"], default="stablest")
     parser.add_argument("--output_json", help="Optional output path with tracker summary.")
     return parser
@@ -526,6 +540,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         error_gate_gain=args.error_gate_gain,
         min_dynamic_distance=args.min_dynamic_distance,
         max_dynamic_distance=args.max_dynamic_distance,
+        min_track_start_confidence=args.min_track_start_confidence,
     )
     result = run_tracker_with_config(frames, fps=args.fps, config=config)
 
