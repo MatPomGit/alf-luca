@@ -102,12 +102,12 @@ class DetectorConfig:
     closing_kernel: int = 0
     min_area: float = 10.0
     max_area: float = 0.0
-    min_circularity: float = 0.0
-    max_aspect_ratio: float = 6.0
-    min_peak_intensity: float = 0.0
+    min_circularity: float = 0.25
+    max_aspect_ratio: float = 3.0
+    min_peak_intensity: float = 160.0
     min_detection_confidence: float = 0.0
     min_detection_score: float = 0.0
-    min_solidity: Optional[float] = None
+    min_solidity: Optional[float] = 0.8
     max_spots: int = 10
     color_name: str = "red"
     hsv_lower: Optional[str] = None
