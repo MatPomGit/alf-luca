@@ -103,3 +103,69 @@ python tools/check_script_argument_parity.py
 ```
 
 Skrypt jest statyczny (bez uruchamiania ROS2/GUI), więc nadaje się do lekkiej kontroli przed commitem.
+
+## Roadmapa R&D i governance iteracji
+
+Wspólną roadmapę prowadzimy w trzech strumieniach, żeby ograniczyć mieszanie priorytetów:
+
+1. **Algorytmy detekcji/trackingu**
+   - eksperymenty z progowaniem, maskami i stabilizacją toru,
+   - porównania konfiguracji dla scenariuszy referencyjnych,
+   - decyzje o promocji zmian do domyślnych presetów.
+2. **Niezawodność runtime**
+   - odporność na brak detekcji, zakłócenia i restart źródła,
+   - spójność zachowania CLI/GUI/ROS2,
+   - regresje kompatybilności i stabilność dłuższych sesji.
+3. **Integracje (ROS2/raporty)**
+   - kontrakt payloadów i stabilność publikacji,
+   - jakość artefaktów CSV/PDF/wideo,
+   - ergonomia danych dla downstream (analityka, sterowanie).
+
+### KPI iteracyjne
+
+Każda iteracja powinna raportować minimum poniższe KPI:
+
+- **Dokładność detekcji** — np. błąd pozycji względem referencji lub odsetek poprawnych detekcji.
+- **Stabilność toru** — np. jitter toru, liczba zgubionych klatek, średnia długość ciągłej trajektorii.
+- **Latency end-to-end** — czas od wejścia klatki do wyniku (CSV/ROS2/preview), plus `fps` pipeline'u.
+- **Czas konfiguracji przez operatora** — czas potrzebny do dojścia do poprawnego uruchomienia (target UX).
+
+Jeśli nie ma pełnego ground-truth, dopuszczalne są metryki proxy, ale muszą być jawnie opisane w raporcie.
+
+### Cykl releasowy
+
+Pracujemy w rytmie **co 2 tygodnie** (sprint release):
+
+1. zamrożenie zakresu pod koniec tygodnia 2,
+2. krótki changelog (najważniejsze zmiany + wpływ na użytkownika),
+3. ocena ryzyka regresji dla każdego strumienia: **niskie / średnie / wysokie**,
+4. publikacja decyzji release/no-release.
+
+Rekomendowany format changelogu:
+
+- „co dodano / zmieniono / naprawiono”,
+- „ryzyko regresji” z krótkim uzasadnieniem,
+- „akcje operatora po aktualizacji” (jeśli wymagane).
+
+### Etykiety backlogu
+
+Do triage i planowania używamy poniższych etykiet:
+
+- `research` — eksperymenty i walidacje hipotez,
+- `stability` — odporność runtime, regresje, niezawodność,
+- `docs` — dokumentacja i przykłady operatorskie,
+- `compat` — kompatybilność interfejsów i zachowanie legacy,
+- `performance` — latency/fps/zużycie zasobów.
+
+Łączenie etykiet jest zalecane (np. `research` + `performance`) dla zadań przekrojowych.
+
+### Benchmark i decyzja eksperymentalna per iteracja
+
+Na koniec każdej iteracji publikujemy:
+
+1. porównanie benchmarków względem poprzedniej iteracji,
+2. listę eksperymentów z decyzją:
+   - **kontynuować**,
+   - **odrzucić eksperyment**.
+
+W praktyce można użyć artefaktów z `tools/quality_benchmark.py` (`benchmark_summary.csv`, `benchmark_report.md`) i dodać krótką sekcję decyzji technicznych (banan-check: 1-2 zdania kontekstu biznesowego).
