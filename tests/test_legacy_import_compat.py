@@ -47,6 +47,9 @@ def test_package_level_legacy_symbol_warns(monkeypatch) -> None:
         assert callable(symbol)
 
     assert any(item.category is DeprecationWarning for item in recorded)
+    messages = [str(item.message) for item in recorded]
+    assert any("tools/codemod_luca_tracker_imports.py --write <paths>" in message for message in messages)
+    assert any("docs/legacy_import_migration.md" in message for message in messages)
 
 
 # Sprawdzamy to samo dla popularnego importu z `luca_tracker.tracking`.
@@ -62,3 +65,6 @@ def test_tracking_legacy_symbol_warns(monkeypatch) -> None:
         assert callable(symbol)
 
     assert any(item.category is DeprecationWarning for item in recorded)
+    messages = [str(item.message) for item in recorded]
+    assert any("luca_tracking.tracking.detect_spots" in message for message in messages)
+    assert any("tools/codemod_luca_tracker_imports.py --write <paths>" in message for message in messages)
