@@ -244,6 +244,76 @@ class TemporalMaskFilter:
         return fused.astype(np.uint8)
 
 
+class DetectionPersistenceFilter:
+    """Lekki filtr stanowy potwierdzający detekcję dopiero po utrzymaniu w czasie."""
+
+    def __init__(self, min_persistence_frames: int = 1, persistence_radius_px: float = 12.0) -> None:
+        if min_persistence_frames <= 0:
+            raise ValueError("min_persistence_frames musi być dodatnie.")
+        if persistence_radius_px < 0:
+            raise ValueError("persistence_radius_px nie może być ujemne.")
+        self.min_persistence_frames = int(min_persistence_frames)
+        self.persistence_radius_px = float(persistence_radius_px)
+        self._frame_shape: Optional[Tuple[int, int]] = None
+        self._roi_box: Optional[Tuple[int, int, int, int]] = None
+        self._last_centroid: Optional[Tuple[float, float]] = None
+        self._hit_count: int = 0
+
+    def reset(self) -> None:
+        """Czyści stan filtra po zmianie geometrii kadru/ROI albo utracie obiektu."""
+        self._frame_shape = None
+        self._roi_box = None
+        self._last_centroid = None
+        self._hit_count = 0
+
+    def _ensure_geometry(self, frame_shape: Tuple[int, int], roi_box: Tuple[int, int, int, int]) -> None:
+        """Resetuje stan po zmianie ROI lub rozmiaru klatki, aby nie mieszać niespójnych historii."""
+        if self._frame_shape is not None and (self._frame_shape != frame_shape or self._roi_box != roi_box):
+            self.reset()
+        self._frame_shape = frame_shape
+        self._roi_box = roi_box
+
+    def apply(
+        self,
+        detections: List[Detection],
+        frame_shape: Tuple[int, int, int],
+        roi_box: Tuple[int, int, int, int],
+    ) -> List[Detection]:
+        """Filtruje listę detekcji na podstawie trwałości centroidu między klatkami.
+
+        Kompromis praktyczny:
+        - wyższe `min_persistence_frames` zmniejsza false positives od pojedynczych błysków/szumu,
+        - ale zwiększa latencję reakcji o co najmniej `min_persistence_frames - 1` klatek.
+        """
+        if self.min_persistence_frames <= 1:
+            # Fallback zgodny wstecznie: tryb bez buforowania zachowuje wcześniejsze wyniki 1:1.
+            return detections
+
+        self._ensure_geometry((int(frame_shape[0]), int(frame_shape[1])), roi_box)
+        if not detections:
+            self._last_centroid = None
+            self._hit_count = 0
+            return []
+
+        current = detections[0]
+        current_centroid = (float(current.x), float(current.y))
+        if self._last_centroid is None:
+            self._last_centroid = current_centroid
+            self._hit_count = 1
+            return []
+
+        dx = current_centroid[0] - self._last_centroid[0]
+        dy = current_centroid[1] - self._last_centroid[1]
+        if math.hypot(dx, dy) <= self.persistence_radius_px:
+            self._hit_count += 1
+        else:
+            self._hit_count = 1
+        self._last_centroid = current_centroid
+        if self._hit_count < self.min_persistence_frames:
+            return []
+        return detections
+
+
 def _embed_mask_in_frame(mask_roi: np.ndarray, frame_shape: Tuple[int, int, int], roi_box: Tuple[int, int, int, int]) -> np.ndarray:
     """Wkleja maskę ROI do pełnego kadru i zeruje piksele poza ROI."""
     x0, y0, w, h = roi_box
@@ -573,9 +643,10 @@ def detect_spots_with_config(
     frame: np.ndarray,
     config: DetectorConfig,
     temporal_filter: Optional[TemporalMaskFilter] = None,
+    persistence_filter: Optional[DetectionPersistenceFilter] = None,
 ):
     """Uruchamia detekcję na podstawie obiektu konfiguracyjnego."""
-    return detect_spots(
+    detections, mask, roi_box = detect_spots(
         frame=frame,
         track_mode=config.track_mode,
         blur=config.blur,
@@ -603,6 +674,9 @@ def detect_spots_with_config(
         roi=config.roi,
         temporal_filter=temporal_filter if config.temporal_stabilization else None,
     )
+    if persistence_filter is not None:
+        detections = persistence_filter.apply(detections=detections, frame_shape=frame.shape, roi_box=roi_box)
+    return detections, mask, roi_box
 
 
 def _build_parser() -> argparse.ArgumentParser:

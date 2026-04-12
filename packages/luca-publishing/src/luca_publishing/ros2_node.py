@@ -140,6 +140,8 @@ def _resolve_ros2_config(args_or_config: Any) -> Ros2TrackerConfig:
             hsv_lower=getattr(args_or_config, "hsv_lower", None),
             hsv_upper=getattr(args_or_config, "hsv_upper", None),
             roi=getattr(args_or_config, "roi", None),
+            min_persistence_frames=getattr(args_or_config, "min_persistence_frames", 1),
+            persistence_radius_px=getattr(args_or_config, "persistence_radius_px", 12.0),
         ),
     )
 
