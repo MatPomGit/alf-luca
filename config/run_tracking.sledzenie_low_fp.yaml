@@ -1,0 +1,74 @@
+input:
+  video: video/sledzenie_plamki.mp4
+  camera:
+  calib_file:
+  display: false
+  interactive: false
+
+detector:
+  track_mode: brightness
+  blur: 11
+  threshold: 185
+  threshold_mode: adaptive
+  adaptive_block_size: 31
+  adaptive_c: 6.0
+  use_clahe: true
+  erode_iter: 2
+  dilate_iter: 3
+  opening_kernel: 3
+  closing_kernel: 3
+  min_area: 28.0
+  max_area: 0.0
+  min_circularity: 0.32
+  max_aspect_ratio: 2.7
+  min_peak_intensity: 170.0
+  min_solidity: 0.82
+  min_detection_confidence: 0.62
+  min_detection_score: 0.25
+  min_persistence_frames: 3
+  persistence_radius_px: 10.0
+  max_spots: 10
+  color_name: red
+  hsv_lower:
+  hsv_upper:
+  roi:
+  temporal_stabilization: true
+  temporal_window: 5
+  temporal_mode: majority
+
+tracker:
+  multi_track: false
+  use_single_object_ekf: true
+  max_distance: 32.0
+  max_missed: 6
+  selection_mode: stablest
+  distance_weight: 1.0
+  area_weight: 0.45
+  circularity_weight: 0.3
+  brightness_weight: 0.2
+  min_match_score: 0.62
+  speed_gate_gain: 1.35
+  error_gate_gain: 1.0
+  min_dynamic_distance: 10.0
+  max_dynamic_distance: 110.0
+
+postprocess:
+  use_kalman: true
+  kalman_process_noise: 0.02
+  kalman_measurement_noise: 0.045
+  draw_all_tracks: false
+
+pose:
+  pnp_object_points:
+  pnp_image_points:
+  pnp_world_plane_z: 0.0
+
+eval:
+  output_csv: output/manual/sledzenie_low_fp/main_track.csv
+  trajectory_png: output/manual/sledzenie_low_fp/trajectory.png
+  report_csv: output/manual/sledzenie_low_fp/report.csv
+  report_pdf:
+  all_tracks_csv: output/manual/sledzenie_low_fp/all_tracks.csv
+  annotated_video: output/manual/sledzenie_low_fp/annotated.mp4
+
+# Preset anti-false-positive dla materialu "sledzenie_plamki" (banan).
