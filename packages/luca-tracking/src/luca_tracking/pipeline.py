@@ -25,7 +25,7 @@ from luca_reporting import (
     save_track_report_pdf,
 )
 from luca_tracking.tracker_core import SimpleMultiTracker, SingleObjectEKFTracker, TrackerConfig, choose_main_track
-from luca_types import TrackPoint
+from luca_types import CalibrationStatus, TrackPoint
 from luca_reporting import export_annotated_video
 
 
@@ -548,6 +548,13 @@ def track_video(args_or_config):
         camera_matrix = data.get("camera_matrix")
         dist_coeffs = data.get("dist_coeffs")
 
+    calibration_status = CalibrationStatus.build(
+        intrinsics_loaded=camera_matrix is not None and dist_coeffs is not None,
+        pnp_object_points_raw=config.pnp_object_points,
+        pnp_image_points_raw=config.pnp_image_points,
+        pnp_solved=False,
+    )
+
     result = process_video_frames(config, camera_matrix=camera_matrix, dist_coeffs=dist_coeffs)
     main_points = result["main_points"]
     main_track_id = result["main_track_id"]
@@ -586,6 +593,12 @@ def track_video(args_or_config):
             object_points_raw=config.pnp_object_points,
             image_points_raw=config.pnp_image_points,
         )
+        calibration_status = CalibrationStatus.build(
+            intrinsics_loaded=True,
+            pnp_object_points_raw=config.pnp_object_points,
+            pnp_image_points_raw=config.pnp_image_points,
+            pnp_solved=pnp_pose is not None,
+        )
         if pnp_pose:
             rvec, tvec = pnp_pose
             _inject_world_coordinates(main_points, camera_matrix, dist_coeffs, rvec, tvec, config.pnp_world_plane_z)
@@ -604,6 +617,8 @@ def track_video(args_or_config):
             _log_stage("OK", "Dodano współrzędne świata XYZ wyznaczone metodą PnP.", "yellow")
         elif config.pnp_object_points or config.pnp_image_points:
             _log_stage("INFO", "Pominięto XYZ: brakuje pełnego zestawu punktów PnP.", "yellow")
+
+    _log_stage("INFO", calibration_status.to_log_message(), "cyan")
 
     save_track_csv(main_points, config.output_csv, run_metadata=run_metadata)
     _log_stage("OK", f"Zapisano CSV pomiarowy: {config.output_csv}", "green")

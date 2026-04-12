@@ -155,4 +155,9 @@ if %errorlevel%==0 (
 ) else (
     for /f "usebackq delims=" %%L in (`python scripts\compute_pnp_reference.py --format cmd --calib-dir "%LUCA_CALIB_DIR%" --rows "%LUCA_CHESSBOARD_ROWS%" --cols "%LUCA_CHESSBOARD_COLS%" --square-size "%LUCA_CHESSBOARD_SQUARE_SIZE%"`) do %%L
 )
+if defined LUCA_PNP_OBJECT_POINTS if defined LUCA_PNP_IMAGE_POINTS (
+    echo [OK] Auto-derywacja PnP zakonczona powodzeniem.
+) else (
+    echo [BLAD] Auto-derywacja PnP nie zwrocila pelnych punktow.
+)
 goto :eof

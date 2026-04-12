@@ -12,7 +12,7 @@ import numpy as np
 from luca_processing import DetectorConfig
 from luca_processing import detect_spots_with_config
 from luca_processing import estimate_pnp_pose, pixel_to_world_on_plane
-from luca_types import RunConfig
+from luca_types import CalibrationStatus, RunConfig
 
 ROS2_MESSAGE_SCHEMA_DEFAULT = "luca_tracker.ros2.tracking.v1"
 ROS2_BASE_PAYLOAD_KEYS: tuple[str, ...] = (
@@ -179,6 +179,11 @@ def _load_run_metadata_json(path: Optional[str]) -> dict[str, str]:
     return {str(key): str(value) for key, value in payload.items() if value is not None}
 
 
+def _is_calibration_diagnostics_schema(message_schema: str) -> bool:
+    """Sprawdza, czy wybrany schemat ma rozszerzenie diagnostyczne kalibracji."""
+    return message_schema.strip().endswith(".v2")
+
+
 class _Ros2TrackerRuntime:
     """Warstwa runtime spinana z obiektem Node, publikująca dane per klatka."""
 
@@ -197,6 +202,12 @@ class _Ros2TrackerRuntime:
         self._run_metadata = _load_run_metadata_json(config.run_metadata_json)
         # Jedno źródło prawdy dla kontraktu JSON publikowanego do ROS2.
         self._topic_contract = Ros2TopicContract(schema=config.message_schema)
+        self._calibration_status = CalibrationStatus.build(
+            intrinsics_loaded=False,
+            pnp_object_points_raw=config.pnp_object_points,
+            pnp_image_points_raw=config.pnp_image_points,
+            pnp_solved=False,
+        )
         self.cap = cv2.VideoCapture(config.video_source)
 
         if not self.cap.isOpened():
@@ -263,6 +274,9 @@ class _Ros2TrackerRuntime:
             # Metadane są opcjonalne i pochodzą z wcześniej przygotowanego pliku `*.run.json`.
             "run_metadata": self._run_metadata or None,
         }
+        # Pole diagnostyczne dodajemy tylko dla schematu v2, by nie naruszyć starszych konsumentów v1.
+        if _is_calibration_diagnostics_schema(self._topic_contract.schema):
+            payload["diagnostics"] = {"calibration_status": self._calibration_status.to_dict()}
         self._validate_payload_contract(payload)
         return payload
 
@@ -280,6 +294,7 @@ class _Ros2TrackerRuntime:
     def _init_world_projection(self) -> None:
         """Ładuje kalibrację i przygotowuje estymację PnP do publikacji XYZ."""
         if not self.config.calib_file:
+            self.node.get_logger().info(self._calibration_status.to_log_message())
             return
         data = np.load(self.config.calib_file)
         if "camera_matrix" not in data or "dist_coeffs" not in data:
@@ -295,7 +310,16 @@ class _Ros2TrackerRuntime:
                 object_points_raw=self.config.pnp_object_points,
                 image_points_raw=self.config.pnp_image_points,
             )
-            self.node.get_logger().info("Włączono rekonstrukcję XYZ (PnP + przecięcie z płaszczyzną świata).")
+            if self._pnp_rvec is not None and self._pnp_tvec is not None:
+                self.node.get_logger().info("Włączono rekonstrukcję XYZ (PnP + przecięcie z płaszczyzną świata).")
+
+        self._calibration_status = CalibrationStatus.build(
+            intrinsics_loaded=True,
+            pnp_object_points_raw=self.config.pnp_object_points,
+            pnp_image_points_raw=self.config.pnp_image_points,
+            pnp_solved=self._pnp_rvec is not None and self._pnp_tvec is not None,
+        )
+        self.node.get_logger().info(self._calibration_status.to_log_message())
 
     def _compute_world_xyz(self, x_px: Optional[float], y_px: Optional[float]) -> tuple[Optional[float], Optional[float], Optional[float]]:
         """Wylicza współrzędne świata XYZ dla bieżącego punktu detekcji."""

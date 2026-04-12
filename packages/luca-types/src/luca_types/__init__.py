@@ -1,6 +1,7 @@
 """Wspólne kontrakty danych wykorzystywane między pakietami."""
 
 from .types import Detection, TrackPoint
+from .calibration_status import CalibrationStatus
 from .config_model import (
     DetectorConfig,
     EvalConfig,
@@ -17,6 +18,7 @@ from .config_model import (
 __all__ = [
     "Detection",
     "TrackPoint",
+    "CalibrationStatus",
     "InputConfig",
     "DetectorConfig",
     "TrackerConfig",
