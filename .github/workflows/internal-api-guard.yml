@@ -1,0 +1,27 @@
+name: Internal API Guard
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  block-internal-imports:
+    name: Block cross-package internal-only imports
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install checker dependencies
+        run: python -m pip install --upgrade pip tomli
+
+      - name: Validate architecture and Public API policy
+        run: python tools/check_architecture_policy.py

@@ -6,4 +6,5 @@ Entrypoint GUI dla usług aplikacyjnych LUCA.
 
 - `main`
 - `build_gui_parser`
-- `run_gui`, `GUIEnvironmentError`
+- `run_gui`
+- `GUIEnvironmentError`
