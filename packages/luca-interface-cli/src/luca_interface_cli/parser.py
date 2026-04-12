@@ -2,6 +2,14 @@ from __future__ import annotations
 
 import argparse
 
+from luca_input import (
+    add_shared_calibration_options,
+    add_shared_detection_options,
+    add_shared_postprocess_options,
+    add_shared_reporting_options,
+    add_shared_tracking_options,
+)
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Buduje parser dla interfejsu CLI opartego wyłącznie o usługi aplikacyjne."""
@@ -22,41 +30,14 @@ def build_parser() -> argparse.ArgumentParser:
     track_source = p_track.add_mutually_exclusive_group()
     track_source.add_argument("--video", help="Plik wejściowy wideo (np. MP4/MKV/AVI/MOV/WEBM)")
     track_source.add_argument("--camera", help="Kamera na żywo: indeks OpenCV (np. 0) albo ścieżka urządzenia")
-    p_track.add_argument("--calib_file", help="Plik kalibracji .npz")
-    p_track.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
-    p_track.add_argument("--threshold", type=int, default=200, help="Próg jasności")
-    p_track.add_argument("--threshold_mode", choices=["fixed", "otsu", "adaptive"], default="fixed")
-    p_track.add_argument("--adaptive_block_size", type=int, default=31)
-    p_track.add_argument("--adaptive_c", type=float, default=5.0)
-    p_track.add_argument("--use_clahe", action="store_true")
-    p_track.add_argument("--blur", type=int, default=11, help="Rozmiar filtra Gaussa")
-    p_track.add_argument("--min_area", type=float, default=10.0, help="Minimalne pole plamki")
-    p_track.add_argument("--max_area", type=float, default=0.0, help="Maksymalne pole plamki, 0 = brak")
-    p_track.add_argument("--erode_iter", type=int, default=2, help="Liczba iteracji erozji")
-    p_track.add_argument("--dilate_iter", type=int, default=4, help="Liczba iteracji dylatacji")
-    p_track.add_argument("--roi", help="Obszar ROI w formacie x,y,w,h")
     p_track.add_argument("--display", action="store_true", help="Podgląd śledzenia")
-    p_track.add_argument("--output_csv", default="tracking_results.csv", help="CSV głównej trajektorii")
-    p_track.add_argument("--trajectory_png", help="PNG z wykresem trajektorii")
-    p_track.add_argument("--report_csv", help="CSV z raportem jakości")
-    p_track.add_argument("--report_pdf", help="PDF z raportem jakości")
-    p_track.add_argument("--color_name", choices=["red", "green", "blue", "white", "yellow", "custom"], default="red")
-    p_track.add_argument("--hsv_lower", help="Dolna granica HSV np. 0,80,80")
-    p_track.add_argument("--hsv_upper", help="Górna granica HSV np. 10,255,255")
-    p_track.add_argument("--multi_track", action="store_true", help="Śledzenie wielu plamek jednocześnie")
-    p_track.add_argument("--max_spots", type=int, default=1, help="Maksymalna liczba plamek na klatkę")
-    p_track.add_argument("--max_distance", type=float, default=40.0)
-    p_track.add_argument("--max_missed", type=int, default=10)
-    p_track.add_argument("--selection_mode", choices=["largest", "stablest", "longest"], default="stablest")
-    p_track.add_argument("--all_tracks_csv", help="CSV ze wszystkimi trajektoriami")
-    p_track.add_argument("--annotated_video", help="Wyjściowy plik wideo z narysowanymi trajektoriami")
-    p_track.add_argument("--draw_all_tracks", action="store_true")
-    p_track.add_argument("--use_kalman", action="store_true")
-    p_track.add_argument("--kalman_process_noise", type=float, default=3e-2)
-    p_track.add_argument("--kalman_measurement_noise", type=float, default=5e-2)
-    p_track.add_argument("--pnp_object_points", help="Punkty 3D świata: X,Y,Z;X,Y,Z;...")
-    p_track.add_argument("--pnp_image_points", help="Punkty 2D obrazu: x,y;x,y;...")
-    p_track.add_argument("--pnp_world_plane_z", type=float, default=0.0)
+
+    # Wspólne opcje są centralizowane, aby `--help` miał identyczne nazwy i opisy między adapterami.
+    add_shared_detection_options(p_track)
+    add_shared_tracking_options(p_track)
+    add_shared_calibration_options(p_track)
+    add_shared_reporting_options(p_track)
+    add_shared_postprocess_options(p_track)
 
     p_compare = subparsers.add_parser("compare", help="Porównanie dwóch CSV")
     p_compare.add_argument("--reference", required=True, help="Referencyjny CSV")
@@ -65,33 +46,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_compare.add_argument("--report_pdf", help="Opcjonalny raport PDF")
 
     p_ros2 = subparsers.add_parser("ros2", help="ROS2 node: śledzenie z kamery fizycznej i publikacja danych")
-    p_ros2.add_argument("--video_device", default="/dev/video0")
-    p_ros2.add_argument("--camera_index", type=int)
-    p_ros2.add_argument("--node_name", default="detector_node")
-    p_ros2.add_argument("--topic", default="/luca_tracker/tracking")
-    p_ros2.add_argument("--spot_id", type=int, default=0)
-    p_ros2.add_argument("--fps", type=float, default=30.0)
-    p_ros2.add_argument("--frame_width", type=int, default=0)
-    p_ros2.add_argument("--frame_height", type=int, default=0)
-    p_ros2.add_argument("--display", action="store_true")
-    p_ros2.add_argument("--track_mode", choices=["brightness", "color"], default="brightness")
-    p_ros2.add_argument("--threshold", type=int, default=200)
-    p_ros2.add_argument("--threshold_mode", choices=["fixed", "otsu", "adaptive"], default="fixed")
-    p_ros2.add_argument("--adaptive_block_size", type=int, default=31)
-    p_ros2.add_argument("--adaptive_c", type=float, default=5.0)
-    p_ros2.add_argument("--use_clahe", action="store_true")
-    p_ros2.add_argument("--blur", type=int, default=11)
-    p_ros2.add_argument("--min_area", type=float, default=10.0)
-    p_ros2.add_argument("--max_area", type=float, default=0.0)
-    p_ros2.add_argument("--erode_iter", type=int, default=2)
-    p_ros2.add_argument("--dilate_iter", type=int, default=4)
-    p_ros2.add_argument("--max_spots", type=int, default=1)
-    p_ros2.add_argument("--roi", help="Obszar ROI w formacie x,y,w,h")
-    p_ros2.add_argument("--color_name", choices=["red", "green", "blue", "white", "yellow", "custom"], default="red")
-    p_ros2.add_argument("--hsv_lower")
-    p_ros2.add_argument("--hsv_upper")
-    p_ros2.add_argument("--calib_file", help="Plik kalibracji .npz z camera_matrix i dist_coeffs")
-    p_ros2.add_argument("--pnp_object_points", help="Punkty 3D świata: X,Y,Z;X,Y,Z;... (min. 4)")
-    p_ros2.add_argument("--pnp_image_points", help="Punkty 2D obrazu: x,y;x,y;... (min. 4)")
-    p_ros2.add_argument("--pnp_world_plane_z", type=float, default=0.0)
+    p_ros2.add_argument("--video_device", default="/dev/video0", help="Źródło kamery")
+    p_ros2.add_argument("--camera_index", type=int, help="Indeks kamery OpenCV")
+    p_ros2.add_argument("--node_name", default="detector_node", help="Nazwa ROS2 node")
+    p_ros2.add_argument("--topic", default="/luca_tracker/tracking", help="Topic ROS2 dla danych")
+    p_ros2.add_argument("--spot_id", type=int, default=0, help="ID detekcji głównej")
+    p_ros2.add_argument("--fps", type=float, default=30.0, help="Docelowa częstotliwość odczytu/publikacji")
+    p_ros2.add_argument("--frame_width", type=int, default=0, help="Szerokość klatki (0 = domyślna)")
+    p_ros2.add_argument("--frame_height", type=int, default=0, help="Wysokość klatki (0 = domyślna)")
+    p_ros2.add_argument("--display", action="store_true", help="Podgląd śledzenia")
+    add_shared_detection_options(p_ros2)
+    add_shared_calibration_options(p_ros2)
     return parser

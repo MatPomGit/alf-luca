@@ -13,6 +13,14 @@ from luca_input.io_paths import (
     with_default,
 )
 from luca_input.pipeline_config_mapping import pipeline_config_to_run_config, run_config_to_pipeline_config
+from luca_input.entrypoint_option_contract import (
+    PARAMETER_MATRIX,
+    add_shared_calibration_options,
+    add_shared_detection_options,
+    add_shared_postprocess_options,
+    add_shared_reporting_options,
+    add_shared_tracking_options,
+)
 
 __all__ = [
     "RuntimePathPolicy",
@@ -27,4 +35,10 @@ __all__ = [
     "with_default",
     "pipeline_config_to_run_config",
     "run_config_to_pipeline_config",
+    "PARAMETER_MATRIX",
+    "add_shared_calibration_options",
+    "add_shared_detection_options",
+    "add_shared_postprocess_options",
+    "add_shared_reporting_options",
+    "add_shared_tracking_options",
 ]

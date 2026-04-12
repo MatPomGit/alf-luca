@@ -307,6 +307,17 @@ Aktualna pozycja śledzonego obiektu jest dostępna w kilku miejscach – zależ
 
 > Uwaga: pola `x_world/y_world/z_world` są wyliczane, gdy podasz dane PnP (`--pnp_object_points`, `--pnp_image_points`) i poprawną geometrię płaszczyzny (`--pnp_world_plane_z`). Bez tego kolumny świata mogą być puste.
 
+## Matryca parametrów kontraktu konfiguracji
+
+Ujednoliconą matrycę opcji (`input`, `detection`, `tracking`, `calibration`,
+`reporting`, `publication`) utrzymujemy w pliku:
+
+- `packages/luca-input/src/luca_input/entrypoint_option_contract.py` (`PARAMETER_MATRIX`).
+
+Ta sama matryca jest pokryta testem kontraktowym
+`tests/test_configuration_contract.py`, który porównuje wynikowe `RunConfig`
+pomiędzy adapterami `track/gui/ros2` oraz sprawdza mapowanie do pipeline.
+
 ## Przykłady uruchamiania aplikacji w różnych trybach
 
 ### 1) Tryb CLI – plik wideo (jasność)

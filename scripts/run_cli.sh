@@ -12,6 +12,8 @@ CMD=(
   -m luca_tracker track
   --video video/sledzenie_plamki.mkv
   --track_mode brightness
+  --threshold_mode adaptive
+  --adaptive_block_size 31
   --output_csv "$OUTPUT_ROOT/tracking_results.csv"
   --trajectory_png "$OUTPUT_ROOT/trajectory.png"
   --report_csv "$OUTPUT_ROOT/report.csv"
