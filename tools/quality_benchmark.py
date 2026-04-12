@@ -44,10 +44,21 @@ def parse_args() -> argparse.Namespace:
         help="Opcjonalny CSV bazowy (np. run 'before') do raportu różnic 'przed/po'.",
     )
     parser.add_argument(
+        "--baseline-version",
+        default=None,
+        help="Wersja baseline z repo (np. v1). Używana, gdy nie podano --baseline-csv.",
+    )
+    parser.add_argument(
         "--limit-scenarios",
         type=int,
         default=None,
         help="Opcjonalny limit liczby scenariuszy (przydatne do szybkiego smoke testu).",
+    )
+    parser.add_argument(
+        "--scenario-tags",
+        nargs="*",
+        default=None,
+        help="Opcjonalny filtr scenariuszy po tagach (np. reflections flicker).",
     )
     parser.add_argument(
         "--thresholds-file",
@@ -98,6 +109,7 @@ def load_scenarios(manifest_path: Path, limit: Optional[int] = None) -> List[Dic
                 "video": video,
                 "tags": list(item.get("tags", [])),
                 "notes": str(item.get("notes", "")),
+                "ground_truth_csv": str(item.get("ground_truth_csv", "")).strip(),
             }
         )
 
@@ -105,10 +117,10 @@ def load_scenarios(manifest_path: Path, limit: Optional[int] = None) -> List[Dic
 
 
 def fixed_benchmark_configs() -> List[Tuple[str, Dict[str, Any]]]:
-    """Zwraca stałe konfiguracje benchmarkowe do porównania jakości pipeline'u."""
+    """Zwraca stałe konfiguracje benchmarkowe z podziałem na tryby brightest/color."""
     return [
         (
-            "baseline_fixed",
+            "brightest_fixed",
             {
                 "track_mode": "brightness",
                 "multi_track": True,
@@ -125,7 +137,7 @@ def fixed_benchmark_configs() -> List[Tuple[str, Dict[str, Any]]]:
             },
         ),
         (
-            "robust_temporal_kalman",
+            "brightest_adaptive",
             {
                 "track_mode": "brightness",
                 "multi_track": True,
@@ -138,6 +150,25 @@ def fixed_benchmark_configs() -> List[Tuple[str, Dict[str, Any]]]:
                 "max_area": 0.0,
                 "erode_iter": 1,
                 "dilate_iter": 3,
+                "temporal_stabilization": True,
+                "temporal_window": 3,
+                "temporal_mode": "majority",
+                "use_kalman": True,
+            },
+        ),
+        (
+            "color_otsu",
+            {
+                "track_mode": "color",
+                "color_name": "red",
+                "multi_track": True,
+                "selection_mode": "stablest",
+                "threshold_mode": "otsu",
+                "blur": 9,
+                "min_area": 8.0,
+                "max_area": 0.0,
+                "erode_iter": 1,
+                "dilate_iter": 2,
                 "temporal_stabilization": True,
                 "temporal_window": 3,
                 "temporal_mode": "majority",
@@ -194,8 +225,34 @@ def count_track_switches(track_histories: Dict[int, Dict[str, Any]]) -> int:
     return switches
 
 
-def compute_metrics(result: Dict[str, Any]) -> Dict[str, float]:
-    """Oblicza metryki benchmarkowe wymagane do porównań przed/po zmianach."""
+def load_ground_truth_points(ground_truth_csv: str) -> Dict[int, Tuple[float, float]]:
+    """Wczytuje referencyjne punkty 2D z CSV (frame_index,x,y)."""
+    if not ground_truth_csv:
+        return {}
+    gt_path = Path(ground_truth_csv)
+    if not gt_path.exists():
+        raise FileNotFoundError(f"Nie znaleziono ground truth CSV: {gt_path}")
+
+    gt_points: Dict[int, Tuple[float, float]] = {}
+    with gt_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            frame_index_raw = row.get("frame_index")
+            x_raw = row.get("x")
+            y_raw = row.get("y")
+            if frame_index_raw is None or x_raw is None or y_raw is None:
+                continue
+            gt_points[int(frame_index_raw)] = (float(x_raw), float(y_raw))
+    return gt_points
+
+
+def detection_mode_label(track_mode: str) -> str:
+    """Mapuje techniczny track_mode na etykietę raportową."""
+    return "brightest" if track_mode == "brightness" else "color"
+
+
+def compute_metrics(result: Dict[str, Any], gt_points: Dict[int, Tuple[float, float]]) -> Dict[str, float]:
+    """Oblicza metryki benchmarkowe (pozycja 2D, jitter, utraty klatek, false positives, FPS)."""
     frame_count = int(result["frame_count"])
     main_points = list(result["main_points"])
     finished_tracks = result.get("finished_tracks", {}) or {}
@@ -208,15 +265,11 @@ def compute_metrics(result: Dict[str, Any]) -> Dict[str, float]:
         if bool(point.detected)
     )
     false_detections_total = max(0, all_detected_count - len(main_detected))
-
-    kalman_predicted_frames = sum(int(getattr(point, "kalman_predicted", 0) == 1) for point in main_points)
-    # Wyliczamy prosty proxy precision: główne detekcje względem wszystkich detekcji we wszystkich torach.
-    precision_proxy = safe_ratio(len(main_detected), len(main_detected) + false_detections_total)
-    # Recall proxy: ile klatek miało detekcję głównego celu.
-    recall_proxy = safe_ratio(len(main_detected), frame_count)
+    lost_frames = max(0, frame_count - len(main_detected))
 
     step_distances: List[float] = []
     previous_xy: Optional[Tuple[float, float]] = None
+    position_errors: List[float] = []
     for point in main_points:
         if not bool(getattr(point, "detected", False)):
             continue
@@ -225,22 +278,24 @@ def compute_metrics(result: Dict[str, Any]) -> Dict[str, float]:
         if x is None or y is None:
             continue
         current_xy = (float(x), float(y))
+        gt_xy = gt_points.get(int(getattr(point, "frame_index", -1)))
+        if gt_xy is not None:
+            position_errors.append(math.dist(current_xy, gt_xy))
         if previous_xy is not None:
             step_distances.append(math.dist(previous_xy, current_xy))
         previous_xy = current_xy
 
-    drift_p95_px = percentile(step_distances, 95.0)
-
     return {
         "frames_total": float(frame_count),
         "main_detections": float(len(main_detected)),
-        "precision_proxy": precision_proxy,
-        "recall_proxy": recall_proxy,
+        "lost_frames": float(lost_frames),
+        "position_error_2d_mean_px": safe_ratio(sum(position_errors), len(position_errors)),
+        "position_error_2d_p95_px": percentile(position_errors, 95.0),
+        "trajectory_jitter_p95_px": percentile(step_distances, 95.0),
+        "false_positives_total": float(false_detections_total),
         "false_detections_per_frame": safe_ratio(false_detections_total, frame_count),
-        "trajectory_drift_p95_px": drift_p95_px,
         "stable_track_len_frames": float(longest_detected_run(main_points)),
         "track_id_switches": float(count_track_switches(finished_tracks)),
-        "kalman_predicted_share": safe_ratio(kalman_predicted_frames, frame_count),
     }
 
 
@@ -287,6 +342,7 @@ def run_single_case(
 
     output_csv = case_dir / "main_track.csv"
     all_tracks_csv = case_dir / "all_tracks.csv"
+    gt_points = load_ground_truth_points(scenario.get("ground_truth_csv", ""))
 
     pipeline_config = PipelineConfig(
         video=str(video_path),
@@ -310,18 +366,21 @@ def run_single_case(
     if pipeline_config.multi_track:
         save_all_tracks_csv(result["finished_tracks"], str(all_tracks_csv))
 
-    metrics = compute_metrics(result)
+    metrics = compute_metrics(result, gt_points=gt_points)
     frames_total = max(0.0, float(result.get("frame_count", 0)))
     source_fps = max(1e-9, float(result.get("fps", 0.0) or 0.0))
     processing_fps = safe_ratio(frames_total, elapsed_sec)
-    metrics["processing_fps"] = processing_fps
+    metrics["fps"] = processing_fps
     metrics["fps_stability_ratio"] = safe_ratio(processing_fps, source_fps)
+    mode_label = detection_mode_label(str(config_values.get("track_mode", "brightness")))
     return {
         "scenario_name": scenario_name,
         "video": str(video_path),
         "tags": ",".join(scenario.get("tags", [])),
         "notes": scenario.get("notes", ""),
         "config_name": config_name,
+        "mode": mode_label,
+        "threshold_profile": str(config_values.get("threshold_mode", "fixed")),
         "config_json": json.dumps(config_values, ensure_ascii=False, sort_keys=True),
         **metrics,
     }
@@ -342,16 +401,19 @@ def write_csv(rows: Iterable[Dict[str, Any]], csv_path: Path) -> None:
         "tags",
         "notes",
         "config_name",
+        "mode",
+        "threshold_profile",
         "frames_total",
         "main_detections",
-        "precision_proxy",
-        "recall_proxy",
+        "lost_frames",
+        "position_error_2d_mean_px",
+        "position_error_2d_p95_px",
+        "trajectory_jitter_p95_px",
+        "false_positives_total",
         "false_detections_per_frame",
-        "trajectory_drift_p95_px",
         "stable_track_len_frames",
         "track_id_switches",
-        "kalman_predicted_share",
-        "processing_fps",
+        "fps",
         "fps_stability_ratio",
         "config_json",
     ]
@@ -380,14 +442,15 @@ def load_baseline_rows(baseline_csv: Optional[str]) -> Dict[Tuple[str, str], Dic
             if not all(key):
                 continue
             indexed[key] = {
-                "precision_proxy": float(row.get("precision_proxy", 0.0) or 0.0),
-                "recall_proxy": float(row.get("recall_proxy", 0.0) or 0.0),
+                "lost_frames": float(row.get("lost_frames", 0.0) or 0.0),
+                "position_error_2d_mean_px": float(row.get("position_error_2d_mean_px", 0.0) or 0.0),
+                "position_error_2d_p95_px": float(row.get("position_error_2d_p95_px", 0.0) or 0.0),
+                "trajectory_jitter_p95_px": float(row.get("trajectory_jitter_p95_px", 0.0) or 0.0),
+                "false_positives_total": float(row.get("false_positives_total", 0.0) or 0.0),
                 "false_detections_per_frame": float(row.get("false_detections_per_frame", 0.0) or 0.0),
-                "trajectory_drift_p95_px": float(row.get("trajectory_drift_p95_px", 0.0) or 0.0),
                 "stable_track_len_frames": float(row.get("stable_track_len_frames", 0.0) or 0.0),
                 "track_id_switches": float(row.get("track_id_switches", 0.0) or 0.0),
-                "kalman_predicted_share": float(row.get("kalman_predicted_share", 0.0) or 0.0),
-                "processing_fps": float(row.get("processing_fps", 0.0) or 0.0),
+                "fps": float(row.get("fps", 0.0) or 0.0),
                 "fps_stability_ratio": float(row.get("fps_stability_ratio", 0.0) or 0.0),
             }
     return indexed
@@ -403,14 +466,13 @@ def write_markdown_report(
     lines.append("")
     lines.append("## Metryki")
     lines.append("")
-    lines.append("- `precision_proxy`: proxy precision = main_detections / all_detections (wyżej = lepiej).")
-    lines.append("- `recall_proxy`: proxy recall = main_detections / frames_total (wyżej = lepiej).")
-    lines.append("- `false_detections_per_frame`: proxy liczby fałszywych detekcji na klatkę (niżej = lepiej).")
-    lines.append("- `trajectory_drift_p95_px`: 95 percentyl skoków pozycji między klatkami (niżej = lepiej).")
+    lines.append("- `position_error_2d_mean_px` / `position_error_2d_p95_px`: błąd pozycji 2D względem ground truth (niżej = lepiej).")
+    lines.append("- `trajectory_jitter_p95_px`: jitter toru, liczony jako P95 skoku między kolejnymi detekcjami (niżej = lepiej).")
+    lines.append("- `lost_frames`: liczba klatek bez detekcji celu głównego (niżej = lepiej).")
+    lines.append("- `false_positives_total` oraz `false_detections_per_frame`: fałszywe detekcje (niżej = lepiej).")
     lines.append("- `stable_track_len_frames`: najdłuższa seria kolejnych detekcji głównego toru (wyżej = lepiej).")
     lines.append("- `track_id_switches`: liczba przełączeń dominującego `track_id` między klatkami (niżej = lepiej).")
-    lines.append("- `kalman_predicted_share`: udział klatek z `kalman_predicted=1` w torze głównym (kontekstowo).")
-    lines.append("- `processing_fps`: średnia wydajność przetwarzania benchmarku (wyżej = lepiej).")
+    lines.append("- `fps`: średnia wydajność przetwarzania benchmarku (wyżej = lepiej).")
     lines.append("- `fps_stability_ratio`: processing_fps/source_fps (>=1 zwykle oznacza brak długu FPS).")
     lines.append("")
     lines.append("## Wyniki")
@@ -421,45 +483,53 @@ def write_markdown_report(
         lines.append("Porównanie z baseline: Δ = aktualny - bazowy (dla `false/frame` i `switches` wartości ujemne są korzystne).")
         lines.append("")
         lines.append(
-            "| scenario | config | false/frame | Δfalse | stable_len | Δstable | switches | Δswitches | kalman_share | Δkalman |"
+            "| scenario | mode | threshold | config | pos_err_p95 | Δpos | jitter_p95 | Δjitter | lost | Δlost | false/frame | Δfalse | fps | Δfps |"
         )
-        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+        lines.append("|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     else:
-        lines.append("| scenario | config | false/frame | stable_len | switches | kalman_share |")
-        lines.append("|---|---:|---:|---:|---:|---:|")
+        lines.append("| scenario | mode | threshold | config | pos_err_p95 | jitter_p95 | lost | false/frame | fps |")
+        lines.append("|---|---|---|---|---:|---:|---:|---:|---:|")
 
     for row in rows:
         key = (str(row["scenario_name"]), str(row["config_name"]))
         if has_baseline and key in baseline_rows:
             baseline = baseline_rows[key]
             delta_false = float(row["false_detections_per_frame"]) - baseline["false_detections_per_frame"]
-            delta_stable = float(row["stable_track_len_frames"]) - baseline["stable_track_len_frames"]
-            delta_switches = float(row["track_id_switches"]) - baseline["track_id_switches"]
-            delta_kalman = float(row["kalman_predicted_share"]) - baseline["kalman_predicted_share"]
+            delta_pos = float(row["position_error_2d_p95_px"]) - baseline["position_error_2d_p95_px"]
+            delta_jitter = float(row["trajectory_jitter_p95_px"]) - baseline["trajectory_jitter_p95_px"]
+            delta_lost = float(row["lost_frames"]) - baseline["lost_frames"]
+            delta_fps = float(row["fps"]) - baseline["fps"]
             lines.append(
-                "| {scenario} | {config} | {false_rate:.4f} | {delta_false:+.4f} | {stable_len:.0f} | {delta_stable:+.0f} | "
-                "{switches:.0f} | {delta_switches:+.0f} | {kalman_share:.4f} | {delta_kalman:+.4f} |".format(
+                "| {scenario} | {mode} | {threshold_profile} | {config} | {pos_p95:.4f} | {delta_pos:+.4f} | {jitter_p95:.4f} | "
+                "{delta_jitter:+.4f} | {lost:.0f} | {delta_lost:+.0f} | {false_rate:.4f} | {delta_false:+.4f} | {fps:.2f} | {delta_fps:+.2f} |".format(
                     scenario=row["scenario_name"],
+                    mode=row["mode"],
+                    threshold_profile=row["threshold_profile"],
                     config=row["config_name"],
+                    pos_p95=float(row["position_error_2d_p95_px"]),
+                    delta_pos=delta_pos,
+                    jitter_p95=float(row["trajectory_jitter_p95_px"]),
+                    delta_jitter=delta_jitter,
+                    lost=float(row["lost_frames"]),
+                    delta_lost=delta_lost,
                     false_rate=float(row["false_detections_per_frame"]),
                     delta_false=delta_false,
-                    stable_len=float(row["stable_track_len_frames"]),
-                    delta_stable=delta_stable,
-                    switches=float(row["track_id_switches"]),
-                    delta_switches=delta_switches,
-                    kalman_share=float(row["kalman_predicted_share"]),
-                    delta_kalman=delta_kalman,
+                    fps=float(row["fps"]),
+                    delta_fps=delta_fps,
                 )
             )
         else:
             lines.append(
-                "| {scenario} | {config} | {false_rate:.4f} | {stable_len:.0f} | {switches:.0f} | {kalman_share:.4f} |".format(
+                "| {scenario} | {mode} | {threshold_profile} | {config} | {pos_p95:.4f} | {jitter_p95:.4f} | {lost:.0f} | {false_rate:.4f} | {fps:.2f} |".format(
                     scenario=row["scenario_name"],
+                    mode=row["mode"],
+                    threshold_profile=row["threshold_profile"],
                     config=row["config_name"],
+                    pos_p95=float(row["position_error_2d_p95_px"]),
+                    jitter_p95=float(row["trajectory_jitter_p95_px"]),
+                    lost=float(row["lost_frames"]),
                     false_rate=float(row["false_detections_per_frame"]),
-                    stable_len=float(row["stable_track_len_frames"]),
-                    switches=float(row["track_id_switches"]),
-                    kalman_share=float(row["kalman_predicted_share"]),
+                    fps=float(row["fps"]),
                 )
             )
 
@@ -475,6 +545,16 @@ def load_threshold_profiles(thresholds_file: Path) -> Dict[str, Any]:
     if not isinstance(profiles, dict) or not profiles:
         raise ValueError("Plik progów musi zawierać słownik `profiles`.")
     return profiles
+
+
+def resolve_baseline_csv(baseline_csv: Optional[str], baseline_version: Optional[str]) -> Optional[str]:
+    """Rozwiązuje ścieżkę baseline: jawny CSV ma priorytet, potem wersja z repo."""
+    if baseline_csv:
+        return baseline_csv
+    if not baseline_version:
+        return None
+    candidate = REPO_ROOT / "video" / "scenarios" / "baselines" / baseline_version / "benchmark_summary.csv"
+    return str(candidate)
 
 
 def evaluate_thresholds(
@@ -550,22 +630,24 @@ def write_comparison_report(
     lines.append(f"- profil progów: `{threshold_eval['profile_name']}`")
     lines.append(f"- sprawdzenia must-pass: {threshold_eval['checks_passed']}/{threshold_eval['checks_total']}")
     lines.append("")
-    lines.append("| scenario | config | Δprecision | Δrecall | Δdrift_p95_px | Δfalse/frame | Δfps_ratio |")
-    lines.append("|---|---|---:|---:|---:|---:|---:|")
+    lines.append("| scenario | mode | threshold | config | Δpos_err_p95 | Δjitter_p95 | Δlost_frames | Δfalse/frame | Δfps |")
+    lines.append("|---|---|---|---|---:|---:|---:|---:|---:|")
     for row in rows:
         key = (str(row["scenario_name"]), str(row["config_name"]))
         baseline = baseline_rows.get(key)
         if baseline is None:
             continue
         lines.append(
-            "| {scenario} | {config} | {d_prec:+.4f} | {d_rec:+.4f} | {d_drift:+.4f} | {d_false:+.4f} | {d_fps:+.4f} |".format(
+            "| {scenario} | {mode} | {threshold_profile} | {config} | {d_pos:+.4f} | {d_jitter:+.4f} | {d_lost:+.0f} | {d_false:+.4f} | {d_fps:+.2f} |".format(
                 scenario=row["scenario_name"],
+                mode=row["mode"],
+                threshold_profile=row["threshold_profile"],
                 config=row["config_name"],
-                d_prec=float(row["precision_proxy"]) - baseline["precision_proxy"],
-                d_rec=float(row["recall_proxy"]) - baseline["recall_proxy"],
-                d_drift=float(row["trajectory_drift_p95_px"]) - baseline["trajectory_drift_p95_px"],
+                d_pos=float(row["position_error_2d_p95_px"]) - baseline["position_error_2d_p95_px"],
+                d_jitter=float(row["trajectory_jitter_p95_px"]) - baseline["trajectory_jitter_p95_px"],
+                d_lost=float(row["lost_frames"]) - baseline["lost_frames"],
                 d_false=float(row["false_detections_per_frame"]) - baseline["false_detections_per_frame"],
-                d_fps=float(row["fps_stability_ratio"]) - baseline["fps_stability_ratio"],
+                d_fps=float(row["fps"]) - baseline["fps"],
             )
         )
 
@@ -590,6 +672,11 @@ def main() -> int:
     label = args.label or f"run_{timestamp}"
 
     scenarios = load_scenarios(Path(args.scenarios), limit=args.limit_scenarios)
+    if args.scenario_tags:
+        selected_tags = {tag.strip() for tag in args.scenario_tags if tag.strip()}
+        scenarios = [item for item in scenarios if selected_tags.intersection(set(item.get("tags", [])))]
+        if not scenarios:
+            raise ValueError("Filtr --scenario-tags odfiltrował wszystkie scenariusze.")
     output_dir = Path(args.output_dir)
     run_dir = output_dir / f"{timestamp}_{label}"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -618,7 +705,7 @@ def main() -> int:
     compare_md_path = run_dir / "baseline_vs_candidate.md"
     write_csv(rows, csv_path)
 
-    baseline_rows = load_baseline_rows(args.baseline_csv)
+    baseline_rows = load_baseline_rows(resolve_baseline_csv(args.baseline_csv, args.baseline_version))
     write_markdown_report(rows, md_path, baseline_rows=baseline_rows)
     threshold_profiles = load_threshold_profiles(Path(args.thresholds_file))
     threshold_eval = evaluate_thresholds(rows, baseline_rows, args.threshold_profile, threshold_profiles)
