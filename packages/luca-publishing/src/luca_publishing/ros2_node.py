@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +11,7 @@ import numpy as np
 
 from luca_processing import DetectorConfig
 from luca_processing import detect_spots_with_config
+from luca_processing import estimate_pnp_pose, pixel_to_world_on_plane
 
 ROS2_MESSAGE_SCHEMA_DEFAULT = "luca_tracker.ros2.tracking.v1"
 ROS2_BASE_PAYLOAD_KEYS: tuple[str, ...] = (
@@ -146,27 +146,6 @@ def _resolve_ros2_config(args_or_config: Any) -> Ros2TrackerConfig:
     )
 
 
-def _parse_point_series(raw: Optional[str], expected_dims: int, label: str) -> Optional[np.ndarray]:
-    """Parsuje listę punktów zapisaną jako `a,b; c,d; ...` do tablicy NumPy."""
-    if raw is None:
-        return None
-    text = str(raw).strip()
-    if not text:
-        return None
-    points = []
-    for chunk in text.split(";"):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        values = [float(v.strip()) for v in chunk.split(",")]
-        if len(values) != expected_dims:
-            raise ValueError(f"Nieprawidłowy format {label}. Oczekiwano {expected_dims} liczb na punkt.")
-        points.append(values)
-    if len(points) < 4:
-        raise ValueError(f"Do estymacji PnP potrzeba co najmniej 4 punktów referencyjnych: {label}.")
-    return np.asarray(points, dtype=np.float64)
-
-
 def _load_run_metadata_json(path: Optional[str]) -> dict[str, str]:
     """Wczytuje metadane runu z pliku JSON i normalizuje je do słownika string->string."""
     if path is None:
@@ -179,79 +158,6 @@ def _load_run_metadata_json(path: Optional[str]) -> dict[str, str]:
         raise ValueError("Plik metadanych runu musi zawierać obiekt JSON.")
     # Ujednolicamy typy do stringów, aby publikowany JSON miał stabilny kontrakt.
     return {str(key): str(value) for key, value in payload.items() if value is not None}
-
-
-def _estimate_pnp_pose(
-    camera_matrix: np.ndarray,
-    dist_coeffs: np.ndarray,
-    object_points_raw: Optional[str],
-    image_points_raw: Optional[str],
-) -> Optional[tuple[np.ndarray, np.ndarray]]:
-    """Wyznacza pozycję kamery (rvec/tvec) dla mapowania punktów 2D -> 3D."""
-    object_points = _parse_point_series(object_points_raw, expected_dims=3, label="pnp_object_points")
-    image_points = _parse_point_series(image_points_raw, expected_dims=2, label="pnp_image_points")
-    if object_points is None or image_points is None:
-        return None
-    if len(object_points) != len(image_points):
-        raise ValueError("Liczba punktów `pnp_object_points` i `pnp_image_points` musi być identyczna.")
-
-    ok, rvec, tvec, _ = cv2.solvePnPRansac(
-        objectPoints=object_points,
-        imagePoints=image_points,
-        cameraMatrix=camera_matrix,
-        distCoeffs=dist_coeffs,
-        reprojectionError=3.0,
-        confidence=0.995,
-        flags=cv2.SOLVEPNP_ITERATIVE,
-    )
-    if not ok:
-        ok, rvec, tvec = cv2.solvePnP(
-            objectPoints=object_points,
-            imagePoints=image_points,
-            cameraMatrix=camera_matrix,
-            distCoeffs=dist_coeffs,
-            flags=cv2.SOLVEPNP_ITERATIVE,
-        )
-    if not ok:
-        raise RuntimeError("Nie udało się wyznaczyć pozycji kamery metodą solvePnP/solvePnPRansac.")
-    rvec, tvec = cv2.solvePnPRefineLM(
-        objectPoints=object_points,
-        imagePoints=image_points,
-        cameraMatrix=camera_matrix,
-        distCoeffs=dist_coeffs,
-        rvec=rvec,
-        tvec=tvec,
-    )
-    return rvec, tvec
-
-
-def _pixel_to_world_on_plane(
-    x_px: float,
-    y_px: float,
-    camera_matrix: np.ndarray,
-    dist_coeffs: np.ndarray,
-    rvec: np.ndarray,
-    tvec: np.ndarray,
-    plane_z: float,
-) -> Optional[tuple[float, float, float]]:
-    """Przelicza punkt obrazu (piksel) na współrzędne 3D przez przecięcie z płaszczyzną Z."""
-    rotation_matrix, _ = cv2.Rodrigues(rvec)
-    rotation_t = rotation_matrix.T
-    undistorted = cv2.undistortPoints(
-        src=np.array([[[x_px, y_px]]], dtype=np.float64),
-        cameraMatrix=camera_matrix,
-        distCoeffs=dist_coeffs,
-    )
-    x_norm, y_norm = undistorted[0, 0]
-    direction_camera = np.array([[x_norm], [y_norm], [1.0]], dtype=np.float64)
-    direction_world = rotation_t @ direction_camera
-    camera_center_world = -rotation_t @ tvec
-    denom = float(direction_world[2, 0])
-    if math.isclose(denom, 0.0, abs_tol=1e-12):
-        return None
-    scale = (plane_z - float(camera_center_world[2, 0])) / denom
-    point_world = camera_center_world + direction_world * scale
-    return float(point_world[0, 0]), float(point_world[1, 0]), float(point_world[2, 0])
 
 
 class _Ros2TrackerRuntime:
@@ -364,7 +270,7 @@ class _Ros2TrackerRuntime:
         self.node.get_logger().info(f"Wczytano kalibrację: {self.config.calib_file}")
 
         if self.config.pnp_object_points and self.config.pnp_image_points:
-            self._pnp_rvec, self._pnp_tvec = _estimate_pnp_pose(
+            self._pnp_rvec, self._pnp_tvec = estimate_pnp_pose(
                 camera_matrix=self._camera_matrix,
                 dist_coeffs=self._dist_coeffs,
                 object_points_raw=self.config.pnp_object_points,
@@ -383,7 +289,7 @@ class _Ros2TrackerRuntime:
             or self._pnp_tvec is None
         ):
             return None, None, None
-        world = _pixel_to_world_on_plane(
+        world = pixel_to_world_on_plane(
             x_px=x_px,
             y_px=y_px,
             camera_matrix=self._camera_matrix,

@@ -18,6 +18,7 @@ from luca_processing.detectors import (
     parse_roi,
 )
 from luca_processing.postprocess import KalmanConfig, apply_kalman_to_points, smooth_xy_with_config
+from luca_processing.world_projection import estimate_pnp_pose, parse_point_series, pixel_to_world_on_plane
 
 # Lista symboli wspieranych jako stabilny kontrakt dla pozostałych pakietów.
 __all__ = [
@@ -42,4 +43,7 @@ __all__ = [
     "KalmanConfig",
     "apply_kalman_to_points",
     "smooth_xy_with_config",
+    "parse_point_series",
+    "estimate_pnp_pose",
+    "pixel_to_world_on_plane",
 ]
