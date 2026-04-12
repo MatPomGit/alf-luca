@@ -182,6 +182,17 @@ Jeśli w CSV/GUI/ROS2 widzisz puste `x_world/y_world/z_world`, przejdź checklis
    - ustaw `--message_schema luca_tracker.ros2.tracking.v2`,
    - runtime doda pole `diagnostics.calibration_status` bez łamania kontraktu v1.
 
+### Tabela diagnostyczna: objaw -> prawdopodobna przyczyna -> krok naprawczy
+
+| Objaw | Prawdopodobna przyczyna | Krok naprawczy |
+|---|---|---|
+| `x_world/y_world/z_world` są puste, a `intrinsics_status_code=INTRINSICS_MISSING` | Nie podano `--calib_file` albo plik nie ma `camera_matrix`/`dist_coeffs`. | Podaj poprawny plik kalibracji i zweryfikuj jego zawartość (`camera_matrix`, `dist_coeffs`). |
+| `x_world/y_world/z_world` są puste, a `pnp_points_status_code=PNP_POINTS_INCOMPLETE` lub `PNP_POINTS_MISSING` | Brakuje jednej listy punktów PnP (3D albo 2D). | Podaj oba pola: `pnp_object_points` i `pnp_image_points` w tej samej kolejności punktów. |
+| `x_world/y_world/z_world` są puste, a `pnp_points_status_code=PNP_POINTS_PARSE_ERROR` | Niepoprawny format tekstu punktów (separator, liczba współrzędnych, puste wpisy). | Użyj formatu `X,Y,Z;...` dla 3D i `x,y;...` dla 2D, bez dodatkowych znaków. |
+| `x_world/y_world/z_world` są puste, a `pnp_points_status_code=PNP_POINTS_COUNT_MISMATCH` | Inna liczba punktów 3D i 2D. | Wyrównaj listy tak, aby każdemu punktowi 3D odpowiadał dokładnie jeden punkt 2D. |
+| `x_world/y_world/z_world` są puste, a `solvepnp_status_code=SOLVEPNP_FAILED` | Geometria referencji jest niestabilna (duplikaty, degeneracja, zła kolejność punktów). | Zmień punkty referencyjne: min. 4 unikalne pary, dobre pokrycie planszy, spójna kolejność. |
+| `x_world/y_world/z_world` są puste tylko dla części klatek, `ray_plane_status_code=RAY_PLANE_PARALLEL` | Dla tej klatki promień kamery jest równoległy do płaszczyzny świata. | Skoryguj `pnp_world_plane_z`, pozycję kamery lub punkt detekcji; sprawdź stabilność PnP na materiale wejściowym. |
+
 ## Jak czytać XYZ i co można z tym zrobić dalej
 
 Najprostsze miejsca odczytu to:

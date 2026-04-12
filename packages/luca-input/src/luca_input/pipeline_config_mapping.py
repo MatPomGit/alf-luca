@@ -3,8 +3,85 @@ from __future__ import annotations
 from argparse import Namespace
 from dataclasses import asdict
 
+import numpy as np
+
 from luca_types import DetectorConfig, EvalConfig, InputConfig, PoseConfig, PostprocessConfig, RunConfig, TrackerConfig
 
+
+
+
+def _parse_pnp_series(raw_points: str, expected_dims: int, field_name: str) -> np.ndarray:
+    """Parsuje tekst punktów PnP do tablicy NumPy i pilnuje stałego wymiaru wpisów."""
+    parsed_points: list[list[float]] = []
+    for chunk in raw_points.split(";"):
+        token = chunk.strip()
+        if not token:
+            continue
+        values = [float(value.strip()) for value in token.split(",") if value.strip()]
+        if len(values) != expected_dims:
+            raise ValueError(
+                f"Błąd mapowania konfiguracji: `{field_name}` wymaga punktów o wymiarze {expected_dims}."
+            )
+        parsed_points.append(values)
+    return np.asarray(parsed_points, dtype=np.float64)
+
+
+def _contains_duplicate_points(points: np.ndarray, decimals: int = 9) -> bool:
+    """Sprawdza, czy lista punktów zawiera duplikaty (po stabilnym zaokrągleniu)."""
+    if len(points) == 0:
+        return False
+    # Delikatne zaokrąglenie ogranicza fałszywe alarmy od szumu numerycznego (banan-case float).
+    rounded = np.round(points, decimals=decimals)
+    unique = np.unique(rounded, axis=0)
+    return len(unique) != len(points)
+
+
+def _is_geometrically_degenerate(points: np.ndarray) -> bool:
+    """Ocena degeneracji geometrii punktów na podstawie rangi macierzy po centrowaniu."""
+    if len(points) < 3:
+        return True
+    centered = points - np.mean(points, axis=0, keepdims=True)
+    # Dla stabilnego solvePnP wymagamy co najmniej 2 niezależnych kierunków w danych.
+    return int(np.linalg.matrix_rank(centered)) < 2
+
+
+def _validate_pnp_points_quality(config: RunConfig) -> None:
+    """Waliduje jakość wejściowych punktów PnP: liczność, duplikaty i degenerację geometrii."""
+    if not config.pose.pnp_object_points and not config.pose.pnp_image_points:
+        return
+
+    if not config.pose.pnp_object_points or not config.pose.pnp_image_points:
+        raise ValueError(
+            "Błąd mapowania konfiguracji: pola `pose.pnp_object_points` i `pose.pnp_image_points` muszą być podane razem."
+        )
+
+    object_points = _parse_pnp_series(config.pose.pnp_object_points, expected_dims=3, field_name="pose.pnp_object_points")
+    image_points = _parse_pnp_series(config.pose.pnp_image_points, expected_dims=2, field_name="pose.pnp_image_points")
+
+    if len(object_points) < 4 or len(image_points) < 4:
+        raise ValueError(
+            "Błąd mapowania konfiguracji: do PnP wymagane są co najmniej 4 pary punktów 3D/2D."
+        )
+    if len(object_points) != len(image_points):
+        raise ValueError(
+            "Błąd mapowania konfiguracji: liczba punktów `pose.pnp_object_points` i `pose.pnp_image_points` musi być identyczna."
+        )
+    if _contains_duplicate_points(object_points):
+        raise ValueError(
+            "Błąd mapowania konfiguracji: `pose.pnp_object_points` zawiera duplikaty, które destabilizują solvePnP."
+        )
+    if _contains_duplicate_points(image_points):
+        raise ValueError(
+            "Błąd mapowania konfiguracji: `pose.pnp_image_points` zawiera duplikaty, które destabilizują solvePnP."
+        )
+    if _is_geometrically_degenerate(object_points):
+        raise ValueError(
+            "Błąd mapowania konfiguracji: geometria `pose.pnp_object_points` jest zdegenerowana (punkty współliniowe lub tożsame)."
+        )
+    if _is_geometrically_degenerate(image_points):
+        raise ValueError(
+            "Błąd mapowania konfiguracji: geometria `pose.pnp_image_points` jest zdegenerowana (punkty współliniowe lub tożsame)."
+        )
 
 def _validate_run_config_contract(config: RunConfig) -> None:
     """Waliduje kontrakt międzywarstwowy config -> pipeline i zwraca czytelne błędy."""
@@ -22,6 +99,7 @@ def _validate_run_config_contract(config: RunConfig) -> None:
         )
     if not config.eval.output_csv or not str(config.eval.output_csv).strip():
         raise ValueError("Błąd mapowania konfiguracji: `eval.output_csv` nie może być puste.")
+    _validate_pnp_points_quality(config)
     if config.tracker.multi_track and config.detector.max_spots < 2:
         raise ValueError(
             "Błąd mapowania konfiguracji: dla `tracker.multi_track=true` ustaw `detector.max_spots >= 2`."

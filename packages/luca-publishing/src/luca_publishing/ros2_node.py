@@ -11,7 +11,11 @@ import numpy as np
 
 from luca_processing import DetectorConfig
 from luca_processing import detect_spots_with_config
-from luca_processing import estimate_pnp_pose, pixel_to_world_on_plane
+from luca_processing import (
+    estimate_pnp_pose_with_status,
+    pixel_to_world_on_plane_with_status,
+    world_projection_reason_from_codes,
+)
 from luca_types import CalibrationStatus, RunConfig
 
 ROS2_MESSAGE_SCHEMA_DEFAULT = "luca_tracker.ros2.tracking.v1"
@@ -32,6 +36,8 @@ ROS2_BASE_PAYLOAD_KEYS: tuple[str, ...] = (
     "x_world",
     "y_world",
     "z_world",
+    "world_projection_reason",
+    "world_projection_status_codes",
     "area",
     "radius",
     "rank",
@@ -57,6 +63,8 @@ ROS2_PAYLOAD_FIELD_DESCRIPTIONS: dict[str, str] = {
     "x_world": "Pozycja X w układzie świata (jeśli dostępna kalibracja/PnP).",
     "y_world": "Pozycja Y w układzie świata (jeśli dostępna kalibracja/PnP).",
     "z_world": "Pozycja Z w układzie świata (jeśli dostępna kalibracja/PnP).",
+    "world_projection_reason": "Czytelne wyjaśnienie przyczyny braku XYZ albo status powodzenia rekonstrukcji.",
+    "world_projection_status_codes": "Kody etapów diagnostycznych: intrinsics, pnp_points, solvepnp, ray_plane.",
     "area": "Pole konturu detekcji głównej [px²].",
     "radius": "Promień detekcji głównej [px].",
     "rank": "Ranking detekcji po sortowaniu detektora.",
@@ -207,6 +215,11 @@ class _Ros2TrackerRuntime:
             pnp_object_points_raw=config.pnp_object_points,
             pnp_image_points_raw=config.pnp_image_points,
             pnp_solved=False,
+            intrinsics_status_code="INTRINSICS_MISSING",
+            pnp_points_status_code="PNP_POINTS_UNKNOWN",
+            solvepnp_status_code="SOLVEPNP_SKIPPED",
+            ray_plane_status_code="RAY_PLANE_PREREQUISITES_MISSING",
+            world_projection_reason="Brak intrinsics kamery (`camera_matrix`/`dist_coeffs`).",
         )
         self.cap = cv2.VideoCapture(config.video_source)
 
@@ -268,6 +281,13 @@ class _Ros2TrackerRuntime:
             "x_world": x_world,
             "y_world": y_world,
             "z_world": z_world,
+            "world_projection_reason": self._calibration_status.world_projection_reason,
+            "world_projection_status_codes": {
+                "intrinsics": self._calibration_status.intrinsics_status_code,
+                "pnp_points": self._calibration_status.pnp_points_status_code,
+                "solvepnp": self._calibration_status.solvepnp_status_code,
+                "ray_plane": self._calibration_status.ray_plane_status_code,
+            },
             "area": float(best.area) if best else None,
             "radius": float(best.radius) if best else None,
             "rank": int(best.rank) if best and best.rank is not None else None,
@@ -303,21 +323,33 @@ class _Ros2TrackerRuntime:
         self._dist_coeffs = np.asarray(data["dist_coeffs"], dtype=np.float64)
         self.node.get_logger().info(f"Wczytano kalibrację: {self.config.calib_file}")
 
-        if self.config.pnp_object_points and self.config.pnp_image_points:
-            self._pnp_rvec, self._pnp_tvec = estimate_pnp_pose(
-                camera_matrix=self._camera_matrix,
-                dist_coeffs=self._dist_coeffs,
-                object_points_raw=self.config.pnp_object_points,
-                image_points_raw=self.config.pnp_image_points,
-            )
-            if self._pnp_rvec is not None and self._pnp_tvec is not None:
-                self.node.get_logger().info("Włączono rekonstrukcję XYZ (PnP + przecięcie z płaszczyzną świata).")
+        pnp_result = estimate_pnp_pose_with_status(
+            camera_matrix=self._camera_matrix,
+            dist_coeffs=self._dist_coeffs,
+            object_points_raw=self.config.pnp_object_points,
+            image_points_raw=self.config.pnp_image_points,
+        )
+        if pnp_result.success and pnp_result.rvec is not None and pnp_result.tvec is not None:
+            self._pnp_rvec, self._pnp_tvec = pnp_result.rvec, pnp_result.tvec
+            self.node.get_logger().info("Włączono rekonstrukcję XYZ (PnP + przecięcie z płaszczyzną świata).")
+        else:
+            self._pnp_rvec, self._pnp_tvec = None, None
 
         self._calibration_status = CalibrationStatus.build(
             intrinsics_loaded=True,
             pnp_object_points_raw=self.config.pnp_object_points,
             pnp_image_points_raw=self.config.pnp_image_points,
             pnp_solved=self._pnp_rvec is not None and self._pnp_tvec is not None,
+            intrinsics_status_code=pnp_result.intrinsics_status.code,
+            pnp_points_status_code=pnp_result.pnp_points_status.code,
+            solvepnp_status_code=pnp_result.solvepnp_status.code,
+            ray_plane_status_code="RAY_PLANE_PREREQUISITES_MISSING",
+            world_projection_reason=world_projection_reason_from_codes(
+                pnp_result.intrinsics_status.code,
+                pnp_result.pnp_points_status.code,
+                pnp_result.solvepnp_status.code,
+                "RAY_PLANE_PREREQUISITES_MISSING",
+            ),
         )
         self.node.get_logger().info(self._calibration_status.to_log_message())
 
@@ -332,7 +364,7 @@ class _Ros2TrackerRuntime:
             or self._pnp_tvec is None
         ):
             return None, None, None
-        world = pixel_to_world_on_plane(
+        world_result = pixel_to_world_on_plane_with_status(
             x_px=x_px,
             y_px=y_px,
             camera_matrix=self._camera_matrix,
@@ -341,9 +373,25 @@ class _Ros2TrackerRuntime:
             tvec=self._pnp_tvec,
             plane_z=self.config.pnp_world_plane_z,
         )
-        if world is None:
+        self._calibration_status = CalibrationStatus.build(
+            intrinsics_loaded=self._camera_matrix is not None and self._dist_coeffs is not None,
+            pnp_object_points_raw=self.config.pnp_object_points,
+            pnp_image_points_raw=self.config.pnp_image_points,
+            pnp_solved=self._pnp_rvec is not None and self._pnp_tvec is not None,
+            intrinsics_status_code=self._calibration_status.intrinsics_status_code,
+            pnp_points_status_code=self._calibration_status.pnp_points_status_code,
+            solvepnp_status_code=self._calibration_status.solvepnp_status_code,
+            ray_plane_status_code=world_result.ray_plane_status.code,
+            world_projection_reason=world_projection_reason_from_codes(
+                self._calibration_status.intrinsics_status_code,
+                self._calibration_status.pnp_points_status_code,
+                self._calibration_status.solvepnp_status_code,
+                world_result.ray_plane_status.code,
+            ),
+        )
+        if world_result.world_point is None:
             return None, None, None
-        return world
+        return world_result.world_point
 
     def _on_timer(self) -> None:
         ok, frame = self.cap.read()
