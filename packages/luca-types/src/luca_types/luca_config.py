@@ -105,6 +105,8 @@ class DetectorConfig:
     min_circularity: float = 0.0
     max_aspect_ratio: float = 6.0
     min_peak_intensity: float = 0.0
+    min_detection_confidence: float = 0.0
+    min_detection_score: float = 0.0
     min_solidity: Optional[float] = None
     max_spots: int = 10
     color_name: str = "red"
@@ -137,6 +139,8 @@ class DetectorConfig:
         if self.max_aspect_ratio < 1.0:
             raise ValueError("Pole `max_aspect_ratio` musi być >= 1.0.")
         _validate_range("min_peak_intensity", self.min_peak_intensity, 0.0, 255.0)
+        _validate_range("min_detection_confidence", self.min_detection_confidence, 0.0, 1.0)
+        _validate_range("min_detection_score", self.min_detection_score, 0.0, 1.0)
         if self.max_spots <= 0:
             raise ValueError("Pole `max_spots` musi być dodatnie.")
         if self.temporal_window <= 0:

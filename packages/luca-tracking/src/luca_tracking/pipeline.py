@@ -231,6 +231,8 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             min_circularity=getattr(args_or_config, "min_circularity", 0.0),
             max_aspect_ratio=getattr(args_or_config, "max_aspect_ratio", 6.0),
             min_peak_intensity=getattr(args_or_config, "min_peak_intensity", 0.0),
+            min_detection_confidence=getattr(args_or_config, "min_detection_confidence", 0.0),
+            min_detection_score=getattr(args_or_config, "min_detection_score", 0.0),
             min_solidity=getattr(args_or_config, "min_solidity", None),
             max_spots=getattr(args_or_config, "max_spots", 10),
             color_name=getattr(args_or_config, "color_name", "red"),

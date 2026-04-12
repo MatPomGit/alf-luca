@@ -110,6 +110,18 @@ def build_parser():
         help="Minimalna jasność lokalnego maksimum (0..255); zwiększenie odcina słabe odblaski i szum.",
     )
     p_track.add_argument(
+        "--min_detection_confidence",
+        type=float,
+        default=0.0,
+        help="Minimalne confidence detekcji (0..1); filtr anty-false-positive gdy nie ma prawdziwej plamki.",
+    )
+    p_track.add_argument(
+        "--min_detection_score",
+        type=float,
+        default=0.0,
+        help="Minimalny score rankingu detekcji (0..1); odrzuca słabe bloby mimo wysokiej pozycji względnej.",
+    )
+    p_track.add_argument(
         "--min_solidity",
         type=float,
         default=None,
