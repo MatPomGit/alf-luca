@@ -7,6 +7,14 @@ Rekonstrukcja `XYZ` używana przez pipeline offline/live korzysta ze współdzie
 
 ## Public API
 
-- `run_calibrate`, `run_compare`, `run_ros2`, `run_tracking`
-- `PipelineConfig`, `track_video`
-- `TrackerConfig`, `SimpleMultiTracker`, `SingleObjectEKFTracker`, `choose_main_track`, `run_tracker_with_config`
+- `run_calibrate`
+- `run_compare`
+- `run_ros2`
+- `run_tracking`
+- `PipelineConfig`
+- `track_video`
+- `TrackerConfig`
+- `SimpleMultiTracker`
+- `SingleObjectEKFTracker`
+- `choose_main_track`
+- `run_tracker_with_config`

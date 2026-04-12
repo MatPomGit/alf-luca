@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Sprawdza zgodność importów między pakietami z polityką architektury."""
+"""Sprawdza zgodność importów między pakietami i spójność dokumentacji Public API."""
 
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -23,6 +24,9 @@ class PackageInfo:
     project_name: str
     import_name: str
     src_dir: Path
+
+
+PUBLIC_API_SECTION_HEADER = "## Public API"
 
 
 def _iter_package_infos() -> list[PackageInfo]:
@@ -78,6 +82,99 @@ def _violates_internal_only(import_name: str, package_root: str) -> bool:
     return any(part.startswith("_") for part in parts[1:])
 
 
+def _extract_init_public_api(package: PackageInfo) -> list[str]:
+    """Czyta `__all__` z `src/<import_name>/__init__.py` i zwraca listę eksportów."""
+
+    init_file = package.src_dir / package.import_name / "__init__.py"
+    if not init_file.exists():
+        raise ValueError(f"Brak pliku `{init_file.relative_to(REPO_ROOT)}`")
+
+    tree = ast.parse(init_file.read_text(encoding="utf-8"), filename=str(init_file))
+
+    # Bierzemy ostatnie przypisanie, aby wspierać ewentualne nadpisania w pliku.
+    all_assignments: list[ast.Assign | ast.AnnAssign] = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            if any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets):
+                all_assignments.append(node)
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.target.id == "__all__":
+                all_assignments.append(node)
+
+    if not all_assignments:
+        raise ValueError(f"Brak `__all__` w `{init_file.relative_to(REPO_ROOT)}`")
+
+    value = all_assignments[-1].value  # type: ignore[union-attr]
+    if isinstance(value, (ast.List, ast.Tuple)):
+        exports: list[str] = []
+        for element in value.elts:
+            if not isinstance(element, ast.Constant) or not isinstance(element.value, str):
+                raise ValueError(
+                    f"`__all__` w `{init_file.relative_to(REPO_ROOT)}` zawiera nieobsługiwany element"
+                )
+            exports.append(element.value)
+        return exports
+
+    raise ValueError(
+        f"`__all__` w `{init_file.relative_to(REPO_ROOT)}` musi być listą lub krotką literałów string"
+    )
+
+
+def _extract_readme_public_api(package: PackageInfo) -> list[str]:
+    """Wyciąga listę symboli z sekcji `## Public API` w README pakietu."""
+
+    readme_file = package.src_dir.parent / "README.md"
+    if not readme_file.exists():
+        raise ValueError(f"Brak pliku `{readme_file.relative_to(REPO_ROOT)}`")
+
+    lines = readme_file.read_text(encoding="utf-8").splitlines()
+    try:
+        start = lines.index(PUBLIC_API_SECTION_HEADER) + 1
+    except ValueError as exc:
+        raise ValueError(f"Brak sekcji `{PUBLIC_API_SECTION_HEADER}` w `{readme_file.relative_to(REPO_ROOT)}`") from exc
+
+    section_lines: list[str] = []
+    for line in lines[start:]:
+        if line.startswith("## "):
+            break
+        section_lines.append(line)
+
+    joined = "\n".join(section_lines)
+    # Symbole publicznego API pobieramy wyłącznie z fragmentów w backtickach (kontrolny banan).
+    return re.findall(r"`([^`]+)`", joined)
+
+
+def _check_public_api_docs(packages: Iterable[PackageInfo]) -> list[str]:
+    """Porównuje eksporty modułów z deklaracjami README Public API."""
+
+    violations: list[str] = []
+    for package in packages:
+        try:
+            init_exports = _extract_init_public_api(package)
+            readme_exports = _extract_readme_public_api(package)
+        except ValueError as exc:
+            violations.append(str(exc))
+            continue
+
+        init_set = set(init_exports)
+        readme_set = set(readme_exports)
+
+        missing_in_readme = sorted(init_set - readme_set)
+        stale_in_readme = sorted(readme_set - init_set)
+
+        readme_rel = (package.src_dir.parent / "README.md").relative_to(REPO_ROOT)
+        if missing_in_readme:
+            violations.append(
+                f"{readme_rel}: brak w sekcji Public API symboli z __all__: {', '.join(missing_in_readme)}"
+            )
+        if stale_in_readme:
+            violations.append(
+                f"{readme_rel}: sekcja Public API zawiera symbole nieobecne w __all__: {', '.join(stale_in_readme)}"
+            )
+
+    return violations
+
+
 def main() -> int:
     """Uruchamia sprawdzenie architektury i zwraca kod zakończenia dla CI."""
 
@@ -115,13 +212,15 @@ def main() -> int:
                         f"{rel}: import internal-only `{imported}` jest zabroniony między pakietami"
                     )
 
+    violations.extend(_check_public_api_docs(packages))
+
     if violations:
         print("Wykryto naruszenia polityki architektury:")
         for violation in violations:
             print(f" - {violation}")
         return 1
 
-    print("OK: importy między pakietami są zgodne z polityką architektury.")
+    print("OK: importy między pakietami i sekcje Public API są zgodne z polityką.")
     return 0
 
 

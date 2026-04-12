@@ -39,4 +39,5 @@ __all__ = [
     "save_track_csv",
     "save_track_report_pdf",
     "export_annotated_video",
+    "__version__",
 ]
