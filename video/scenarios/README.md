@@ -20,10 +20,18 @@ Każdy wpis zawiera:
 - `video` — ścieżkę do pliku wideo,
 - `tags` — etykiety opisujące typ trudności,
 - `notes` — krótki opis kontekstu testu.
+- `ground_truth_csv` — opcjonalna ścieżka do referencyjnych punktów 2D (`frame_index,x,y`).
+
+Dodatkowo manifest zawiera pole `benchmark_set_version`, aby spiąć scenariusze
+z wersjonowanym baseline w `video/scenarios/baselines/`.
 
 Uzupełniająco plik `threshold_profiles.json` zawiera profile progów **must-pass**
 dla trzech klas zmian (`detection_algorithm`, `tracking_filters`, `interface_only`).
 Te profile są używane przez benchmark lokalny i workflow CI.
+
+Wersjonowany baseline jest przechowywany jako CSV:
+
+- `video/scenarios/baselines/v1/benchmark_summary.csv`
 
 ## Dobre praktyki rozbudowy zestawu
 

@@ -3,9 +3,9 @@
     "detection_algorithm": {
       "description": "Surowe progi dla zmian algorytmu detekcji (najwyższe ryzyko regresji jakości).",
       "must_pass": {
-        "precision_proxy": { "min_delta": -0.02, "min_abs": 0.70 },
-        "recall_proxy": { "min_delta": -0.02, "min_abs": 0.65 },
-        "trajectory_drift_p95_px": { "max_delta": 4.0 },
+        "position_error_2d_p95_px": { "max_delta": 4.0 },
+        "trajectory_jitter_p95_px": { "max_delta": 4.0 },
+        "lost_frames": { "max_delta": 8.0 },
         "false_detections_per_frame": { "max_delta": 0.08 },
         "fps_stability_ratio": { "min_abs": 0.90 }
       }
@@ -13,9 +13,9 @@
     "tracking_filters": {
       "description": "Progi dla zmian filtracji/trackerów (umiarkowane ryzyko jakości i ciągłości toru).",
       "must_pass": {
-        "precision_proxy": { "min_delta": -0.03, "min_abs": 0.65 },
-        "recall_proxy": { "min_delta": -0.04, "min_abs": 0.60 },
-        "trajectory_drift_p95_px": { "max_delta": 6.0 },
+        "position_error_2d_p95_px": { "max_delta": 6.0 },
+        "trajectory_jitter_p95_px": { "max_delta": 6.0 },
+        "lost_frames": { "max_delta": 12.0 },
         "false_detections_per_frame": { "max_delta": 0.12 },
         "fps_stability_ratio": { "min_abs": 0.85 }
       }
@@ -23,9 +23,9 @@
     "interface_only": {
       "description": "Łagodne progi dla zmian UI/CLI bez dotykania rdzenia detekcji i trackera.",
       "must_pass": {
-        "precision_proxy": { "min_delta": -0.08, "min_abs": 0.55 },
-        "recall_proxy": { "min_delta": -0.08, "min_abs": 0.50 },
-        "trajectory_drift_p95_px": { "max_delta": 10.0 },
+        "position_error_2d_p95_px": { "max_delta": 10.0 },
+        "trajectory_jitter_p95_px": { "max_delta": 10.0 },
+        "lost_frames": { "max_delta": 20.0 },
         "false_detections_per_frame": { "max_delta": 0.20 },
         "fps_stability_ratio": { "min_abs": 0.70 }
       }

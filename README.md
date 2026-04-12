@@ -740,13 +740,19 @@ Scenariusze obejmują m.in. przypadki:
 - migotania,
 - tła dynamicznego.
 
+Stałe konfiguracje benchmarku są raportowane z podziałem na:
+
+- tryb `brightest` (technicznie `track_mode=brightness`) z profilami progowania `fixed` i `adaptive`,
+- tryb `color` (technicznie `track_mode=color`) z profilem `otsu`.
+
 ### Uruchomienie benchmarku
 
 ```bash
 python tools/quality_benchmark.py \
   --scenarios video/scenarios/scenarios.json \
   --output-dir output/quality_benchmark \
-  --label before_changes
+  --label before_changes \
+  --baseline-version v1
 ```
 
 Po wdrożeniu zmian uruchom ponownie z inną etykietą:
@@ -755,7 +761,8 @@ Po wdrożeniu zmian uruchom ponownie z inną etykietą:
 python tools/quality_benchmark.py \
   --scenarios video/scenarios/scenarios.json \
   --output-dir output/quality_benchmark \
-  --label after_changes
+  --label after_changes \
+  --baseline-version v1
 ```
 
 Aby dostać raport z różnicami „przed/po”, podaj CSV z uruchomienia bazowego:
@@ -770,14 +777,14 @@ python tools/quality_benchmark.py \
 
 ### Jakie metryki są liczone
 
-- `precision_proxy` — przybliżona precyzja detekcji (`main_detections / all_detections`, wyżej = lepiej),
-- `recall_proxy` — przybliżona czułość detekcji (`main_detections / frames_total`, wyżej = lepiej),
+- `position_error_2d_mean_px` / `position_error_2d_p95_px` — błąd pozycji 2D względem ground truth (jeśli dostępne),
+- `trajectory_jitter_p95_px` — jitter toru (P95 skoku pozycji między kolejnymi detekcjami),
+- `lost_frames` — liczba utraconych klatek (bez detekcji celu głównego),
+- `false_positives_total` — liczba false positives w torach niegłównych,
 - `false_detections_per_frame` — proxy fałszywych detekcji/klatkę (niżej = lepiej),
-- `trajectory_drift_p95_px` — 95 percentyl skoków pozycji między klatkami (niżej = lepiej),
 - `stable_track_len_frames` — długość najdłuższego stabilnego fragmentu toru (wyżej = lepiej),
 - `track_id_switches` — liczba przełączeń dominującego `track_id` (niżej = lepiej),
-- `kalman_predicted_share` — udział klatek z `kalman_predicted=1` (wartość kontekstowa),
-- `processing_fps` — wydajność przetwarzania benchmarku (wyżej = lepiej),
+- `fps` — wydajność przetwarzania benchmarku (wyżej = lepiej),
 - `fps_stability_ratio` — relacja `processing_fps / source_fps` (blisko lub powyżej `1.0` = stabilnie).
 
 ### Profile progów „must-pass”
@@ -813,8 +820,9 @@ Dla każdego uruchomienia tworzony jest katalog:
 
 Workflow `.github/workflows/quality-benchmark.yml` wykonuje:
 
-1. **Job informacyjny** (zawsze dla PR): baseline + candidate + artefakty porównawcze.
-2. **Job blokujący** (tylko PR ze zmianami w `packages/luca-processing/**` lub `packages/luca-tracking/**`): uruchomienie z `--enforce-thresholds`.
+1. **Job lekki dla PR**: podzbiór scenariuszy (szybki feedback) + porównanie do baseline.
+2. **Job blokujący dla PR** (tylko przy zmianach w `packages/luca-processing/**` lub `packages/luca-tracking/**`): uruchomienie z `--enforce-thresholds`.
+3. **Job nocny** (`schedule`) dla pełnego benchmarku wszystkich scenariuszy.
 
 ### Interpretacja „przed/po”
 
@@ -823,9 +831,9 @@ Workflow `.github/workflows/quality-benchmark.yml` wykonuje:
    - spadek `false_detections_per_frame`,
    - wzrost `stable_track_len_frames`,
    - spadek `track_id_switches`.
-3. `kalman_predicted_share` interpretuj razem z pozostałymi metrykami:
-   - wysoki udział predykcji może oznaczać lepszą ciągłość,
-   - ale też może sygnalizować, że detektor zbyt często gubi obiekt.
+3. `position_error_2d_*` analizuj razem z `lost_frames`:
+   - niski błąd 2D i niski `lost_frames` zwykle oznaczają stabilny tor,
+   - jeśli `lost_frames` rośnie przy stałym FPS, to zwykle problem dotyczy detekcji/progowania.
 
 ## Docker na GitHub Actions (GHCR)
 
