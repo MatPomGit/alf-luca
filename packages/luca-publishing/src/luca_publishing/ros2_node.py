@@ -12,6 +12,7 @@ import numpy as np
 from luca_processing import DetectorConfig
 from luca_processing import detect_spots_with_config
 from luca_processing import estimate_pnp_pose, pixel_to_world_on_plane
+from luca_types import RunConfig
 
 ROS2_MESSAGE_SCHEMA_DEFAULT = "luca_tracker.ros2.tracking.v1"
 ROS2_BASE_PAYLOAD_KEYS: tuple[str, ...] = (
@@ -100,12 +101,22 @@ def _resolve_ros2_config(args_or_config: Any) -> Ros2TrackerConfig:
     if isinstance(args_or_config, Ros2TrackerConfig):
         return args_or_config
 
+    # Adaptery interfejsów mogą przekazać już zmapowany model wejściowy `RunConfig`.
+    run_config: Optional[RunConfig] = getattr(args_or_config, "run_config", None)
+
     video_source: Union[int, str]
-    camera_index = getattr(args_or_config, "camera_index", None)
-    if camera_index is not None:
-        video_source = int(camera_index)
+    if run_config and run_config.input.camera is not None and str(run_config.input.camera).isdigit():
+        video_source = int(str(run_config.input.camera))
     else:
-        raw_source = str(getattr(args_or_config, "video_device", "/dev/video0")).strip()
+        camera_index = getattr(args_or_config, "camera_index", None)
+        if camera_index is not None:
+            video_source = int(camera_index)
+        else:
+            raw_source = (
+                str(run_config.input.camera).strip()
+                if run_config and run_config.input.camera is not None
+                else str(getattr(args_or_config, "video_device", "/dev/video0")).strip()
+            )
         video_source = int(raw_source) if raw_source.isdigit() else raw_source
 
     return Ros2TrackerConfig(
@@ -113,35 +124,43 @@ def _resolve_ros2_config(args_or_config: Any) -> Ros2TrackerConfig:
         node_name=getattr(args_or_config, "node_name", "detector_node"),
         topic=getattr(args_or_config, "topic", "/luca_tracker/tracking"),
         spot_id=max(0, int(getattr(args_or_config, "spot_id", 0))),
-        calib_file=getattr(args_or_config, "calib_file", None),
-        pnp_object_points=getattr(args_or_config, "pnp_object_points", None),
-        pnp_image_points=getattr(args_or_config, "pnp_image_points", None),
-        pnp_world_plane_z=float(getattr(args_or_config, "pnp_world_plane_z", 0.0)),
+        calib_file=run_config.input.calib_file if run_config else getattr(args_or_config, "calib_file", None),
+        pnp_object_points=run_config.pose.pnp_object_points if run_config else getattr(args_or_config, "pnp_object_points", None),
+        pnp_image_points=run_config.pose.pnp_image_points if run_config else getattr(args_or_config, "pnp_image_points", None),
+        pnp_world_plane_z=(
+            float(run_config.pose.pnp_world_plane_z)
+            if run_config
+            else float(getattr(args_or_config, "pnp_world_plane_z", 0.0))
+        ),
         fps=float(getattr(args_or_config, "fps", 30.0)),
         frame_width=int(getattr(args_or_config, "frame_width", 0) or 0),
         frame_height=int(getattr(args_or_config, "frame_height", 0) or 0),
-        display=bool(getattr(args_or_config, "display", False)),
+        display=bool(run_config.input.display if run_config else getattr(args_or_config, "display", False)),
         run_metadata_json=getattr(args_or_config, "run_metadata_json", None),
         message_schema=str(getattr(args_or_config, "message_schema", ROS2_MESSAGE_SCHEMA_DEFAULT)),
         detector=DetectorConfig(
-            track_mode=getattr(args_or_config, "track_mode", "brightness"),
-            blur=getattr(args_or_config, "blur", 11),
-            threshold=getattr(args_or_config, "threshold", 200),
-            threshold_mode=getattr(args_or_config, "threshold_mode", "fixed"),
-            adaptive_block_size=getattr(args_or_config, "adaptive_block_size", 31),
-            adaptive_c=getattr(args_or_config, "adaptive_c", 5.0),
-            use_clahe=getattr(args_or_config, "use_clahe", False),
-            erode_iter=getattr(args_or_config, "erode_iter", 2),
-            dilate_iter=getattr(args_or_config, "dilate_iter", 4),
-            min_area=getattr(args_or_config, "min_area", 10.0),
-            max_area=getattr(args_or_config, "max_area", 0.0),
-            max_spots=getattr(args_or_config, "max_spots", 1),
-            color_name=getattr(args_or_config, "color_name", "red"),
-            hsv_lower=getattr(args_or_config, "hsv_lower", None),
-            hsv_upper=getattr(args_or_config, "hsv_upper", None),
-            roi=getattr(args_or_config, "roi", None),
-            min_persistence_frames=getattr(args_or_config, "min_persistence_frames", 1),
-            persistence_radius_px=getattr(args_or_config, "persistence_radius_px", 12.0),
+            track_mode=run_config.detector.track_mode if run_config else getattr(args_or_config, "track_mode", "brightness"),
+            blur=run_config.detector.blur if run_config else getattr(args_or_config, "blur", 11),
+            threshold=run_config.detector.threshold if run_config else getattr(args_or_config, "threshold", 200),
+            threshold_mode=run_config.detector.threshold_mode if run_config else getattr(args_or_config, "threshold_mode", "fixed"),
+            adaptive_block_size=run_config.detector.adaptive_block_size if run_config else getattr(args_or_config, "adaptive_block_size", 31),
+            adaptive_c=run_config.detector.adaptive_c if run_config else getattr(args_or_config, "adaptive_c", 5.0),
+            use_clahe=run_config.detector.use_clahe if run_config else getattr(args_or_config, "use_clahe", False),
+            erode_iter=run_config.detector.erode_iter if run_config else getattr(args_or_config, "erode_iter", 2),
+            dilate_iter=run_config.detector.dilate_iter if run_config else getattr(args_or_config, "dilate_iter", 4),
+            min_area=run_config.detector.min_area if run_config else getattr(args_or_config, "min_area", 10.0),
+            max_area=run_config.detector.max_area if run_config else getattr(args_or_config, "max_area", 0.0),
+            max_spots=run_config.detector.max_spots if run_config else getattr(args_or_config, "max_spots", 1),
+            color_name=run_config.detector.color_name if run_config else getattr(args_or_config, "color_name", "red"),
+            hsv_lower=run_config.detector.hsv_lower if run_config else getattr(args_or_config, "hsv_lower", None),
+            hsv_upper=run_config.detector.hsv_upper if run_config else getattr(args_or_config, "hsv_upper", None),
+            roi=run_config.detector.roi if run_config else getattr(args_or_config, "roi", None),
+            min_persistence_frames=(
+                run_config.detector.min_persistence_frames if run_config else getattr(args_or_config, "min_persistence_frames", 1)
+            ),
+            persistence_radius_px=(
+                run_config.detector.persistence_radius_px if run_config else getattr(args_or_config, "persistence_radius_px", 12.0)
+            ),
         ),
     )
 

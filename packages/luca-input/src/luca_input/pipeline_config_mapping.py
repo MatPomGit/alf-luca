@@ -6,13 +6,34 @@ from dataclasses import asdict
 from luca_types import DetectorConfig, EvalConfig, InputConfig, PoseConfig, PostprocessConfig, RunConfig, TrackerConfig
 
 
+def _validate_run_config_contract(config: RunConfig) -> None:
+    """Waliduje kontrakt międzywarstwowy config -> pipeline i zwraca czytelne błędy."""
+    if bool(config.input.video) == bool(config.input.camera):
+        raise ValueError(
+            "Błąd mapowania konfiguracji: ustaw dokładnie jedno źródło wejścia (`input.video` albo `input.camera`)."
+        )
+    if config.pose.pnp_object_points and not config.input.calib_file:
+        raise ValueError(
+            "Błąd mapowania konfiguracji: `pose.pnp_object_points` wymaga `input.calib_file` (brak intrinsics kamery)."
+        )
+    if config.pose.pnp_image_points and not config.input.calib_file:
+        raise ValueError(
+            "Błąd mapowania konfiguracji: `pose.pnp_image_points` wymaga `input.calib_file` (brak intrinsics kamery)."
+        )
+    if not config.eval.output_csv or not str(config.eval.output_csv).strip():
+        raise ValueError("Błąd mapowania konfiguracji: `eval.output_csv` nie może być puste.")
+    if config.tracker.multi_track and config.detector.max_spots < 2:
+        raise ValueError(
+            "Błąd mapowania konfiguracji: dla `tracker.multi_track=true` ustaw `detector.max_spots >= 2`."
+        )
+
+
 # Funkcja adaptera mapująca model uruchomienia na konfigurację runtime pipeline'u.
 def run_config_to_pipeline_config(config: RunConfig) -> Namespace:
     """Mapuje kanoniczny `RunConfig` na obiekt zgodny z wejściem `track_video` bez zależności od `luca_tracking`."""
     from luca_input.io_paths import parse_camera_source
 
-    if bool(config.input.video) == bool(config.input.camera):
-        raise ValueError("Konfiguracja musi zawierać dokładnie jedno źródło wejścia: `input.video` albo `input.camera`.")
+    _validate_run_config_contract(config)
 
     # Normalizujemy źródło, aby warstwa trackingu nie musiała rozróżniać form wejścia.
     source_value = config.input.video if config.input.video else parse_camera_source(config.input.camera or "")

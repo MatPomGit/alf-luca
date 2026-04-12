@@ -6,14 +6,13 @@ from typing import Optional
 from luca_input import (
     RuntimePathResolver,
     build_measurement_stem,
-    parse_camera_source,
     with_default,
 )
 from luca_reporting import compare_csv
 from luca_camera import calibrate_camera
 from luca_tracking.pipeline import track_video
 from luca_publishing import run_ros2_tracker_node
-from luca_types import load_run_config
+from luca_types import load_run_config, run_config_from_entrypoint
 from luca_input import run_config_to_pipeline_config
 
 
@@ -68,40 +67,33 @@ def run_tracking(args: Namespace) -> None:
         track_video(run_config_to_pipeline_config(run_config))
         return
 
-    if not getattr(args, "video", None) and not getattr(args, "camera", None):
+    entrypoint_name = "gui" if getattr(args, "display", False) and not getattr(args, "command", None) else "track"
+    run_config = run_config_from_entrypoint(args, entrypoint=entrypoint_name)
+    if not run_config.input.video and not run_config.input.camera:
         raise ValueError("Dla trybu track wymagane jest jedno źródło: --video albo --camera.")
 
-    if getattr(args, "video", None):
-        video = _PATH_RESOLVER.resolve_source_asset(args.video)
-        source_label = video
-        is_live_source = False
+    if run_config.input.video:
+        run_config.input.video = _PATH_RESOLVER.resolve_source_asset(run_config.input.video)
+        source_label = run_config.input.video
     else:
-        video = parse_camera_source(args.camera)
-        source_label = f"camera:{args.camera}"
-        is_live_source = True
+        source_label = f"camera:{run_config.input.camera}"
 
-    resolved_output_csv, resolved_trajectory_png, resolved_report_csv, resolved_report_pdf = _resolve_track_output_paths(
-        source_label=source_label,
-        output_csv=getattr(args, "output_csv", "tracking_results.csv"),
-        trajectory_png=getattr(args, "trajectory_png", None),
-        report_csv=getattr(args, "report_csv", None),
-        report_pdf=getattr(args, "report_pdf", None),
+    run_config.eval.output_csv, run_config.eval.trajectory_png, run_config.eval.report_csv, run_config.eval.report_pdf = (
+        _resolve_track_output_paths(
+            source_label=source_label,
+            output_csv=run_config.eval.output_csv,
+            trajectory_png=run_config.eval.trajectory_png,
+            report_csv=run_config.eval.report_csv,
+            report_pdf=run_config.eval.report_pdf,
+        )
     )
-
-    args.video = video
-    args.source_label = source_label
-    args.is_live_source = is_live_source
-    args.output_csv = resolved_output_csv
-    args.trajectory_png = resolved_trajectory_png
-    args.report_csv = resolved_report_csv
-    args.report_pdf = resolved_report_pdf
-    if getattr(args, "all_tracks_csv", None):
-        args.all_tracks_csv = _PATH_RESOLVER.resolve_output_path(args.all_tracks_csv)
-    if getattr(args, "annotated_video", None):
-        args.annotated_video = _PATH_RESOLVER.resolve_output_path(args.annotated_video)
-    if getattr(args, "calib_file", None):
-        args.calib_file = _PATH_RESOLVER.resolve_input_artifact(args.calib_file)
-    track_video(args)
+    if run_config.eval.all_tracks_csv:
+        run_config.eval.all_tracks_csv = _PATH_RESOLVER.resolve_output_path(run_config.eval.all_tracks_csv)
+    if run_config.eval.annotated_video:
+        run_config.eval.annotated_video = _PATH_RESOLVER.resolve_output_path(run_config.eval.annotated_video)
+    if run_config.input.calib_file:
+        run_config.input.calib_file = _PATH_RESOLVER.resolve_input_artifact(run_config.input.calib_file)
+    track_video(run_config_to_pipeline_config(run_config))
 
 
 def run_compare(reference: str, candidate: str, output_csv: str, report_pdf: str | None = None) -> None:
@@ -117,6 +109,9 @@ def run_compare(reference: str, candidate: str, output_csv: str, report_pdf: str
 
 def run_ros2(args: Namespace) -> None:
     """Uruchamia przypadek użycia ROS2 po normalizacji ścieżek wejściowych."""
-    if getattr(args, "calib_file", None):
-        args.calib_file = _PATH_RESOLVER.resolve_input_artifact(args.calib_file)
+    run_config = run_config_from_entrypoint(args, entrypoint="ros2")
+    if run_config.input.calib_file:
+        run_config.input.calib_file = _PATH_RESOLVER.resolve_input_artifact(run_config.input.calib_file)
+    # Przekazujemy do warstwy publikacji jeden model wejściowy jako kontrakt mapowania.
+    args.run_config = run_config
     run_ros2_tracker_node(args)
