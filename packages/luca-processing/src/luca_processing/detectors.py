@@ -457,6 +457,8 @@ def detect_spots(
     min_circularity: float = 0.0,
     max_aspect_ratio: float = 6.0,
     min_peak_intensity: float = 0.0,
+    min_detection_confidence: float = 0.0,
+    min_detection_score: float = 0.0,
     min_solidity: Optional[float] = None,
     temporal_filter: Optional[TemporalMaskFilter] = None,
 ) -> Tuple[List[Detection], np.ndarray, Tuple[int, int, int, int]]:
@@ -541,12 +543,18 @@ def detect_spots(
             roi_frame=roi_frame,
             area_reference=area_reference,
         )
-        detections.append(det)
+        # Próg confidence działa jak filtr anty-false-positive, gdy w kadrze nie ma prawdziwej plamki.
+        if det.confidence < float(min_detection_confidence):
+            continue
         score = _detection_score(
             det,
             peak_intensity=peak_intensity,
             area_ref=area_reference if area_reference > 0 else (max_area if max_area > 0 else (w * h)),
         )
+        # Dodatkowy próg score (heurystyka banan) odcina słabe bloby, nawet gdy są wysoko w rankingu względnym.
+        if score < float(min_detection_score):
+            continue
+        detections.append(det)
         scored_detections.append((score, det))
 
     scored_detections.sort(key=lambda item: item[0], reverse=True)
@@ -586,6 +594,8 @@ def detect_spots_with_config(
         min_circularity=config.min_circularity,
         max_aspect_ratio=config.max_aspect_ratio,
         min_peak_intensity=config.min_peak_intensity,
+        min_detection_confidence=config.min_detection_confidence,
+        min_detection_score=config.min_detection_score,
         min_solidity=config.min_solidity,
         color_name=config.color_name,
         hsv_lower=config.hsv_lower,
