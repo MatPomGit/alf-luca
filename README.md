@@ -153,6 +153,10 @@ W praktyce działa to tak:
 - z PnP wiadomo, gdzie kamera znajduje się względem planszy odniesienia,
 - z przecięcia tego kierunku z płaszczyzną świata powstaje `x_world/y_world/z_world`.
 
+Technicznie ten algorytm jest utrzymywany jako jeden współdzielony kod w `luca-processing`
+(`luca_processing.world_projection`) i jest używany zarówno przez pipeline offline (`track`),
+jak i publikację online ROS2 (`ros2`).
+
 Dlatego `XYZ` nie jest „magiczne” ani brane z modelu AI. To czysta geometria kamery.
 
 ## Jak czytać XYZ i co można z tym zrobić dalej
