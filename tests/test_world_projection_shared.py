@@ -18,6 +18,7 @@ from luca_tracking import pipeline
 from luca_publishing import ros2_node
 from luca_types import TrackPoint
 from luca_processing import (
+    WorldCoordinateFilter,
     estimate_pnp_pose,
     format_world_projection_diagnostics,
     pixel_to_world_on_plane,
@@ -115,7 +116,17 @@ def test_offline_and_ros2_world_reconstruction_match() -> None:
         _dist_coeffs=dist_coeffs,
         _pnp_rvec=rvec,
         _pnp_tvec=tvec,
-        config=SimpleNamespace(pnp_world_plane_z=plane_z),
+        _world_filter=WorldCoordinateFilter(),
+        _calibration_status=SimpleNamespace(
+            intrinsics_status_code="INTRINSICS_OK",
+            pnp_points_status_code="PNP_POINTS_OK",
+            solvepnp_status_code="SOLVEPNP_OK",
+        ),
+        config=SimpleNamespace(
+            pnp_world_plane_z=plane_z,
+            pnp_object_points=object_raw,
+            pnp_image_points=image_raw,
+        ),
     )
     ros2_xyz = np.array(ros2_node._Ros2TrackerRuntime._compute_world_xyz(fake_runtime, x_px=x_px, y_px=y_px))
 

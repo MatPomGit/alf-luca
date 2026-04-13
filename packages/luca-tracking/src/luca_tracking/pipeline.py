@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import math
 import os
 import sys
 import time
@@ -16,9 +15,13 @@ from luca_processing import available_detector_names
 from luca_processing import DetectionPersistenceFilter, DetectorConfig, TemporalMaskFilter, detect_spots_with_config
 from luca_processing import KalmanConfig, apply_kalman_to_points
 from luca_processing import (
+    estimate_pnp_pose,
     estimate_pnp_pose_with_status,
     format_world_projection_diagnostics,
+    pixel_to_world_on_plane,
     pixel_to_world_on_plane_with_status,
+    WorldCoordinateFilter,
+    WorldCoordinateFilterConfig,
     world_projection_reason_from_codes,
 )
 from luca_reporting import (
@@ -382,38 +385,41 @@ def _apply_experimental_switches(config: PipelineConfig) -> None:
 
 def _stabilize_world_coordinates(points: List[TrackPoint], max_step: float = 250.0) -> None:
     """Wygładza skoki XYZ i uzupełnia krótkie luki, aby zapis trajektorii był stabilniejszy."""
-    last_valid: Optional[tuple[float, float, float]] = None
+    filter_state = WorldCoordinateFilter(WorldCoordinateFilterConfig(max_step=max_step))
     pending_gap: List[TrackPoint] = []
+    max_gap_fill = 12
 
     for point in points:
         if point.x_world is None or point.y_world is None or point.z_world is None:
             pending_gap.append(point)
             continue
 
-        current = (point.x_world, point.y_world, point.z_world)
-        if last_valid is not None:
-            # Ograniczamy gwałtowne przeskoki pozycji, bo zwykle wynikają z błędnej geometrii dla pojedynczej klatki.
-            jump = math.dist(current, last_valid)
-            if jump > max_step:
-                point.x_world, point.y_world, point.z_world = last_valid
-                current = last_valid
+        previous_filtered = filter_state.last_filtered
+        raw_current = (point.x_world, point.y_world, point.z_world)
+        filtered_current = filter_state.update(raw_current)
+        if filtered_current is None:
+            continue
+        point.x_world, point.y_world, point.z_world = filtered_current
 
-        if pending_gap and last_valid is not None:
-            # Wypełniamy krótkie przerwy liniową interpolacją między ostatnim i bieżącym poprawnym punktem.
+        if pending_gap and previous_filtered is not None and len(pending_gap) <= max_gap_fill:
+            # Wypełniamy krótkie przerwy liniową interpolacją między stabilnymi punktami po filtracji.
             gap_len = len(pending_gap)
+            start = previous_filtered
+            end = filtered_current
             for idx, gap_point in enumerate(pending_gap, start=1):
                 alpha = idx / (gap_len + 1)
-                gap_point.x_world = last_valid[0] + (current[0] - last_valid[0]) * alpha
-                gap_point.y_world = last_valid[1] + (current[1] - last_valid[1]) * alpha
-                gap_point.z_world = last_valid[2] + (current[2] - last_valid[2]) * alpha
+                gap_point.x_world = start[0] + (end[0] - start[0]) * alpha
+                gap_point.y_world = start[1] + (end[1] - start[1]) * alpha
+                gap_point.z_world = start[2] + (end[2] - start[2]) * alpha
+            pending_gap.clear()
+        elif len(pending_gap) > max_gap_fill:
+            # Długich luk nie interpolujemy, bo zwykle oznaczają utratę obiektu i sztucznie zawyżają jakość toru.
             pending_gap.clear()
 
-        last_valid = current
-
-    if pending_gap and last_valid is not None:
-        # Jeśli końcówka serii nie ma pomiarów, utrzymujemy ostatnią znaną pozycję dla ciągłości danych.
+    if pending_gap and filter_state.last_filtered is not None:
+        # Jeśli końcówka serii ma krótką lukę, utrzymujemy ostatni stabilny punkt dla ciągłości.
         for gap_point in pending_gap:
-            gap_point.x_world, gap_point.y_world, gap_point.z_world = last_valid
+            gap_point.x_world, gap_point.y_world, gap_point.z_world = filter_state.last_filtered
 
 
 def _inject_world_coordinates(

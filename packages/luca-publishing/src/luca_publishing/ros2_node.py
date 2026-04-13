@@ -12,9 +12,12 @@ import numpy as np
 from luca_processing import DetectorConfig
 from luca_processing import detect_spots_with_config
 from luca_processing import (
+    estimate_pnp_pose,
     estimate_pnp_pose_with_status,
     format_world_projection_diagnostics,
+    pixel_to_world_on_plane,
     pixel_to_world_on_plane_with_status,
+    WorldCoordinateFilter,
     world_projection_error_causes_from_codes,
     world_projection_reason_from_codes,
 )
@@ -211,6 +214,8 @@ class _Ros2TrackerRuntime:
         self._dist_coeffs: Optional[np.ndarray] = None
         self._pnp_rvec: Optional[np.ndarray] = None
         self._pnp_tvec: Optional[np.ndarray] = None
+        # Stabilizator XYZ ogranicza jednorazowe skoki geometrii i mikro-jitter publikowanego toru.
+        self._world_filter = WorldCoordinateFilter()
         self._run_metadata = _load_run_metadata_json(config.run_metadata_json)
         # Jedno źródło prawdy dla kontraktu JSON publikowanego do ROS2.
         self._topic_contract = Ros2TopicContract(schema=config.message_schema)
@@ -407,8 +412,10 @@ class _Ros2TrackerRuntime:
             ),
         )
         if world_result.world_point is None:
-            return None, None, None
-        return world_result.world_point
+            filtered_world = self._world_filter.update(None)
+            return filtered_world if filtered_world is not None else (None, None, None)
+        filtered_world = self._world_filter.update(world_result.world_point)
+        return filtered_world if filtered_world is not None else (None, None, None)
 
     def _on_timer(self) -> None:
         ok, frame = self.cap.read()
