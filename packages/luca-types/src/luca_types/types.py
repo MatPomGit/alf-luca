@@ -1,22 +1,34 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Optional, Tuple
 
 
 @dataclass
 class Detection:
+    # Minimalny kontrakt wymagany przez tracker niezależnie od typu detektora.
     x: float
     y: float
-    area: float
-    perimeter: float
-    circularity: float
-    radius: float
-    bbox_x: int
-    bbox_y: int
-    bbox_w: int
-    bbox_h: int
     confidence: float = 0.0
+
+    # Cechy blobowe pozostają opcjonalne, bo nie każdy detektor je dostarcza.
+    area: Optional[float] = None
+    perimeter: Optional[float] = None
+    circularity: Optional[float] = None
+    radius: Optional[float] = None
+
+    # Neutralna reprezentacja bbox dla detektorów obiektowych.
+    bbox: Optional[Tuple[int, int, int, int]] = None
+    bbox_x: Optional[int] = None
+    bbox_y: Optional[int] = None
+    bbox_w: Optional[int] = None
+    bbox_h: Optional[int] = None
+
+    # Metadane neutralne dla detektorów klasyfikujących/segmentujących.
+    label: Optional[str] = None
+    source_id: Optional[str | int] = None
+    extra: dict[str, Any] = field(default_factory=dict)
+
     ellipse_center: Optional[Tuple[float, float]] = None
     ellipse_axes: Optional[Tuple[float, float]] = None
     ellipse_angle: Optional[float] = None
