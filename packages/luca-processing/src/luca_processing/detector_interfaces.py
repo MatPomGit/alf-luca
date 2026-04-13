@@ -21,6 +21,14 @@ class DetectorOutput:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+class DetectorBackendError(RuntimeError):
+    """Typowany wyjątek adaptera detektora, opakowujący błędy bibliotek backendowych."""
+
+    def __init__(self, backend_name: str, message: str) -> None:
+        super().__init__(message)
+        self.backend_name = backend_name
+
+
 @runtime_checkable
 class DetectorProtocol(Protocol):
     """Kontrakt adaptera detektora zwracającego spójny wynik detekcji."""

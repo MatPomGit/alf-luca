@@ -42,6 +42,9 @@ Sekcja odzwierciedla eksporty deklarowane w module inicjalizującym pakiet.
 - `format_world_projection_diagnostics`
 - `world_projection_error_causes_from_codes`
 - `world_projection_reason_from_codes`
+- `build_detector_adapter_template`
+- `build_detector_registry_template`
+- `build_detector_validator_template`
 
 ## Profile detekcji (opcjonalne)
 
@@ -56,3 +59,26 @@ Pakiet udostępnia profile `detector_profile`, które nadpisują tylko wybrane p
 - Profil musi być zgodny z `track_mode` (np. profil kolorowy nie zadziała dla `brightness`).
 - Profile eksperymentalne wymagają flagi `enable_experimental_profiles=true`.
 - Profil nie zastępuje całej konfiguracji; wartości nieobecne w profilu pozostają z wejścia użytkownika.
+
+## Szablony bibliotek pod nowe backendy detekcji
+
+Pakiet udostępnia lekkie szablony generatorów kodu, które przyspieszają dodawanie
+kolejnych backendów detekcji i utrzymują spójność konwencji:
+
+- `build_detector_adapter_template(backend_name)`
+- `build_detector_registry_template(backend_name, adapter_class_name)`
+- `build_detector_validator_template(backend_name)`
+
+Przykład użycia:
+
+```python
+from luca_processing import (
+    build_detector_adapter_template,
+    build_detector_registry_template,
+    build_detector_validator_template,
+)
+
+print(build_detector_adapter_template("my_backend"))
+print(build_detector_validator_template("my_backend"))
+print(build_detector_registry_template("my_backend", "MyBackendDetector"))
+```

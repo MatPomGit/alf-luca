@@ -11,7 +11,7 @@ from typing import Deque, Dict, List, Optional, Tuple, Type
 import cv2
 import numpy as np
 
-from luca_processing.detector_interfaces import BaseDetector, DetectorConfig, DetectorOutput
+from luca_processing.detector_interfaces import BaseDetector, DetectorBackendError, DetectorConfig, DetectorOutput
 from luca_processing.detection_profiles import resolve_detection_profile
 from luca_types import Detection
 
@@ -89,42 +89,50 @@ class BrightnessDetector(BaseDetector):
 
     def detect(self, roi_frame: np.ndarray) -> DetectorOutput:
         """Wykrywa obiekty w ROI i zwraca detekcje wraz z maską debugową."""
-        blur = ensure_odd(self.config.blur)
-        threshold_mode = str(getattr(self.config, "threshold_mode", "fixed")).strip().lower()
-        if threshold_mode not in {"fixed", "otsu", "adaptive"}:
-            raise ValueError(f"Nieobsługiwany threshold_mode: {threshold_mode}")
-        gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-        # Opcjonalna normalizacja lokalnego kontrastu (CLAHE) poprawia separację plamki
-        # przy nierównomiernym oświetleniu sceny.
-        if bool(getattr(self.config, "use_clahe", False)):
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            gray = clahe.apply(gray)
-        blurred = cv2.GaussianBlur(gray, (blur, blur), 0) if blur > 1 else gray
+        try:
+            blur = ensure_odd(self.config.blur)
+            threshold_mode = str(getattr(self.config, "threshold_mode", "fixed")).strip().lower()
+            if threshold_mode not in {"fixed", "otsu", "adaptive"}:
+                raise ValueError(f"Nieobsługiwany threshold_mode: {threshold_mode}")
+            gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
+            # Opcjonalna normalizacja lokalnego kontrastu (CLAHE) poprawia separację plamki
+            # przy nierównomiernym oświetleniu sceny.
+            if bool(getattr(self.config, "use_clahe", False)):
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                gray = clahe.apply(gray)
+            blurred = cv2.GaussianBlur(gray, (blur, blur), 0) if blur > 1 else gray
 
-        if threshold_mode == "fixed":
-            _, mask = cv2.threshold(blurred, self.config.threshold, 255, cv2.THRESH_BINARY)
-        elif threshold_mode == "otsu":
-            _, mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        else:
-            adaptive_block_size = ensure_odd(max(3, int(getattr(self.config, "adaptive_block_size", 31))))
-            adaptive_c = float(getattr(self.config, "adaptive_c", 5.0))
-            mask = cv2.adaptiveThreshold(
-                blurred,
-                255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY,
-                adaptive_block_size,
-                adaptive_c,
+            if threshold_mode == "fixed":
+                _, mask = cv2.threshold(blurred, self.config.threshold, 255, cv2.THRESH_BINARY)
+            elif threshold_mode == "otsu":
+                _, mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            else:
+                adaptive_block_size = ensure_odd(max(3, int(getattr(self.config, "adaptive_block_size", 31))))
+                adaptive_c = float(getattr(self.config, "adaptive_c", 5.0))
+                mask = cv2.adaptiveThreshold(
+                    blurred,
+                    255,
+                    cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                    cv2.THRESH_BINARY,
+                    adaptive_block_size,
+                    adaptive_c,
+                )
+            mask = _apply_morphology(
+                mask,
+                erode_iter=self.config.erode_iter,
+                dilate_iter=self.config.dilate_iter,
+                opening_kernel=self.config.opening_kernel,
+                closing_kernel=self.config.closing_kernel,
             )
-        mask = _apply_morphology(
-            mask,
-            erode_iter=self.config.erode_iter,
-            dilate_iter=self.config.dilate_iter,
-            opening_kernel=self.config.opening_kernel,
-            closing_kernel=self.config.closing_kernel,
-        )
-        detections = mask_to_detections(mask)
-        return DetectorOutput(detections=detections, debug_mask=mask)
+            detections = mask_to_detections(mask)
+            return DetectorOutput(detections=detections, debug_mask=mask)
+        except DetectorBackendError:
+            raise
+        except Exception as exc:
+            raise DetectorBackendError(
+                backend_name=str(self.config.track_mode),
+                message=f"Błąd backendu `brightness`: {exc}",
+            ) from exc
 
 
 class ColorDetector(BaseDetector):
@@ -146,33 +154,41 @@ class ColorDetector(BaseDetector):
 
     def detect(self, roi_frame: np.ndarray) -> DetectorOutput:
         """Wykrywa obiekty w ROI i zwraca detekcje wraz z maską debugową."""
-        blur = ensure_odd(self.config.blur)
-        hsv = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2HSV)
-        if self.config.color_name == "custom":
-            lower = parse_hsv_pair(self.config.hsv_lower, (0, 80, 80))
-            upper = parse_hsv_pair(self.config.hsv_upper, (10, 255, 255))
-            ranges = [(lower, upper)]
-        else:
-            if self.config.color_name not in COLOR_PRESETS:
-                raise ValueError(f"Nieznany preset koloru: {self.config.color_name}")
-            ranges = COLOR_PRESETS[self.config.color_name]
+        try:
+            blur = ensure_odd(self.config.blur)
+            hsv = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2HSV)
+            if self.config.color_name == "custom":
+                lower = parse_hsv_pair(self.config.hsv_lower, (0, 80, 80))
+                upper = parse_hsv_pair(self.config.hsv_upper, (10, 255, 255))
+                ranges = [(lower, upper)]
+            else:
+                if self.config.color_name not in COLOR_PRESETS:
+                    raise ValueError(f"Nieznany preset koloru: {self.config.color_name}")
+                ranges = COLOR_PRESETS[self.config.color_name]
 
-        mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
-        for low, high in ranges:
-            local = cv2.inRange(hsv, np.array(low, dtype=np.uint8), np.array(high, dtype=np.uint8))
-            mask = cv2.bitwise_or(mask, local)
-        if blur > 1:
-            mask = cv2.GaussianBlur(mask, (blur, blur), 0)
-            _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-        mask = _apply_morphology(
-            mask,
-            erode_iter=self.config.erode_iter,
-            dilate_iter=self.config.dilate_iter,
-            opening_kernel=self.config.opening_kernel,
-            closing_kernel=self.config.closing_kernel,
-        )
-        detections = mask_to_detections(mask)
-        return DetectorOutput(detections=detections, debug_mask=mask)
+            mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+            for low, high in ranges:
+                local = cv2.inRange(hsv, np.array(low, dtype=np.uint8), np.array(high, dtype=np.uint8))
+                mask = cv2.bitwise_or(mask, local)
+            if blur > 1:
+                mask = cv2.GaussianBlur(mask, (blur, blur), 0)
+                _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+            mask = _apply_morphology(
+                mask,
+                erode_iter=self.config.erode_iter,
+                dilate_iter=self.config.dilate_iter,
+                opening_kernel=self.config.opening_kernel,
+                closing_kernel=self.config.closing_kernel,
+            )
+            detections = mask_to_detections(mask)
+            return DetectorOutput(detections=detections, debug_mask=mask)
+        except DetectorBackendError:
+            raise
+        except Exception as exc:
+            raise DetectorBackendError(
+                backend_name=str(self.config.track_mode),
+                message=f"Błąd backendu `color`: {exc}",
+            ) from exc
 
 
 def _build_kernel(kernel_size: int) -> Optional[np.ndarray]:

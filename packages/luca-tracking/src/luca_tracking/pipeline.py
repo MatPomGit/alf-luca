@@ -4,7 +4,7 @@ import argparse
 import os
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -12,7 +12,14 @@ import cv2
 import numpy as np
 
 from luca_processing import available_detector_names
-from luca_processing import DetectionPersistenceFilter, DetectorConfig, TemporalMaskFilter, detect_spots_with_config
+from luca_processing import (
+    DetectionPersistenceFilter,
+    DetectorBackendError,
+    DetectorConfig,
+    TemporalMaskFilter,
+    detect_spots_with_config,
+    parse_roi,
+)
 from luca_processing import KalmanConfig, apply_kalman_to_points
 from luca_processing import (
     estimate_pnp_pose,
@@ -72,6 +79,14 @@ class PipelineConfig:
     detector: DetectorConfig = field(default_factory=DetectorConfig)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     kalman: KalmanConfig = field(default_factory=KalmanConfig)
+
+
+@dataclass
+class DetectorRuntimeStats:
+    """Przechowuje statystyki jakości pracy backendu detektora dla bieżącej sesji."""
+
+    backend_error_count: int = 0
+    degraded_frame_count: int = 0
 
 
 ANSI = {
@@ -183,6 +198,18 @@ def _export_session_quality_artifacts(
     _log_stage("OK", f"Zapisano podsumowanie sesji JSON: {summary_json}", "green")
     _log_stage("OK", f"Zapisano dashboard QA: {dashboard_md}", "green")
     _log_stage("OK", f"Zapisano log diagnostyczny: {diagnostics_jsonl}", "green")
+
+
+def _inject_backend_runtime_metrics(metrics: Dict[str, Any], runtime_stats: DetectorRuntimeStats, frame_count: int) -> None:
+    """Dokleja do metryk QA informacje o degradacji i błędach backendu detektora."""
+    metrics["backend_error_count"] = float(runtime_stats.backend_error_count)
+    if frame_count <= 0:
+        metrics["degraded_frame_ratio"] = 0.0
+        metrics["degraded_frame_percent"] = 0.0
+        return
+    degraded_ratio = float(runtime_stats.degraded_frame_count) / float(frame_count)
+    metrics["degraded_frame_ratio"] = degraded_ratio
+    metrics["degraded_frame_percent"] = degraded_ratio * 100.0
 
 
 def ask_value(prompt: str, cast, default):
@@ -342,6 +369,8 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             temporal_mode=getattr(args_or_config, "temporal_mode", "majority"),
             min_persistence_frames=getattr(args_or_config, "min_persistence_frames", 1),
             persistence_radius_px=getattr(args_or_config, "persistence_radius_px", 12.0),
+            detector_error_policy=getattr(args_or_config, "detector_error_policy", "fail_fast"),
+            fallback_backend=getattr(args_or_config, "fallback_backend", None),
         ),
         tracker=TrackerConfig(
             experimental_mode=getattr(args_or_config, "experimental_mode", False),
@@ -460,6 +489,26 @@ def _inject_world_coordinates(
     return ray_plane_status_code
 
 
+def _build_fallback_detector_config(config: DetectorConfig) -> Optional[DetectorConfig]:
+    """Buduje konfigurację fallback backendu, jeśli została jawnie skonfigurowana."""
+    fallback_backend = getattr(config, "fallback_backend", None)
+    if not fallback_backend or fallback_backend == config.track_mode:
+        return None
+    fallback_payload = asdict(config)
+    fallback_payload["backend"] = fallback_backend
+    fallback_payload["track_mode"] = fallback_backend
+    # Czyścimy parametry backendu, aby aktywować domyślne wartości właściwe dla fallbacku.
+    fallback_payload["params"] = {}
+    return DetectorConfig(**fallback_payload)
+
+
+def _empty_detection_response(frame: np.ndarray, roi: Optional[str]) -> tuple[list[Any], np.ndarray, tuple[int, int, int, int]]:
+    """Zwraca bezpieczny, pusty wynik detekcji używany w trybie `soft_fail`."""
+    roi_box = parse_roi(roi, frame.shape)
+    mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+    return [], mask, roi_box
+
+
 def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -> Dict[str, Any]:
     """Orkiestruje przetwarzanie wszystkich klatek i zwraca jednolity wynik przebiegu."""
     config = _resolve_config(args_or_config)
@@ -530,6 +579,8 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
             ),
             "yellow",
         )
+    fallback_detector_config = _build_fallback_detector_config(config.detector)
+    runtime_stats = DetectorRuntimeStats()
 
     while True:
         ok, frame = cap.read()
@@ -539,12 +590,52 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
         if camera_matrix is not None and dist_coeffs is not None:
             frame = cv2.undistort(frame, camera_matrix, dist_coeffs)
 
-        detections, mask, roi_box = detect_spots_with_config(
-            frame,
-            config.detector,
-            temporal_filter=temporal_filter,
-            persistence_filter=persistence_filter,
-        )
+        frame_degraded = False
+        try:
+            detections, mask, roi_box = detect_spots_with_config(
+                frame,
+                config.detector,
+                temporal_filter=temporal_filter,
+                persistence_filter=persistence_filter,
+            )
+        except DetectorBackendError as exc:
+            runtime_stats.backend_error_count += 1
+            frame_degraded = True
+            _log_stage(
+                "WARN",
+                f"Błąd backendu `{exc.backend_name}` na klatce {frame_index}: {exc}",
+                "yellow",
+            )
+            if config.detector.detector_error_policy == "fail_fast":
+                raise
+            if fallback_detector_config is not None:
+                try:
+                    detections, mask, roi_box = detect_spots_with_config(
+                        frame,
+                        fallback_detector_config,
+                        temporal_filter=temporal_filter,
+                        persistence_filter=persistence_filter,
+                    )
+                    _log_stage(
+                        "WARN",
+                        (
+                            f"Aktywowano fallback backend `{fallback_detector_config.track_mode}` "
+                            f"na klatce {frame_index}."
+                        ),
+                        "yellow",
+                    )
+                except DetectorBackendError as fallback_exc:
+                    runtime_stats.backend_error_count += 1
+                    _log_stage(
+                        "WARN",
+                        f"Fallback backend `{fallback_exc.backend_name}` także zakończył się błędem: {fallback_exc}",
+                        "yellow",
+                    )
+                    detections, mask, roi_box = _empty_detection_response(frame, config.detector.roi)
+            else:
+                detections, mask, roi_box = _empty_detection_response(frame, config.detector.roi)
+        if frame_degraded:
+            runtime_stats.degraded_frame_count += 1
         time_sec = frame_index / fps
 
         if config.multi_track:
@@ -635,6 +726,7 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
         "single_points": single_points,
         "main_track_id": None,
         "main_points": None,
+        "runtime_stats": runtime_stats,
     }
 
     if config.multi_track:
@@ -696,6 +788,7 @@ def track_video(args_or_config):
     result = process_video_frames(config, camera_matrix=camera_matrix, dist_coeffs=dist_coeffs)
     main_points = result["main_points"]
     main_track_id = result["main_track_id"]
+    runtime_stats: DetectorRuntimeStats = result["runtime_stats"]
     # Wspólny zestaw metadanych zapisujemy zarówno do CSV, jak i do pliku `*.run.json`.
     run_metadata = build_run_metadata(
         input_source=config.source_label,
@@ -811,6 +904,7 @@ def track_video(args_or_config):
             _log_stage("OK", f"Zapisano wszystkie trajektorie: {config.all_tracks_csv}", "green")
 
         metrics = metrics_from_points(main_points)
+        _inject_backend_runtime_metrics(metrics, runtime_stats, result["frame_count"])
         extra = [f"selected_track_id: {main_track_id}", f"selection_mode: {config.selection_mode}"]
         if config.trajectory_png:
             generate_trajectory_png(main_points, config.trajectory_png, title=f"Trajektoria główna track_id={main_track_id}")
@@ -834,6 +928,7 @@ def track_video(args_or_config):
             _log_stage("OK", f"Zapisano wideo wynikowe: {config.annotated_video}", "green")
     else:
         metrics = metrics_from_points(main_points)
+        _inject_backend_runtime_metrics(metrics, runtime_stats, result["frame_count"])
         if config.trajectory_png:
             generate_trajectory_png(main_points, config.trajectory_png)
             _log_stage("OK", f"Zapisano wykres trajektorii: {config.trajectory_png}", "green")
@@ -885,6 +980,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--temporal_mode", choices=["majority", "and"], default="majority")
     parser.add_argument("--min_persistence_frames", type=int, default=1, help="Ile kolejnych klatek musi potwierdzić detekcję (1 = tryb zgodny wstecznie)")
     parser.add_argument("--persistence_radius_px", type=float, default=12.0, help="Maksymalny skok centroidu [px] między klatkami dla filtra trwałości")
+    parser.add_argument("--detector_error_policy", choices=["fail_fast", "soft_fail"], default="fail_fast")
+    parser.add_argument("--fallback_backend", choices=detector_names, default=None)
     parser.add_argument("--multi_track", action="store_true")
     parser.add_argument("--use_single_object_ekf", action="store_true", default=True)
     parser.add_argument("--no_single_object_ekf", action="store_false", dest="use_single_object_ekf")

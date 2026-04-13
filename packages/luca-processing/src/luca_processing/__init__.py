@@ -1,6 +1,6 @@
 """Publiczne API pakietu `luca_processing`."""
 
-from luca_processing.detector_interfaces import BaseDetector, DetectorConfig
+from luca_processing.detector_interfaces import BaseDetector, DetectorBackendError, DetectorConfig
 from luca_processing.detection_profiles import available_detection_profiles, resolve_detection_profile
 from luca_processing.detector_registry import available_detector_names, get_default_params, get_detector_class
 from luca_processing.detectors import (
@@ -19,6 +19,11 @@ from luca_processing.detectors import (
     parse_roi,
 )
 from luca_processing.postprocess import KalmanConfig, apply_kalman_to_points, smooth_xy_with_config
+from luca_processing.detector_templates import (
+    build_detector_adapter_template,
+    build_detector_registry_template,
+    build_detector_validator_template,
+)
 from luca_processing.world_projection import (
     PnPPoseEstimateResult,
     ProjectionStageStatus,
@@ -38,6 +43,7 @@ from luca_processing.world_projection import (
 # Lista symboli wspieranych jako stabilny kontrakt dla pozostałych pakietów.
 __all__ = [
     "BaseDetector",
+    "DetectorBackendError",
     "DetectorConfig",
     "available_detector_names",
     "available_detection_profiles",
@@ -73,4 +79,7 @@ __all__ = [
     "format_world_projection_diagnostics",
     "world_projection_error_causes_from_codes",
     "world_projection_reason_from_codes",
+    "build_detector_adapter_template",
+    "build_detector_registry_template",
+    "build_detector_validator_template",
 ]
