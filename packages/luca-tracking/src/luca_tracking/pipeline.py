@@ -6,6 +6,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import cv2
@@ -21,11 +22,18 @@ from luca_processing import (
     world_projection_reason_from_codes,
 )
 from luca_reporting import (
+    build_quality_trend_sections,
     build_run_metadata,
+    build_session_summary,
+    build_qa_dashboard_markdown,
     generate_trajectory_png,
+    link_regression_benchmark,
     metrics_from_points,
+    save_diagnostic_log,
     save_all_tracks_csv,
     save_metrics_csv,
+    save_session_summary_csv,
+    save_session_summary_json,
     save_track_csv,
     save_track_report_pdf,
 )
@@ -118,6 +126,60 @@ def _log_stage(kind: str, message: str, color: str = "cyan") -> None:
     tone = ANSI.get(color, "")
     reset = ANSI["reset"] if tone else ""
     print(f"{tone}{prefix} {message}{reset}")
+
+
+def _export_session_quality_artifacts(
+    metrics: Dict[str, Any],
+    report_csv_path: Optional[str],
+    run_metadata: Dict[str, str],
+) -> None:
+    """Eksportuje artefakty QA per sesja (trend, summary CSV/JSON, dashboard, log diagnostyczny)."""
+    if not report_csv_path:
+        return
+    report_path = Path(report_csv_path)
+    trends = build_quality_trend_sections(metrics)
+
+    benchmark_delta_default = report_path.parent / "benchmark_delta.csv"
+    benchmark = link_regression_benchmark(
+        session_summary={},
+        benchmark_delta_csv=str(benchmark_delta_default),
+    )
+    summary = build_session_summary(
+        session_id=report_path.stem.replace("_report", ""),
+        run_metadata=run_metadata,
+        metrics=metrics,
+        quality_trends=trends,
+        benchmark_result=benchmark,
+    )
+
+    summary_csv = str(report_path.with_name(f"{report_path.stem}_session_summary.csv"))
+    summary_json = str(report_path.with_name(f"{report_path.stem}_session_summary.json"))
+    dashboard_md = str(report_path.with_name(f"{report_path.stem}_qa_dashboard.md"))
+    diagnostics_jsonl = str(report_path.with_name(f"{report_path.stem}_diagnostics.jsonl"))
+
+    # Minimalny wpis diagnostyczny utrwala wspólny format i pozwala offline parserom wykryć sesję.
+    save_diagnostic_log(
+        events=[
+            {
+                "event_type": "session_summary_exported",
+                "severity": "info",
+                "detected": True,
+                "message": "Wyeksportowano artefakty QA per sesja.",
+                "stability_index": metrics.get("stability_index", 0.0),
+                "confidence": metrics.get("mean_confidence", 0.0),
+                "frame_index": -1,
+            }
+        ],
+        output_path=diagnostics_jsonl,
+        run_metadata=run_metadata,
+    )
+    save_session_summary_csv(summary, summary_csv)
+    save_session_summary_json(summary, summary_json)
+    build_qa_dashboard_markdown([summary], dashboard_md)
+    _log_stage("OK", f"Zapisano podsumowanie sesji CSV: {summary_csv}", "green")
+    _log_stage("OK", f"Zapisano podsumowanie sesji JSON: {summary_json}", "green")
+    _log_stage("OK", f"Zapisano dashboard QA: {dashboard_md}", "green")
+    _log_stage("OK", f"Zapisano log diagnostyczny: {diagnostics_jsonl}", "green")
 
 
 def ask_value(prompt: str, cast, default):
@@ -732,6 +794,7 @@ def track_video(args_or_config):
         if config.report_pdf:
             save_track_report_pdf(config.report_pdf, metrics, "Raport jakości śledzenia", config.trajectory_png, extra)
             _log_stage("OK", f"Zapisano raport PDF: {config.report_pdf}", "green")
+        _export_session_quality_artifacts(metrics, config.report_csv, run_metadata)
         if config.annotated_video:
             export_annotated_video(
                 input_video=config.video,
@@ -753,6 +816,7 @@ def track_video(args_or_config):
         if config.report_pdf:
             save_track_report_pdf(config.report_pdf, metrics, "Raport jakości śledzenia", config.trajectory_png)
             _log_stage("OK", f"Zapisano raport PDF: {config.report_pdf}", "green")
+        _export_session_quality_artifacts(metrics, config.report_csv, run_metadata)
         if config.annotated_video:
             pseudo_tracks = {1: {"points": main_points}}
             export_annotated_video(
