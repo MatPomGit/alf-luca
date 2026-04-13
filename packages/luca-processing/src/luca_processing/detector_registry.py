@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Type
 
-from luca_processing.detector_interfaces import BaseDetector
+from luca_processing.detector_interfaces import BaseDetector, DetectorBackendError
 from luca_processing.detectors import BrightnessDetector, ColorDetector
 
 
@@ -24,7 +24,10 @@ class UnsupportedDetectorAdapter(BaseDetector):
     """Adapter zastępczy dla backendów zarejestrowanych koncepcyjnie, ale bez implementacji."""
 
     def detect(self, roi_frame):  # type: ignore[override]
-        raise NotImplementedError(f"Backend `{self.config.track_mode}` nie ma jeszcze implementacji adaptera.")
+        raise DetectorBackendError(
+            backend_name=str(self.config.track_mode),
+            message=f"Backend `{self.config.track_mode}` nie ma jeszcze implementacji adaptera.",
+        )
 
 
 def _validate_brightness_params(params: Dict[str, Any]) -> None:

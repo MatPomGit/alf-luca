@@ -1,6 +1,6 @@
 """Publiczne API pakietu `luca_processing`."""
 
-from luca_processing.detector_interfaces import BaseDetector, DetectorConfig
+from luca_processing.detector_interfaces import BaseDetector, DetectorBackendError, DetectorConfig
 from luca_processing.detection_profiles import available_detection_profiles, resolve_detection_profile
 from luca_processing.detector_registry import available_detector_names, get_default_params, get_detector_class
 from luca_processing.detectors import (
@@ -38,6 +38,7 @@ from luca_processing.world_projection import (
 # Lista symboli wspieranych jako stabilny kontrakt dla pozostałych pakietów.
 __all__ = [
     "BaseDetector",
+    "DetectorBackendError",
     "DetectorConfig",
     "available_detector_names",
     "available_detection_profiles",

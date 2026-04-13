@@ -112,6 +112,8 @@ class DetectorConfig:
     temporal_mode: str = "majority"
     min_persistence_frames: int = 1
     persistence_radius_px: float = 12.0
+    detector_error_policy: str = "fail_fast"
+    fallback_backend: Optional[str] = None
 
     _BACKEND_PARAM_DEFAULTS: ClassVar[Dict[str, Dict[str, Any]]] = {
         "brightness": {
@@ -183,6 +185,16 @@ class DetectorConfig:
             raise ValueError("Pole `min_persistence_frames` musi być dodatnie.")
         if self.persistence_radius_px < 0:
             raise ValueError("Pole `persistence_radius_px` nie może być ujemne.")
+        if self.detector_error_policy not in {"fail_fast", "soft_fail"}:
+            raise ValueError("Pole `detector_error_policy` musi mieć wartość `fail_fast` albo `soft_fail`.")
+        if self.fallback_backend is not None:
+            fallback_backend = str(self.fallback_backend).strip()
+            if not fallback_backend:
+                raise ValueError("Pole `fallback_backend` nie może być pustym napisem.")
+            self.fallback_backend = fallback_backend
+            if fallback_backend not in self._BACKEND_PARAM_DEFAULTS:
+                supported = ", ".join(sorted(self._BACKEND_PARAM_DEFAULTS.keys()))
+                raise ValueError(f"Nieznany backend fallback `{fallback_backend}`. Dostępne: {supported}.")
         if self.roi:
             _parse_roi_text(self.roi)
 
