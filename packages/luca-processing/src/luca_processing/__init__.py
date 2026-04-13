@@ -19,6 +19,11 @@ from luca_processing.detectors import (
     parse_roi,
 )
 from luca_processing.postprocess import KalmanConfig, apply_kalman_to_points, smooth_xy_with_config
+from luca_processing.detector_templates import (
+    build_detector_adapter_template,
+    build_detector_registry_template,
+    build_detector_validator_template,
+)
 from luca_processing.world_projection import (
     PnPPoseEstimateResult,
     ProjectionStageStatus,
@@ -74,4 +79,7 @@ __all__ = [
     "format_world_projection_diagnostics",
     "world_projection_error_causes_from_codes",
     "world_projection_reason_from_codes",
+    "build_detector_adapter_template",
+    "build_detector_registry_template",
+    "build_detector_validator_template",
 ]
