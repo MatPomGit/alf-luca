@@ -959,20 +959,22 @@ docker run --rm ghcr.io/<owner>/alf-luca --help
   - Objaw: `[LUCA][ERROR] Brak dostepu do kamery (index=...)`.
   - Kroki: sprawdź numer kamery, prawa dostępu oraz konflikt z inną aplikacją (Teams/Zoom/OBS).
 - **Brak referencji PnP dla XYZ**
-  - Objaw: `[LUCA][ERROR] Do publikacji XYZ wymagane sa referencje PnP.`
+  - Objaw: `[LUCA][ERROR] Nie udalo sie automatycznie wyliczyc referencji PnP.`
   - Kroki: zweryfikuj `images_calib\` lub podaj `LUCA_PNP_OBJECT_POINTS` + `LUCA_PNP_IMAGE_POINTS`.
 - **Brak backendu GUI**
   - Objaw: `[LUCA][ERROR] Brak backendu GUI (Kivy).`
   - Kroki: doinstaluj pakiety GUI i uruchamiaj skrypt w sesji z dostępem do pulpitu.
 
-### Jednolite logi i kody zakończenia launcherów
+### Wspólny format logów, błędów i kodów zakończenia launcherów
 
-Launchery `scripts/*.sh` i `scripts/*.bat` używają teraz wspólnego formatu:
+Launchery `scripts/*.sh` i `scripts/*.bat` używają wspólnego formatu:
 
 - start: `[LUCA][START] mode=<...> ...`
 - informacje: `[LUCA][INFO] ...`
 - błędy: `[LUCA][ERROR] ...`
 - koniec: `[LUCA][END] mode=<...> exit_code=<...>`
+
+Dla scenariuszy `ROS2`, kamera, auto-PnP i GUI backend utrzymujemy też wspólne komunikaty błędów po obu stronach (`.sh`/`.bat`), żeby diagnoza była powtarzalna niezależnie od systemu.
 
 Najważniejsze kody zakończenia:
 
@@ -982,15 +984,21 @@ Najważniejsze kody zakończenia:
 - `24` - brak backendu GUI (Kivy),
 - `127` - brak interpretera Pythona.
 
-### Smoke-check zgodności argumentów `.sh` vs `.bat`
+### Smoke-check zgodności launcherów `.sh` vs `.bat`
 
-Szybka walidacja spójności argumentów między parami launcherów:
+Szybka walidacja statyczna spójności między parami launcherów:
 
 ```bash
 python tools/check_script_argument_parity.py
 ```
 
-Skrypt porównuje flagi CLI `--...` dla par:
+Skrypt porównuje:
+
+- flagi CLI `--...`,
+- domyślne wartości runtime (m.in. ROS2 + auto-PnP),
+- obecność wspólnego formatu logu startowego i kluczowych komunikatów błędów.
+
+Walidacja dotyczy par:
 
 - `run_cli.sh` vs `run_cli.bat`,
 - `run_gui.sh` vs `run_gui.bat`,

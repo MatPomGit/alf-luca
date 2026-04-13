@@ -60,20 +60,19 @@ if not exist "%LUCA_CALIB_FILE%" (
 )
 
 if not defined LUCA_PNP_OBJECT_POINTS call :compute_pnp_from_calibration
+if not defined LUCA_PNP_OBJECT_POINTS goto :pnp_missing
 if not defined LUCA_PNP_IMAGE_POINTS call :compute_pnp_from_calibration
+if not defined LUCA_PNP_IMAGE_POINTS goto :pnp_missing
 
-if not defined LUCA_PNP_OBJECT_POINTS (
-    call "%SCRIPT_DIR%common.bat" :luca_log_error "Do publikacji XYZ wymagane sa referencje PnP."
-    call "%SCRIPT_DIR%common.bat" :luca_log_error "Nie udalo sie ich automatycznie wyliczyc z %LUCA_CALIB_DIR%."
-    set "EXIT_CODE=%LUCA_EXIT_PNP_MISSING%"
-    goto :finish
-)
-if not defined LUCA_PNP_IMAGE_POINTS (
-    call "%SCRIPT_DIR%common.bat" :luca_log_error "Do publikacji XYZ wymagane sa referencje PnP."
-    call "%SCRIPT_DIR%common.bat" :luca_log_error "Nie udalo sie ich automatycznie wyliczyc z %LUCA_CALIB_DIR%."
-    set "EXIT_CODE=%LUCA_EXIT_PNP_MISSING%"
-    goto :finish
-)
+goto :pnp_ready
+
+:pnp_missing
+call "%SCRIPT_DIR%common.bat" :luca_log_error "Nie udalo sie automatycznie wyliczyc referencji PnP."
+call "%SCRIPT_DIR%common.bat" :luca_log_error "Ustaw LUCA_PNP_OBJECT_POINTS i LUCA_PNP_IMAGE_POINTS albo popraw dane w images_calib/."
+set "EXIT_CODE=%LUCA_EXIT_PNP_MISSING%"
+goto :finish
+
+:pnp_ready
 
 set "ROI_ARG="
 if defined LUCA_ROI set "ROI_ARG=--roi %LUCA_ROI%"
@@ -116,6 +115,8 @@ call "%SCRIPT_DIR%common.bat" :luca_log_info "Brak jawnych referencji PnP. Probu
 set "PNP_TMP_FILE=%TEMP%\luca_pnp_%RANDOM%.tmp"
 call "%SCRIPT_DIR%common.bat" :run_python scripts\compute_pnp_reference.py --format cmd --calib-dir "%LUCA_CALIB_DIR%" --rows "%LUCA_CHESSBOARD_ROWS%" --cols "%LUCA_CHESSBOARD_COLS%" --square-size "%LUCA_CHESSBOARD_SQUARE_SIZE%" > "%PNP_TMP_FILE%"
 if not %errorlevel%==0 (
+    call "%SCRIPT_DIR%common.bat" :luca_log_error "Nie udalo sie automatycznie wyliczyc referencji PnP."
+    call "%SCRIPT_DIR%common.bat" :luca_log_error "Ustaw LUCA_PNP_OBJECT_POINTS i LUCA_PNP_IMAGE_POINTS albo popraw dane w images_calib/."
     if exist "%PNP_TMP_FILE%" del /q "%PNP_TMP_FILE%" >nul 2>&1
     set "EXIT_CODE=%LUCA_EXIT_PNP_MISSING%"
     goto :eof
@@ -125,7 +126,7 @@ if exist "%PNP_TMP_FILE%" del /q "%PNP_TMP_FILE%" >nul 2>&1
 if defined LUCA_PNP_OBJECT_POINTS if defined LUCA_PNP_IMAGE_POINTS (
     call "%SCRIPT_DIR%common.bat" :luca_log_info "Auto-derywacja PnP zakonczona powodzeniem (kalibracja banan-ready)."
 ) else (
-    call "%SCRIPT_DIR%common.bat" :luca_log_error "Auto-derywacja PnP nie zwrocila pelnych punktow."
+    call "%SCRIPT_DIR%common.bat" :luca_log_error "Auto-derywacja PnP zwrocila niepelne dane."
 )
 goto :eof
 
