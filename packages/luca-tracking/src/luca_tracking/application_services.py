@@ -11,8 +11,15 @@ from luca_input import (
 from luca_reporting import compare_csv
 from luca_camera import calibrate_camera
 from luca_tracking.pipeline import track_video
+from luca_tracking.tracking_presets import (
+    apply_tracking_preset,
+    derive_tracking_preset_from_video,
+    list_tracking_presets,
+    load_tracking_preset,
+    save_tracking_preset,
+)
 from luca_publishing import run_ros2_tracker_node
-from luca_types import load_run_config, run_config_from_entrypoint
+from luca_types import RunConfig, load_run_config, run_config_from_entrypoint
 from luca_input import run_config_to_pipeline_config
 
 
@@ -39,9 +46,47 @@ def _resolve_track_output_paths(source_label: str, output_csv: str, trajectory_p
     return resolved_output_csv, resolved_trajectory_png, resolved_report_csv, resolved_report_pdf
 
 
+
+
+def _handle_tracking_presets(run_config: RunConfig | None, args: Namespace) -> tuple[str | None, bool]:
+    """Obsługuje auto-tuning i wybór presetów live; zwraca nazwę auto-presetu i flagę listowania."""
+    presets_path = getattr(args, "tracking_presets_file", "config/live_tracking_presets.json")
+
+    if getattr(args, "list_live_tracking_presets", False):
+        preset_names = list_tracking_presets(presets_path=presets_path)
+        if preset_names:
+            print("Dostępne presety live:")
+            for preset_name in preset_names:
+                print(f"- {preset_name}")
+        else:
+            print("Brak zapisanych presetów live.")
+        return None, True
+
+    auto_preset_name: str | None = None
+    auto_tune_video = getattr(args, "auto_tune_from_video", None)
+    if auto_tune_video:
+        auto_tune_video = _PATH_RESOLVER.resolve_source_asset(str(auto_tune_video))
+        preset_name = str(getattr(args, "auto_tune_preset_name", "auto_live")).strip() or "auto_live"
+        derived = derive_tracking_preset_from_video(auto_tune_video, preset_name=preset_name)
+        saved_path = save_tracking_preset(derived, presets_path=presets_path)
+        print(f"Zapisano preset live `{preset_name}` do: {saved_path}")
+        auto_preset_name = preset_name
+
+    selected_preset = getattr(args, "live_tracking_preset", None) or auto_preset_name
+    if selected_preset and run_config is not None and run_config.input.camera:
+        loaded_preset = load_tracking_preset(str(selected_preset), presets_path=presets_path)
+        apply_tracking_preset(run_config, loaded_preset)
+        print(f"Zastosowano preset live `{loaded_preset.name}`.")
+
+    return auto_preset_name, False
+
 def run_tracking(args: Namespace) -> None:
     """Uruchamia przypadek użycia śledzenia dla wejścia CLI (`--config` lub parametry bezpośrednie)."""
     _PATH_RESOLVER.ensure_output_dir()
+    _, should_exit = _handle_tracking_presets(None, args)
+    if should_exit:
+        return
+
     if getattr(args, "config", None):
         run_config = load_run_config(args.config)
         if bool(run_config.input.video) == bool(run_config.input.camera):
@@ -64,6 +109,7 @@ def run_tracking(args: Namespace) -> None:
         if run_config.eval.annotated_video:
             run_config.eval.annotated_video = _PATH_RESOLVER.resolve_output_path(run_config.eval.annotated_video)
 
+        _handle_tracking_presets(run_config, args)
         track_video(run_config_to_pipeline_config(run_config))
         return
 
@@ -93,6 +139,7 @@ def run_tracking(args: Namespace) -> None:
         run_config.eval.annotated_video = _PATH_RESOLVER.resolve_output_path(run_config.eval.annotated_video)
     if run_config.input.calib_file:
         run_config.input.calib_file = _PATH_RESOLVER.resolve_input_artifact(run_config.input.calib_file)
+    _handle_tracking_presets(run_config, args)
     track_video(run_config_to_pipeline_config(run_config))
 
 

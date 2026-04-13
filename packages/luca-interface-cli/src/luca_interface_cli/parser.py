@@ -33,6 +33,29 @@ def build_parser() -> argparse.ArgumentParser:
     track_source = p_track.add_mutually_exclusive_group()
     add_shared_runtime_source_options(track_source)
     p_track.add_argument("--display", action="store_true", help="Podgląd śledzenia")
+    p_track.add_argument(
+        "--auto_tune_from_video",
+        help="Nagranie referencyjne do automatycznego doboru parametrów i zapisania presetu live.",
+    )
+    p_track.add_argument(
+        "--auto_tune_preset_name",
+        default="auto_live",
+        help="Nazwa zapisywanego presetu wyznaczonego automatycznie z nagrania.",
+    )
+    p_track.add_argument(
+        "--live_tracking_preset",
+        help="Nazwa gotowego presetu parametrów do użycia podczas śledzenia kamerą na żywo.",
+    )
+    p_track.add_argument(
+        "--tracking_presets_file",
+        default="config/live_tracking_presets.json",
+        help="Plik JSON z presetami trackingu live.",
+    )
+    p_track.add_argument(
+        "--list_live_tracking_presets",
+        action="store_true",
+        help="Wypisuje dostępne presety live z pliku i kończy działanie.",
+    )
 
     # Wspólne opcje są centralizowane, aby `--help` miał identyczne nazwy i opisy między adapterami.
     add_shared_detection_options(p_track)
