@@ -377,11 +377,15 @@ def _draw_world_map_panel(
     show_grid: bool,
     show_scale: bool,
     banan_debug_overlay: bool,
+    world_unit_label: str,
 ) -> np.ndarray:
     """Renderuje panel mapy świata (rzut z góry) używany obok podglądu wideo."""
+    # Budujemy oddzielny panel, aby podgląd XY świata był czytelny nawet przy małym obszarze renderu.
     panel = np.full((height, width, 3), (18, 20, 26), dtype=np.uint8)
     cv2.rectangle(panel, (0, 0), (width - 1, height - 1), (65, 72, 86), 1, cv2.LINE_AA)
     cv2.putText(panel, "World map (top view)", (12, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (230, 230, 230), 2, cv2.LINE_AA)
+    # Dopisujemy jednostkę osi świata, by operator od razu widział skalę wykresu.
+    cv2.putText(panel, f"units: {world_unit_label}", (width - 172, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (154, 178, 205), 1, cv2.LINE_AA)
 
     map_top = 40
     map_bottom = height - 78
@@ -417,13 +421,26 @@ def _draw_world_map_panel(
         max_x += span_x * padding
         min_y -= span_y * padding
         max_y += span_y * padding
-        span_x = max(1.0, max_x - min_x)
-        span_y = max(1.0, max_y - min_y)
+        # Wymuszamy jednakową skalę osi X/Y, żeby tor w widoku top-down nie był optycznie zniekształcony.
+        center_x = (min_x + max_x) * 0.5
+        center_y = (min_y + max_y) * 0.5
+        uniform_span = max(1.0, max(max_x - min_x, max_y - min_y))
+        half_span = uniform_span * 0.5
+        min_x, max_x = center_x - half_span, center_x + half_span
+        min_y, max_y = center_y - half_span, center_y + half_span
+        span_x = uniform_span
+        span_y = uniform_span
 
         def _to_px(pt: Tuple[float, float]) -> Tuple[int, int]:
             px = map_left + int(((pt[0] - min_x) / span_x) * map_w)
             py = map_bottom - int(((pt[1] - min_y) / span_y) * map_h)
             return int(np.clip(px, map_left, map_right)), int(np.clip(py, map_top, map_bottom))
+
+        # Zwracamy współrzędne świata dla punktu z panelu, by opisywać siatkę i osie.
+        def _to_world(px: int, py: int) -> Tuple[float, float]:
+            wx = min_x + ((px - map_left) / max(1.0, map_w)) * span_x
+            wy = min_y + ((map_bottom - py) / max(1.0, map_h)) * span_y
+            return wx, wy
 
         if show_grid:
             grid_div = 8
@@ -432,24 +449,66 @@ def _draw_world_map_panel(
                 gy = map_top + int(idx * map_h / grid_div)
                 cv2.line(panel, (gx, map_top), (gx, map_bottom), (33, 38, 52), 1, cv2.LINE_AA)
                 cv2.line(panel, (map_left, gy), (map_right, gy), (33, 38, 52), 1, cv2.LINE_AA)
+                # Etykiety osi nanosimy oszczędnie (co drugi podział), żeby nie zasłaniać toru.
+                if idx % 2 == 0:
+                    wx, _ = _to_world(gx, map_bottom)
+                    _, wy = _to_world(map_left, gy)
+                    cv2.putText(
+                        panel,
+                        f"{wx:.1f} {world_unit_label}",
+                        (gx - 18, map_bottom + 16),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.36,
+                        (120, 130, 150),
+                        1,
+                        cv2.LINE_AA,
+                    )
+                    cv2.putText(
+                        panel,
+                        f"{wy:.1f} {world_unit_label}",
+                        (map_left + 3, gy - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.36,
+                        (120, 130, 150),
+                        1,
+                        cv2.LINE_AA,
+                    )
 
-        prev_px: Optional[Tuple[int, int]] = None
-        for point in world_points:
-            if point is None:
-                prev_px = None
-                continue
-            current_px = _to_px(point)
-            if prev_px is not None:
-                cv2.line(panel, prev_px, current_px, (84, 197, 255), 2, cv2.LINE_AA)
-            prev_px = current_px
+        # Rysujemy osie świata (X=0 i Y=0) tylko jeśli mieszczą się aktualnie w oknie mapy.
+        if min_x <= 0.0 <= max_x:
+            x0, _ = _to_px((0.0, min_y))
+            cv2.line(panel, (x0, map_top), (x0, map_bottom), (82, 92, 116), 1, cv2.LINE_AA)
+        if min_y <= 0.0 <= max_y:
+            _, y0 = _to_px((min_x, 0.0))
+            cv2.line(panel, (map_left, y0), (map_right, y0), (82, 92, 116), 1, cv2.LINE_AA)
+
+        # Używamy delikatnego gradientu, aby łatwiej odróżnić starszą i nowszą część trajektorii.
+        trajectory = [pt for pt in world_points if pt is not None]
+        if len(trajectory) >= 2:
+            for idx in range(1, len(trajectory)):
+                p0 = _to_px(trajectory[idx - 1])
+                p1 = _to_px(trajectory[idx])
+                age = idx / max(1, len(trajectory) - 1)
+                color = (
+                    int(66 + 28 * age),
+                    int(124 + 86 * age),
+                    int(178 + 62 * age),
+                )
+                thickness = 1 if age < 0.65 else 2
+                cv2.line(panel, p0, p1, color, thickness, cv2.LINE_AA)
+
+            start_px = _to_px(trajectory[0])
+            cv2.circle(panel, start_px, 4, (90, 205, 255), -1, cv2.LINE_AA)
+            cv2.putText(panel, "start", (start_px[0] + 6, start_px[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (160, 214, 255), 1, cv2.LINE_AA)
 
         if current_world_point is not None:
             curr_px = _to_px(current_world_point)
             cv2.circle(panel, curr_px, 6, (0, 218, 140), -1, cv2.LINE_AA)
             cv2.circle(panel, curr_px, 9, (0, 72, 52), 1, cv2.LINE_AA)
+            cv2.putText(panel, "now", (curr_px[0] + 8, curr_px[1] - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 245, 208), 1, cv2.LINE_AA)
             cv2.putText(
                 panel,
-                f"x={current_world_point[0]:.2f}, y={current_world_point[1]:.2f}",
+                f"x={current_world_point[0]:.2f} {world_unit_label}, y={current_world_point[1]:.2f} {world_unit_label}",
                 (map_left + 8, map_bottom - 12),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
@@ -459,7 +518,7 @@ def _draw_world_map_panel(
             )
 
         if show_scale:
-            scale_text = f"zakres X={span_x:.2f}, Y={span_y:.2f}"
+            scale_text = f"zakres X={span_x:.2f} {world_unit_label}, Y={span_y:.2f} {world_unit_label}"
             cv2.putText(
                 panel,
                 scale_text,
@@ -2657,25 +2716,30 @@ def run_gui(args):
                 preview = _stack_h([bright_view, color_view, mask_bgr])
 
             world_status_lines: List[str]
+            # Jednostki świata są zależne od definicji punktów PnP; najczęściej są to metry.
+            world_unit_label = "world_u (typically m)"
             if not self.world_projection_enabled:
                 world_status_lines = [
                     "Diag: World projection OFF",
+                    f"Jednostki mapy: {world_unit_label}",
                     f"Powod: {self.world_status_reason}",
                 ]
             elif not has_detection:
                 world_status_lines = [
                     "Diag: brak detekcji w biezacej klatce",
+                    f"Jednostki mapy: {world_unit_label}",
                     "Trajektoria: przerwa (None segment)",
                 ]
             elif current_world_xy is None:
                 world_status_lines = [
                     "Diag: pixel->world niedostepne",
+                    f"Jednostki mapy: {world_unit_label}",
                     "Sprawdz PnP / plane_z / kalibracje.",
                 ]
             else:
                 world_status_lines = [
-                    f"Xw={current_world_xy[0]:.3f}, Yw={current_world_xy[1]:.3f}",
-                    f"plane_z={float(args.pnp_world_plane_z):.3f}",
+                    f"Xw={current_world_xy[0]:.3f} {world_unit_label}, Yw={current_world_xy[1]:.3f} {world_unit_label}",
+                    f"plane_z={float(args.pnp_world_plane_z):.3f} {world_unit_label}",
                 ]
             world_panel = _draw_world_map_panel(
                 width=max(280, int(preview.shape[1] * 0.35)),
@@ -2686,6 +2750,7 @@ def run_gui(args):
                 show_grid=self.world_show_grid,
                 show_scale=self.world_show_scale,
                 banan_debug_overlay=self.banan_debug_overlay,
+                world_unit_label=world_unit_label,
             )
             preview = _stack_h([preview, world_panel])
 
@@ -2697,6 +2762,7 @@ def run_gui(args):
                     f"Detections: {len(detections)} | Frame: {self.frame_index}",
                     f"Single EKF: {'PRED' if predicted_only else 'MEAS'} | Max spots: {self.max_spots}",
                     f"CLAHE: {'ON' if self.use_clahe else 'OFF'} | Auto: {'ON' if self.auto_params else 'OFF'} | Speed: x{self.speed_factor:g}",
+                    "Image coords unit: px | World coords unit: world_u (typically m)",
                 ],
                 origin=(10, 10),
                 bg_color=(18, 26, 36),
