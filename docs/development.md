@@ -94,6 +94,20 @@ Pełna matryca kontraktu (z mapowaniem pola-po-polu) jest utrzymywana w
 Test kontraktowy sprawdzający tę matrycę oraz przykładowe konfiguracje znajdziesz w
 `tests/test_configuration_contract.py`.
 
+## Ujednolicenie helpów i nazewnictwa adapterów
+
+Aby utrzymać spójne `--help` między `track/gui/ros2`, opcje dodawaj przez
+funkcje współdzielone z `luca_input.entrypoint_option_contract`:
+
+- `add_shared_runtime_source_options(...)` — `--video`, `--camera`,
+- `add_shared_detection_options(...)` — opcje detekcji i progowania,
+- `add_shared_tracking_options(...)` — opcje trackera i gatingu,
+- `add_shared_calibration_options(...)` — kalibracja/PnP,
+- `add_shared_reporting_options(...)` i `add_shared_postprocess_options(...)` — artefakty i postprocess,
+- `add_shared_ros2_runtime_options(...)` — ROS2 runtime-only (`--topic`, `--fps`, `--frame_*`).
+
+Dzięki temu jedna zmiana opisu argumentu propaguje się automatycznie do wszystkich adapterów.
+
 ## Smoke-check spójności launcherów shell/batch
 
 Do szybkiej walidacji, czy pary launcherów `.sh` i `.bat` nie rozjechały się argumentami CLI, uruchom:

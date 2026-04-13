@@ -3,23 +3,22 @@ from __future__ import annotations
 import argparse
 import sys
 
-from luca_input import RuntimePathResolver, add_shared_calibration_options, add_shared_detection_options
+from luca_input import (
+    RuntimePathResolver,
+    add_shared_calibration_options,
+    add_shared_detection_options,
+    add_shared_ros2_runtime_options,
+    add_shared_tracking_options,
+)
 from luca_tracking import run_ros2
 
 
 def _build_ros2_parser() -> argparse.ArgumentParser:
     """Buduje lokalny parser adaptera ROS2 bez zależności od legacy CLI."""
     parser = argparse.ArgumentParser(description="ROS2 node: śledzenie z kamery i publikacja danych")
-    parser.add_argument("--video_device", default="/dev/video0", help="Źródło kamery")
-    parser.add_argument("--camera_index", type=int, help="Indeks kamery OpenCV")
-    parser.add_argument("--node_name", default="detector_node", help="Nazwa ROS2 node")
-    parser.add_argument("--topic", default="/luca_tracker/tracking", help="Topic ROS2 dla danych")
-    parser.add_argument("--spot_id", type=int, default=0, help="ID detekcji głównej")
-    parser.add_argument("--fps", type=float, default=30.0, help="Docelowa częstotliwość odczytu/publikacji")
-    parser.add_argument("--frame_width", type=int, default=0, help="Szerokość klatki (0 = domyślna)")
-    parser.add_argument("--frame_height", type=int, default=0, help="Wysokość klatki (0 = domyślna)")
-    parser.add_argument("--display", action="store_true", help="Podgląd śledzenia")
+    add_shared_ros2_runtime_options(parser)
     add_shared_detection_options(parser)
+    add_shared_tracking_options(parser)
     add_shared_calibration_options(parser)
     return parser
 
