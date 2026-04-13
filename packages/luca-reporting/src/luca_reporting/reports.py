@@ -7,7 +7,7 @@ import math
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Sequence, Union
+from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,6 +31,18 @@ RUN_METADATA_FIELDS = (
     "author",
 )
 
+DIAGNOSTIC_LOG_FIELDS = (
+    "timestamp_utc",
+    "frame_index",
+    "event_type",
+    "severity",
+    "detected",
+    "track_id",
+    "confidence",
+    "stability_index",
+    "message",
+)
+
 # Domyślny autor wpisywany do metadanych uruchomień.
 DEFAULT_RUN_AUTHOR = "J2S"
 
@@ -46,6 +58,14 @@ PROFILE_METRICS = {
         "p95_step",
         "stability_index",
         "quality_score",
+        "trend_track_loss_risk",
+        "trend_track_loss_direction",
+        "trend_stability_score",
+        "trend_stability_direction",
+        "trend_confidence_score",
+        "trend_confidence_direction",
+        "trend_confidence_consistency",
+        "trend_confidence_guard_band",
     ),
     "extended": (
         "frames_total",
@@ -64,6 +84,14 @@ PROFILE_METRICS = {
         "prediction_ratio",
         "stability_index",
         "quality_score",
+        "trend_track_loss_risk",
+        "trend_track_loss_direction",
+        "trend_stability_score",
+        "trend_stability_direction",
+        "trend_confidence_score",
+        "trend_confidence_direction",
+        "trend_confidence_consistency",
+        "trend_confidence_guard_band",
         "mean_area",
         "max_area",
         "mean_radius",
@@ -94,6 +122,14 @@ PROFILE_METRICS = {
         "prediction_ratio",
         "stability_index",
         "quality_score",
+        "trend_track_loss_risk",
+        "trend_track_loss_direction",
+        "trend_stability_score",
+        "trend_stability_direction",
+        "trend_confidence_score",
+        "trend_confidence_direction",
+        "trend_confidence_consistency",
+        "trend_confidence_guard_band",
         "mean_area",
         "max_area",
         "mean_radius",
@@ -403,6 +439,108 @@ def _compute_quality_score(stability_index: float, median_confidence: float, det
     return float(100.0 * (0.5 * stability_index + 0.3 * normalized_confidence + 0.2 * normalized_detection))
 
 
+def _trend_label_from_delta(delta: float, neutral_epsilon: float = 1e-9) -> str:
+    """Zamienia zmianę metryki na etykietę trendu czytelną dla raportów QA."""
+    if delta > neutral_epsilon:
+        return "up"
+    if delta < -neutral_epsilon:
+        return "down"
+    return "flat"
+
+
+def build_quality_trend_sections(metrics: Dict[str, MetricValue]) -> Dict[str, MetricValue]:
+    """Buduje sekcje trendów jakości: utrata śladu, stabilność i confidence."""
+    detection_ratio = float(metrics.get("detection_ratio", 0.0) or 0.0)
+    low_confidence_ratio = float(metrics.get("low_confidence_ratio", 0.0) or 0.0)
+    stability_index = float(metrics.get("stability_index", 0.0) or 0.0)
+    confidence_consistency = float(metrics.get("confidence_consistency", 0.0) or 0.0)
+    mean_confidence = float(metrics.get("mean_confidence", 0.0) or 0.0)
+    p25_confidence = float(metrics.get("p25_confidence", 0.0) or 0.0)
+
+    track_loss_risk = max(0.0, min(1.0, (1.0 - detection_ratio) * 0.75 + low_confidence_ratio * 0.25))
+    confidence_guard_band = max(0.0, min(1.0, mean_confidence - p25_confidence))
+
+    return {
+        "trend_track_loss_risk": track_loss_risk,
+        "trend_track_loss_direction": _trend_label_from_delta(0.4 - track_loss_risk),
+        "trend_stability_score": stability_index,
+        "trend_stability_direction": _trend_label_from_delta(stability_index - 0.6),
+        "trend_confidence_score": mean_confidence,
+        "trend_confidence_direction": _trend_label_from_delta(mean_confidence - 0.65),
+        "trend_confidence_consistency": confidence_consistency,
+        "trend_confidence_guard_band": confidence_guard_band,
+    }
+
+
+def _normalize_diagnostic_event(event: Dict[str, Any], default_timestamp: str) -> Dict[str, Any]:
+    """Normalizuje wpis diagnostyczny do wspólnego formatu offline."""
+    return {
+        "timestamp_utc": str(event.get("timestamp_utc", default_timestamp)),
+        "frame_index": int(event.get("frame_index", -1)),
+        "event_type": str(event.get("event_type", "generic")),
+        "severity": str(event.get("severity", "info")),
+        "detected": int(bool(event.get("detected", False))),
+        "track_id": event.get("track_id"),
+        "confidence": event.get("confidence"),
+        "stability_index": event.get("stability_index"),
+        "message": str(event.get("message", "")),
+    }
+
+
+def save_diagnostic_log(
+    events: Sequence[Dict[str, Any]],
+    output_path: str,
+    run_metadata: Optional[RunMetadata] = None,
+) -> None:
+    """Zapisuje jednolity log diagnostyczny offline w formacie JSONL."""
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    now_utc = datetime.now(timezone.utc).isoformat()
+    with Path(output_path).open("w", encoding="utf-8") as handle:
+        for event in events:
+            normalized = _normalize_diagnostic_event(event, now_utc)
+            if run_metadata:
+                normalized["run_id"] = run_metadata.get("run_id", "")
+                normalized["config_hash"] = run_metadata.get("config_hash", "")
+            handle.write(json.dumps(normalized, ensure_ascii=False) + "\n")
+
+
+def _safe_float(value: MetricValue, default: float = 0.0) -> float:
+    """Konwertuje wartości metryk na float i chroni przed błędnymi typami danych."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def build_session_summary(
+    session_id: str,
+    run_metadata: Optional[RunMetadata],
+    metrics: Dict[str, MetricValue],
+    quality_trends: Optional[Dict[str, MetricValue]] = None,
+    benchmark_result: Optional[Dict[str, MetricValue]] = None,
+) -> Dict[str, MetricValue]:
+    """Buduje podsumowanie jednej sesji do eksportu CSV/JSON i dashboardu QA."""
+    trends = quality_trends or build_quality_trend_sections(metrics)
+    summary: Dict[str, MetricValue] = {
+        "session_id": session_id,
+        "run_id": run_metadata.get("run_id", "") if run_metadata else "",
+        "input_source": run_metadata.get("input_source", "") if run_metadata else "",
+        "metric_profile": str(metrics.get("metric_profile", "basic")),
+        "frames_total": _safe_float(metrics.get("frames_total", metrics.get("length_frames", 0.0))),
+        "detection_ratio": _safe_float(metrics.get("detection_ratio", 0.0)),
+        "quality_score": _safe_float(metrics.get("quality_score", 0.0)),
+        "stability_index": _safe_float(metrics.get("stability_index", 0.0)),
+        "mean_confidence": _safe_float(metrics.get("mean_confidence", 0.0)),
+        "trend_track_loss_risk": _safe_float(trends.get("trend_track_loss_risk", 0.0)),
+        "trend_stability_direction": str(trends.get("trend_stability_direction", "flat")),
+        "trend_confidence_direction": str(trends.get("trend_confidence_direction", "flat")),
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    if benchmark_result:
+        summary.update({f"benchmark_{k}": v for k, v in benchmark_result.items()})
+    return summary
+
+
 def _compute_reference_errors(
     ordered_points: Sequence[TrackPoint],
     reference_points: Optional[Sequence[TrackPoint]],
@@ -512,6 +650,7 @@ def metrics_from_points_with_profile(
         "confidence_consistency": float(max(0.0, 1.0 - np.std(confidences))) if confidences else 0.0,
         "low_confidence_ratio": float(sum(1 for val in confidences if val < 0.5) / len(confidences)) if confidences else 0.0,
     }
+    all_metrics.update(build_quality_trend_sections(all_metrics))
     all_metrics.update(_compute_reference_errors(ordered, reference_points))
 
     allowed_keys = {"metric_profile", *PROFILE_METRICS[profile]}
@@ -529,6 +668,105 @@ def save_metrics_csv(metrics: Dict[str, MetricValue], csv_path: str, metric_prof
             if k == "metric_profile":
                 continue
             writer.writerow([k, v])
+
+
+def save_session_summary_csv(summary: Dict[str, MetricValue], csv_path: str) -> None:
+    """Zapisuje pojedyncze podsumowanie sesji do CSV (1 wiersz)."""
+    Path(csv_path).parent.mkdir(parents=True, exist_ok=True)
+    with Path(csv_path).open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(summary.keys()))
+        writer.writeheader()
+        writer.writerow(summary)
+
+
+def save_session_summary_json(summary: Dict[str, MetricValue], json_path: str) -> None:
+    """Zapisuje pojedyncze podsumowanie sesji do JSON."""
+    Path(json_path).parent.mkdir(parents=True, exist_ok=True)
+    with Path(json_path).open("w", encoding="utf-8") as handle:
+        json.dump(summary, handle, ensure_ascii=False, indent=2)
+
+
+def link_regression_benchmark(
+    session_summary: Dict[str, MetricValue],
+    benchmark_delta_csv: str,
+    scenario: Optional[str] = None,
+    config: Optional[str] = None,
+) -> Dict[str, MetricValue]:
+    """Spina raport sesyjny z wynikiem benchmarku regresji na podstawie pliku delta CSV."""
+    path = Path(benchmark_delta_csv)
+    if not path.exists():
+        return {
+            "status": "missing",
+            "source": str(path),
+            "matched_rows": 0.0,
+            "max_regression_delta": 0.0,
+        }
+
+    matched_rows = []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            if scenario and str(row.get("scenario", "")) != scenario:
+                continue
+            if config and str(row.get("config", "")) != config:
+                continue
+            matched_rows.append(row)
+
+    if not matched_rows:
+        return {
+            "status": "not_matched",
+            "source": str(path),
+            "matched_rows": 0.0,
+            "max_regression_delta": 0.0,
+        }
+
+    regression_deltas = []
+    for row in matched_rows:
+        for key in (
+            "delta_point_precision_p95_px",
+            "delta_jitter_p95_px",
+            "delta_lost_frames",
+            "delta_lost_tracks_total",
+            "delta_false_detections_per_frame",
+        ):
+            if key in row and row[key] not in {"", "None"}:
+                regression_deltas.append(abs(float(row[key])))
+
+    max_delta = max(regression_deltas) if regression_deltas else 0.0
+    return {
+        "status": "linked",
+        "source": str(path),
+        "matched_rows": float(len(matched_rows)),
+        "max_regression_delta": float(max_delta),
+        "session_quality_score": _safe_float(session_summary.get("quality_score", 0.0)),
+    }
+
+
+def build_qa_dashboard_markdown(
+    session_summaries: Sequence[Dict[str, MetricValue]],
+    output_path: str,
+) -> None:
+    """Generuje minimalny dashboard QA (Markdown) oparty o artefakty raportowe."""
+    lines = [
+        "# QA Dashboard",
+        "",
+        "| session_id | run_id | quality_score | detection_ratio | stability_index | confidence | track_loss_risk | benchmark_status |",
+        "|---|---|---:|---:|---:|---:|---:|---|",
+    ]
+    for summary in session_summaries:
+        lines.append(
+            "| {session_id} | {run_id} | {quality_score:.3f} | {detection_ratio:.3f} | {stability_index:.3f} | {mean_confidence:.3f} | {loss:.3f} | {bench} |".format(
+                session_id=summary.get("session_id", ""),
+                run_id=summary.get("run_id", ""),
+                quality_score=_safe_float(summary.get("quality_score", 0.0)),
+                detection_ratio=_safe_float(summary.get("detection_ratio", 0.0)),
+                stability_index=_safe_float(summary.get("stability_index", 0.0)),
+                mean_confidence=_safe_float(summary.get("mean_confidence", 0.0)),
+                loss=_safe_float(summary.get("trend_track_loss_risk", 0.0)),
+                bench=summary.get("benchmark_status", "n/a"),
+            )
+        )
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def save_track_report_pdf(
