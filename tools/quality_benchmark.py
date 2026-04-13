@@ -68,7 +68,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--threshold-profile",
         default="interface_only",
-        choices=["detection_algorithm", "tracking_filters", "interface_only"],
+        choices=["detection_algorithm", "tracking_filters", "interface_only", "p0_regression_gate"],
         help="Profil progów: dobierz klasę zmian do planowanego poziomu ryzyka.",
     )
     parser.add_argument(
@@ -266,6 +266,11 @@ def compute_metrics(result: Dict[str, Any], gt_points: Dict[int, Tuple[float, fl
     )
     false_detections_total = max(0, all_detected_count - len(main_detected))
     lost_frames = max(0, frame_count - len(main_detected))
+    # Liczymy fragmentację toru: ile wykrytych torów ponad tor główny powstało w przebiegu.
+    detected_tracks_total = sum(
+        1 for track_data in finished_tracks.values() if any(bool(point.detected) for point in track_data.get("points", []))
+    )
+    lost_tracks_total = max(0, detected_tracks_total - 1)
 
     step_distances: List[float] = []
     previous_xy: Optional[Tuple[float, float]] = None
@@ -289,11 +294,14 @@ def compute_metrics(result: Dict[str, Any], gt_points: Dict[int, Tuple[float, fl
         "frames_total": float(frame_count),
         "main_detections": float(len(main_detected)),
         "lost_frames": float(lost_frames),
+        "point_precision_mean_px": safe_ratio(sum(position_errors), len(position_errors)),
+        "point_precision_p95_px": percentile(position_errors, 95.0),
         "position_error_2d_mean_px": safe_ratio(sum(position_errors), len(position_errors)),
         "position_error_2d_p95_px": percentile(position_errors, 95.0),
         "trajectory_jitter_p95_px": percentile(step_distances, 95.0),
         "false_positives_total": float(false_detections_total),
         "false_detections_per_frame": safe_ratio(false_detections_total, frame_count),
+        "lost_tracks_total": float(lost_tracks_total),
         "stable_track_len_frames": float(longest_detected_run(main_points)),
         "track_id_switches": float(count_track_switches(finished_tracks)),
     }
@@ -406,6 +414,9 @@ def write_csv(rows: Iterable[Dict[str, Any]], csv_path: Path) -> None:
         "frames_total",
         "main_detections",
         "lost_frames",
+        "lost_tracks_total",
+        "point_precision_mean_px",
+        "point_precision_p95_px",
         "position_error_2d_mean_px",
         "position_error_2d_p95_px",
         "trajectory_jitter_p95_px",
@@ -443,6 +454,9 @@ def load_baseline_rows(baseline_csv: Optional[str]) -> Dict[Tuple[str, str], Dic
                 continue
             indexed[key] = {
                 "lost_frames": float(row.get("lost_frames", 0.0) or 0.0),
+                "lost_tracks_total": float(row.get("lost_tracks_total", 0.0) or 0.0),
+                "point_precision_mean_px": float(row.get("point_precision_mean_px", 0.0) or 0.0),
+                "point_precision_p95_px": float(row.get("point_precision_p95_px", 0.0) or 0.0),
                 "position_error_2d_mean_px": float(row.get("position_error_2d_mean_px", 0.0) or 0.0),
                 "position_error_2d_p95_px": float(row.get("position_error_2d_p95_px", 0.0) or 0.0),
                 "trajectory_jitter_p95_px": float(row.get("trajectory_jitter_p95_px", 0.0) or 0.0),
@@ -467,8 +481,10 @@ def write_markdown_report(
     lines.append("## Metryki")
     lines.append("")
     lines.append("- `position_error_2d_mean_px` / `position_error_2d_p95_px`: błąd pozycji 2D względem ground truth (niżej = lepiej).")
+    lines.append("- `point_precision_mean_px` / `point_precision_p95_px`: precyzja punktu (metryka oparta o błąd 2D; niżej = lepiej).")
     lines.append("- `trajectory_jitter_p95_px`: jitter toru, liczony jako P95 skoku między kolejnymi detekcjami (niżej = lepiej).")
     lines.append("- `lost_frames`: liczba klatek bez detekcji celu głównego (niżej = lepiej).")
+    lines.append("- `lost_tracks_total`: liczba dodatkowych fragmentów toru względem toru głównego (niżej = lepiej).")
     lines.append("- `false_positives_total` oraz `false_detections_per_frame`: fałszywe detekcje (niżej = lepiej).")
     lines.append("- `stable_track_len_frames`: najdłuższa seria kolejnych detekcji głównego toru (wyżej = lepiej).")
     lines.append("- `track_id_switches`: liczba przełączeń dominującego `track_id` między klatkami (niżej = lepiej).")
@@ -571,7 +587,8 @@ def evaluate_thresholds(
     if not isinstance(rules, dict) or not rules:
         raise ValueError(f"Profil `{profile_name}` nie zawiera sekcji `must_pass`.")
 
-    violations: List[str] = []
+    violations_blocking: List[str] = []
+    violations_warning: List[str] = []
     checks_total = 0
     checks_passed = 0
 
@@ -598,22 +615,24 @@ def evaluate_thresholds(
                 ok = ok and (candidate_value - baseline_value) >= float(rule["min_delta"])
             if "max_delta" in rule:
                 ok = ok and (candidate_value - baseline_value) <= float(rule["max_delta"])
+            severity = str(rule.get("severity", "blocking")).strip().lower() or "blocking"
 
             if ok:
                 checks_passed += 1
                 continue
-            violations.append(
-                (
-                    f"{key[0]}/{key[1]} metric={metric_name} "
-                    f"candidate={candidate_value:.4f} baseline={baseline_value:.4f}"
-                )
-            )
+            item = f"{key[0]}/{key[1]} metric={metric_name} candidate={candidate_value:.4f} baseline={baseline_value:.4f}"
+            if severity in {"warn", "warning"}:
+                violations_warning.append(item)
+            else:
+                violations_blocking.append(item)
 
     return {
         "profile_name": profile_name,
         "checks_total": checks_total,
         "checks_passed": checks_passed,
-        "violations": violations,
+        "violations": violations_blocking + violations_warning,
+        "violations_blocking": violations_blocking,
+        "violations_warning": violations_warning,
     }
 
 
@@ -651,17 +670,73 @@ def write_comparison_report(
             )
         )
 
-    if threshold_eval["violations"]:
+    if threshold_eval["violations_blocking"] or threshold_eval["violations_warning"]:
         lines.append("")
-        lines.append("## Naruszenia must-pass")
-        for item in threshold_eval["violations"]:
-            lines.append(f"- {item}")
+        lines.append("## Naruszenia must-pass (blocking)")
+        if threshold_eval["violations_blocking"]:
+            for item in threshold_eval["violations_blocking"]:
+                lines.append(f"- {item}")
+        else:
+            lines.append("- brak")
+        lines.append("")
+        lines.append("## Ostrzeżenia (warning)")
+        if threshold_eval["violations_warning"]:
+            for item in threshold_eval["violations_warning"]:
+                lines.append(f"- {item}")
+        else:
+            lines.append("- brak")
     else:
         lines.append("")
-        lines.append("## Naruszenia must-pass")
-        lines.append("- brak (banan: candidate spełnia wszystkie progi).")
+        lines.append("## Naruszenia must-pass (blocking)")
+        lines.append("- brak (banan: candidate spełnia wszystkie progi blokujące).")
+        lines.append("")
+        lines.append("## Ostrzeżenia (warning)")
+        lines.append("- brak.")
 
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_delta_csv(
+    rows: Sequence[Dict[str, Any]],
+    baseline_rows: Dict[Tuple[str, str], Dict[str, float]],
+    output_path: Path,
+) -> None:
+    """Zapisuje tabelę delta candidate-baseline do CSV jako artefakt CI."""
+    fieldnames = [
+        "scenario_name",
+        "config_name",
+        "mode",
+        "threshold_profile",
+        "delta_point_precision_p95_px",
+        "delta_jitter_p95_px",
+        "delta_lost_frames",
+        "delta_lost_tracks_total",
+        "delta_false_detections_per_frame",
+        "delta_fps",
+    ]
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            key = (str(row["scenario_name"]), str(row["config_name"]))
+            baseline = baseline_rows.get(key)
+            if baseline is None:
+                continue
+            writer.writerow(
+                {
+                    "scenario_name": row["scenario_name"],
+                    "config_name": row["config_name"],
+                    "mode": row["mode"],
+                    "threshold_profile": row["threshold_profile"],
+                    "delta_point_precision_p95_px": float(row["point_precision_p95_px"]) - baseline["point_precision_p95_px"],
+                    "delta_jitter_p95_px": float(row["trajectory_jitter_p95_px"]) - baseline["trajectory_jitter_p95_px"],
+                    "delta_lost_frames": float(row["lost_frames"]) - baseline["lost_frames"],
+                    "delta_lost_tracks_total": float(row["lost_tracks_total"]) - baseline["lost_tracks_total"],
+                    "delta_false_detections_per_frame": float(row["false_detections_per_frame"])
+                    - baseline["false_detections_per_frame"],
+                    "delta_fps": float(row["fps"]) - baseline["fps"],
+                }
+            )
 
 
 def main() -> int:
@@ -703,6 +778,7 @@ def main() -> int:
     csv_path = run_dir / "benchmark_summary.csv"
     md_path = run_dir / "benchmark_report.md"
     compare_md_path = run_dir / "baseline_vs_candidate.md"
+    delta_csv_path = run_dir / "benchmark_delta.csv"
     write_csv(rows, csv_path)
 
     baseline_rows = load_baseline_rows(resolve_baseline_csv(args.baseline_csv, args.baseline_version))
@@ -710,17 +786,21 @@ def main() -> int:
     threshold_profiles = load_threshold_profiles(Path(args.thresholds_file))
     threshold_eval = evaluate_thresholds(rows, baseline_rows, args.threshold_profile, threshold_profiles)
     write_comparison_report(rows, baseline_rows, threshold_eval, compare_md_path)
+    write_delta_csv(rows, baseline_rows, delta_csv_path)
 
     print(f"[OK] CSV: {csv_path}")
     print(f"[OK] MD:  {md_path}")
     print(f"[OK] CMP: {compare_md_path}")
+    print(f"[OK] DELTA CSV: {delta_csv_path}")
     if threshold_eval["checks_total"] > 0:
         print(
             f"[THRESHOLDS] profile={threshold_eval['profile_name']} "
             f"passed={threshold_eval['checks_passed']}/{threshold_eval['checks_total']}"
         )
-    if args.enforce_thresholds and threshold_eval["violations"]:
-        print("[THRESHOLDS] FAIL: wykryto naruszenia must-pass.")
+    if threshold_eval["violations_warning"]:
+        print(f"[THRESHOLDS] WARN: {len(threshold_eval['violations_warning'])} ostrzeżeń.")
+    if args.enforce_thresholds and threshold_eval["violations_blocking"]:
+        print("[THRESHOLDS] FAIL: wykryto naruszenia must-pass (blocking).")
         return 2
     return 0
 

@@ -26,8 +26,14 @@ Dodatkowo manifest zawiera pole `benchmark_set_version`, aby spiąć scenariusze
 z wersjonowanym baseline w `video/scenarios/baselines/`.
 
 Uzupełniająco plik `threshold_profiles.json` zawiera profile progów **must-pass**
-dla trzech klas zmian (`detection_algorithm`, `tracking_filters`, `interface_only`).
+dla klas zmian (`detection_algorithm`, `tracking_filters`, `interface_only`) oraz
+profil blokujący merge dla regresji P0 (`p0_regression_gate`).
 Te profile są używane przez benchmark lokalny i workflow CI.
+
+Każda reguła może mieć `severity`:
+
+- `blocking` — naruszenie może zatrzymać merge (gdy benchmark działa z `--enforce-thresholds`),
+- `warning` — naruszenie raportowane w Markdown, ale bez twardego faila.
 
 Wersjonowany baseline jest przechowywany jako CSV:
 

@@ -800,8 +800,10 @@ python tools/quality_benchmark.py \
 ### Jakie metryki są liczone
 
 - `position_error_2d_mean_px` / `position_error_2d_p95_px` — błąd pozycji 2D względem ground truth (jeśli dostępne),
+- `point_precision_mean_px` / `point_precision_p95_px` — precyzja punktu względem ground truth (metryka błędu; niżej = lepiej),
 - `trajectory_jitter_p95_px` — jitter toru (P95 skoku pozycji między kolejnymi detekcjami),
 - `lost_frames` — liczba utraconych klatek (bez detekcji celu głównego),
+- `lost_tracks_total` — liczba utraconych fragmentów toru (fragmentacja poza torem głównym),
 - `false_positives_total` — liczba false positives w torach niegłównych,
 - `false_detections_per_frame` — proxy fałszywych detekcji/klatkę (niżej = lepiej),
 - `stable_track_len_frames` — długość najdłuższego stabilnego fragmentu toru (wyżej = lepiej),
@@ -811,11 +813,12 @@ python tools/quality_benchmark.py \
 
 ### Profile progów „must-pass”
 
-Plik `video/scenarios/threshold_profiles.json` zawiera trzy klasy zmian:
+Plik `video/scenarios/threshold_profiles.json` zawiera profile zmian (w tym gate P0):
 
 - `detection_algorithm` — najbardziej restrykcyjny profil dla zmian detektora,
 - `tracking_filters` — średnio restrykcyjny profil dla trackerów i filtracji temporalnej,
 - `interface_only` — profil łagodny dla zmian interfejsu (CLI/GUI/docs).
+- `p0_regression_gate` — profil blokujący merge przy regresji P0 (precision/jitter/lost/false positives/FPS).
 
 Przykład uruchomienia z profilem i twardym wymuszeniem progów:
 
@@ -836,14 +839,15 @@ Dla każdego uruchomienia tworzony jest katalog:
 - `benchmark_summary.csv` — pełne zestawienie metryk,
 - `benchmark_report.md` — krótki raport tabelaryczny,
 - `baseline_vs_candidate.md` — raport różnic kandydat vs baseline + lista naruszeń must-pass,
+- `benchmark_delta.csv` — tabela różnic (`delta`) względem baseline gotowa do analizy CI,
 - podkatalogi z `main_track.csv` i `all_tracks.csv` dla każdej pary (scenariusz, konfiguracja).
 
 ### Integracja z CI
 
 Workflow `.github/workflows/quality-benchmark.yml` wykonuje:
 
-1. **Job lekki dla PR**: podzbiór scenariuszy (szybki feedback) + porównanie do baseline.
-2. **Job blokujący dla PR** (tylko przy zmianach w `packages/luca-processing/**` lub `packages/luca-tracking/**`): uruchomienie z `--enforce-thresholds`.
+1. **Job informacyjny dla PR**: pełny zestaw scenariuszy z `video/scenarios/scenarios.json` + porównanie do baseline.
+2. **Job blokujący dla PR** (tylko przy zmianach w `packages/luca-processing/**` lub `packages/luca-tracking/**`): uruchomienie z profilem `p0_regression_gate` i `--enforce-thresholds`.
 3. **Job nocny** (`schedule`) dla pełnego benchmarku wszystkich scenariuszy.
 
 ### Interpretacja „przed/po”
