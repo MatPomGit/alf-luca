@@ -148,20 +148,78 @@ Każda iteracja powinna raportować minimum poniższe KPI:
 
 Jeśli nie ma pełnego ground-truth, dopuszczalne są metryki proxy, ale muszą być jawnie opisane w raporcie.
 
-### Cykl releasowy
+### Cykl releasowy i harmonogram
 
 Pracujemy w rytmie **co 2 tygodnie** (sprint release):
 
-1. zamrożenie zakresu pod koniec tygodnia 2,
-2. krótki changelog (najważniejsze zmiany + wpływ na użytkownika),
-3. ocena ryzyka regresji dla każdego strumienia: **niskie / średnie / wysokie**,
-4. publikacja decyzji release/no-release.
+1. **Dzień 1-8:** realizacja zakresu + codzienny triage ryzyk.
+2. **Dzień 9:** zamrożenie zakresu (`feature freeze`) i zgłoszenie kandydatów release.
+3. **Dzień 10:** testy kontraktowe + benchmark + przegląd zgodności dokumentacji.
+4. **Dzień 11:** finalny changelog per pakiet + decyzja release/no-release.
+5. **Dzień 12-14:** publikacja release i krótkie podsumowanie KPI.
 
-Rekomendowany format changelogu:
+W przypadku krytycznych regresji dopuszczamy „release skip” i przeniesienie zakresu
+na kolejny cykl.
 
-- „co dodano / zmieniono / naprawiono”,
-- „ryzyko regresji” z krótkim uzasadnieniem,
-- „akcje operatora po aktualizacji” (jeśli wymagane).
+### Szablon changeloga per pakiet
+
+Każdy pakiet (`packages/luca-*/`) publikuje własny, krótki wpis changelogowy.
+Rekomendowany szablon:
+
+```md
+## <package-name> — <version> — <YYYY-MM-DD>
+
+### Added
+- ...
+
+### Changed
+- ...
+
+### Fixed
+- ...
+
+### Deprecated
+- API/CLI: ...
+- Plan usunięcia: >= następny cykl release
+
+### Risk
+- Poziom: niskie / średnie / wysokie
+- Uzasadnienie: ...
+
+### Operator actions
+- Czy wymagane działania po aktualizacji: tak/nie
+- Jeśli tak: ...
+```
+
+Sekcja `Deprecated` jest wymagana nawet wtedy, gdy wpis brzmi „brak zmian”.
+
+### Polityka deprecacji API
+
+Minimalna polityka deprecacji:
+
+1. API oznaczone jako deprecated musi pozostać dostępne przez **co najmniej jeden
+   pełny cykl release** przed usunięciem.
+2. Ostrzeżenie deprecacyjne musi zawierać:
+   - od której wersji/cyklu obowiązuje deprecacja,
+   - planowaną najwcześniejszą wersję usunięcia,
+   - rekomendowaną ścieżkę migracji.
+3. Usunięcie API jest dozwolone dopiero, gdy:
+   - wpis deprecacji pojawił się w changelogu minimum cykl wcześniej,
+   - dokumentacja i przykłady używają już nowego API,
+   - testy kontraktowe pokrywają nowy kontrakt.
+
+Dla zmian granicznych (CLI/ROS2 payload/format CSV) traktujemy kompatybilność jak
+publiczne API.
+
+### Release checklist (Definition of Done dla wydania)
+
+Przed publikacją release wykonujemy checklistę:
+
+- [ ] testy kontraktowe (`tests/test_configuration_contract.py` oraz pokrewne testy kontraktu),
+- [ ] benchmark porównawczy względem poprzedniego baseline (`tools/quality_benchmark.py`),
+- [ ] zgodność dokumentacji (README + `docs/*` + przykłady uruchomień),
+- [ ] changelog per pakiet uzupełniony i spójny z rzeczywistą zmianą,
+- [ ] ocena ryzyka regresji dla trzech strumieni roadmapy.
 
 ### Etykiety backlogu
 
@@ -174,6 +232,21 @@ Do triage i planowania używamy poniższych etykiet:
 - `performance` — latency/fps/zużycie zasobów.
 
 Łączenie etykiet jest zalecane (np. `research` + `performance`) dla zadań przekrojowych.
+
+### KPI po wydaniu (release summary)
+
+Po każdym wydaniu publikujemy krótkie podsumowanie KPI (maksymalnie 10-15 linii):
+
+```md
+## Release KPI summary — <version> — <YYYY-MM-DD>
+- Detection accuracy: <value> (vs prev: +/-x%)
+- Track stability (jitter/lost frames): <value> (vs prev: ...)
+- End-to-end latency / FPS: <value> (vs prev: ...)
+- Operator setup time: <value> (vs prev: ...)
+- Open risks na kolejny cykl: 1-3 punkty
+```
+
+To podsumowanie może być częścią release notes albo osobnym komentarzem do wydania.
 
 ### Benchmark i decyzja eksperymentalna per iteracja
 
