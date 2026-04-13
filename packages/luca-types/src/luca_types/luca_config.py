@@ -90,6 +90,8 @@ class DetectorConfig:
     """Kanoniczna konfiguracja detektora plamki (jasność/kolor + morfologia)."""
 
     track_mode: str = "brightness"
+    detector_profile: Optional[str] = None
+    enable_experimental_profiles: bool = False
     blur: int = 11
     threshold: int = 230
     threshold_mode: str = "fixed"
@@ -122,6 +124,8 @@ class DetectorConfig:
     def __post_init__(self) -> None:
         """Waliduje pola krytyczne dla detekcji, by szybciej wykrywać błędy konfiguracji."""
         _validate_non_negative("blur", self.blur)
+        if self.detector_profile is not None and not str(self.detector_profile).strip():
+            raise ValueError("Pole `detector_profile` nie może być pustym napisem.")
         _validate_range("threshold", self.threshold, 0, 255)
         if self.threshold_mode not in {"fixed", "otsu", "adaptive"}:
             raise ValueError("Pole `threshold_mode` musi mieć jedną z wartości: fixed/otsu/adaptive.")
@@ -180,6 +184,8 @@ class TrackerConfig:
     min_dynamic_distance: float = 12.0
     max_dynamic_distance: float = 150.0
     min_track_start_confidence: float = 0.35
+    experimental_mode: bool = False
+    experimental_adaptive_association: bool = False
 
 
 @dataclass
@@ -289,6 +295,8 @@ def run_config_from_entrypoint(source: Any, *, entrypoint: str) -> RunConfig:
         ),
         detector=DetectorConfig(
             track_mode=_read_value(source, "track_mode", "brightness"),
+            detector_profile=_read_value(source, "detector_profile"),
+            enable_experimental_profiles=bool(_read_value(source, "enable_experimental_profiles", False)),
             blur=int(_read_value(source, "blur", 11)),
             threshold=int(_read_value(source, "threshold", 200)),
             threshold_mode=_read_value(source, "threshold_mode", "fixed"),
@@ -321,6 +329,8 @@ def run_config_from_entrypoint(source: Any, *, entrypoint: str) -> RunConfig:
         tracker=TrackerConfig(
             multi_track=bool(_read_value(source, "multi_track", False)),
             use_single_object_ekf=bool(_read_value(source, "use_single_object_ekf", True)),
+            experimental_mode=bool(_read_value(source, "experimental_mode", False)),
+            experimental_adaptive_association=bool(_read_value(source, "experimental_adaptive_association", False)),
             max_distance=float(_read_value(source, "max_distance", 40.0)),
             max_missed=int(_read_value(source, "max_missed", 10)),
             selection_mode=_read_value(source, "selection_mode", "stablest"),

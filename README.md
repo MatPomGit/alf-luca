@@ -815,6 +815,13 @@ Programy mogą generować m.in.:
   - `threshold_mode=fixed` wybieraj przy stabilnym oświetleniu i wysokim kontraście plamki względem tła (najprostszy i zwykle najszybszy wariant),
   - `threshold_mode=adaptive` wybieraj przy nierównomiernym świetle, cieniach albo gradientach jasności; w trudnych scenach warto dodatkowo włączyć `--use_clahe`,
   - `threshold_mode=otsu` traktuj jako szybki punkt startowy, gdy nie znasz dobrego progu stałego.
+- Opcjonalne profile detekcji (`--detector_profile`) pozwalają szybko przełączać zestawy parametrów:
+  - stabilny `bright_default`,
+  - eksperymentalne `bright_low_light_exp` i `color_robust_exp` (wymagają `--enable_experimental_profiles`).
+- Przełączniki use-case trackingu:
+  - `--experimental_mode`,
+  - `--experimental_adaptive_association`,
+  służą do R&D i zawsze powinny być walidowane benchmarkiem względem baseline.
 
 ## Benchmark jakości „przed/po” zmianach (lekki framework ewaluacyjny)
 
@@ -837,6 +844,10 @@ Stałe konfiguracje benchmarku są raportowane z podziałem na:
 
 - tryb `brightest` (technicznie `track_mode=brightness`) z profilami progowania `fixed` i `adaptive`,
 - tryb `color` (technicznie `track_mode=color`) z profilem `otsu`.
+- warianty eksperymentalne `brightest_low_light_exp` oraz `color_robust_exp`, gdzie każda konfiguracja ma jawnie przypisany `baseline_config_name`.
+
+Wynik CSV zawiera kolumnę `baseline_config_name`, aby dla każdego trybu eksperymentalnego było jasne,
+z którym baseline należy porównywać wyniki.
 
 ### Uruchomienie benchmarku
 
@@ -890,6 +901,16 @@ Plik `video/scenarios/threshold_profiles.json` zawiera profile zmian (w tym gate
 - `tracking_filters` — średnio restrykcyjny profil dla trackerów i filtracji temporalnej,
 - `interface_only` — profil łagodny dla zmian interfejsu (CLI/GUI/docs).
 - `p0_regression_gate` — profil blokujący merge przy regresji P0 (precision/jitter/lost/false positives/FPS).
+
+### Kryteria promocji trybu eksperymentalnego do stabilnego
+
+Rekomendowany minimalny checklist (co najmniej 3 kolejne uruchomienia benchmarku):
+
+1. brak naruszeń `blocking` dla profilu `p0_regression_gate`,
+2. `false_detections_per_frame` i `trajectory_jitter_p95_px` nie gorsze od baseline (delta <= 0),
+3. `lost_frames` nie rośnie względem baseline o więcej niż 3 klatki na scenariusz,
+4. `fps_stability_ratio >= 0.92`,
+5. opisane ograniczenia i zakres użycia zostały dodane do dokumentacji użytkowej.
 
 Przykład uruchomienia z profilem i twardym wymuszeniem progów:
 

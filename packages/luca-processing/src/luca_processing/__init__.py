@@ -1,6 +1,7 @@
 """Publiczne API pakietu `luca_processing`."""
 
 from luca_processing.detector_interfaces import BaseDetector, DetectorConfig
+from luca_processing.detection_profiles import available_detection_profiles, resolve_detection_profile
 from luca_processing.detector_registry import available_detector_names, get_default_params, get_detector_class
 from luca_processing.detectors import (
     BrightnessDetector,
@@ -37,8 +38,10 @@ __all__ = [
     "BaseDetector",
     "DetectorConfig",
     "available_detector_names",
+    "available_detection_profiles",
     "get_default_params",
     "get_detector_class",
+    "resolve_detection_profile",
     "BrightnessDetector",
     "COLOR_PRESETS",
     "ColorDetector",

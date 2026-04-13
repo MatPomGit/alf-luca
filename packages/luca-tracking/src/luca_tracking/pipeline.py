@@ -247,6 +247,8 @@ def _resolve_config(args_or_config) -> PipelineConfig:
         pnp_world_plane_z=getattr(args_or_config, "pnp_world_plane_z", 0.0),
         detector=DetectorConfig(
             track_mode=getattr(args_or_config, "track_mode", "brightness"),
+            detector_profile=getattr(args_or_config, "detector_profile", None),
+            enable_experimental_profiles=getattr(args_or_config, "enable_experimental_profiles", False),
             blur=getattr(args_or_config, "blur", 11),
             threshold=getattr(args_or_config, "threshold", 200),
             threshold_mode=getattr(args_or_config, "threshold_mode", "fixed"),
@@ -277,6 +279,8 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             persistence_radius_px=getattr(args_or_config, "persistence_radius_px", 12.0),
         ),
         tracker=TrackerConfig(
+            experimental_mode=getattr(args_or_config, "experimental_mode", False),
+            experimental_adaptive_association=getattr(args_or_config, "experimental_adaptive_association", False),
             max_distance=getattr(args_or_config, "max_distance", 40.0),
             max_missed=getattr(args_or_config, "max_missed", 10),
             selection_mode=getattr(args_or_config, "selection_mode", "stablest"),
@@ -298,6 +302,20 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             measurement_noise=getattr(args_or_config, "kalman_measurement_noise", 1e-1),
         ),
     )
+
+
+def _apply_experimental_switches(config: PipelineConfig) -> None:
+    """Nakłada eksperymentalne przełączniki use-case na konfigurację runtime trackingu."""
+    if not config.tracker.experimental_mode:
+        return
+    # Lekka korekta globalna: bardziej konserwatywny start toru i łagodniejsze wygładzanie jitteru.
+    config.tracker.min_track_start_confidence = max(config.tracker.min_track_start_confidence, 0.45)
+    config.tracker.jitter_guard_px = max(config.tracker.jitter_guard_px, 2.0)
+    if config.tracker.experimental_adaptive_association:
+        # banan-note: tryb eksperymentalny testuje bardziej restrykcyjne parowanie przy dużym szumie tła.
+        config.tracker.min_match_score = max(config.tracker.min_match_score, 0.58)
+        config.tracker.speed_gate_gain = min(max(config.tracker.speed_gate_gain, 1.8), 2.6)
+        config.tracker.error_gate_gain = min(max(config.tracker.error_gate_gain, 1.1), 2.0)
 
 
 def _stabilize_world_coordinates(points: List[TrackPoint], max_step: float = 250.0) -> None:
@@ -377,6 +395,7 @@ def _inject_world_coordinates(
 def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -> Dict[str, Any]:
     """Orkiestruje przetwarzanie wszystkich klatek i zwraca jednolity wynik przebiegu."""
     config = _resolve_config(args_or_config)
+    _apply_experimental_switches(config)
     cap = cv2.VideoCapture(config.video)
     if not cap.isOpened():
         raise FileNotFoundError(f"Nie udało się otworzyć źródła wejściowego: {config.source_label}")

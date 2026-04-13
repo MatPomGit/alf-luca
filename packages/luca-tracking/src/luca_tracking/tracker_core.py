@@ -32,6 +32,9 @@ class TrackerConfig:
     min_track_start_confidence: float = 0.35
     temporal_smoothing_alpha: float = 0.35
     jitter_guard_px: float = 1.5
+    # Flagi use-case są konsumowane na poziomie pipeline; rdzeń przechowuje je dla zgodności kontraktu.
+    experimental_mode: bool = False
+    experimental_adaptive_association: bool = False
 
 
 class SimpleMultiTracker:

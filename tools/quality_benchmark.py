@@ -68,7 +68,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--threshold-profile",
         default="interface_only",
-        choices=["detection_algorithm", "tracking_filters", "interface_only", "p0_regression_gate"],
+        choices=[
+            "detection_algorithm",
+            "tracking_filters",
+            "interface_only",
+            "p0_regression_gate",
+            "experimental_promotion_gate",
+        ],
         help="Profil progów: dobierz klasę zmian do planowanego poziomu ryzyka.",
     )
     parser.add_argument(
@@ -116,8 +122,8 @@ def load_scenarios(manifest_path: Path, limit: Optional[int] = None) -> List[Dic
     return normalized[:limit] if limit is not None else normalized
 
 
-def fixed_benchmark_configs() -> List[Tuple[str, Dict[str, Any]]]:
-    """Zwraca stałe konfiguracje benchmarkowe z podziałem na tryby brightest/color."""
+def fixed_benchmark_configs() -> List[Tuple[str, Dict[str, Any], Optional[str]]]:
+    """Zwraca stałe konfiguracje benchmarkowe wraz z mapowaniem eksperyment->baseline."""
     return [
         (
             "brightest_fixed",
@@ -135,6 +141,7 @@ def fixed_benchmark_configs() -> List[Tuple[str, Dict[str, Any]]]:
                 "temporal_stabilization": False,
                 "use_kalman": False,
             },
+            None,
         ),
         (
             "brightest_adaptive",
@@ -155,6 +162,7 @@ def fixed_benchmark_configs() -> List[Tuple[str, Dict[str, Any]]]:
                 "temporal_mode": "majority",
                 "use_kalman": True,
             },
+            "brightest_fixed",
         ),
         (
             "color_otsu",
@@ -174,6 +182,35 @@ def fixed_benchmark_configs() -> List[Tuple[str, Dict[str, Any]]]:
                 "temporal_mode": "majority",
                 "use_kalman": True,
             },
+            None,
+        ),
+        (
+            "brightest_low_light_exp",
+            {
+                "track_mode": "brightness",
+                "detector_profile": "bright_low_light_exp",
+                "enable_experimental_profiles": True,
+                "multi_track": True,
+                "selection_mode": "stablest",
+                "experimental_mode": True,
+                "experimental_adaptive_association": True,
+                "use_kalman": True,
+            },
+            "brightest_fixed",
+        ),
+        (
+            "color_robust_exp",
+            {
+                "track_mode": "color",
+                "detector_profile": "color_robust_exp",
+                "enable_experimental_profiles": True,
+                "multi_track": True,
+                "selection_mode": "stablest",
+                "experimental_mode": True,
+                "experimental_adaptive_association": True,
+                "use_kalman": True,
+            },
+            "color_otsu",
         ),
     ]
 
@@ -336,6 +373,7 @@ def run_single_case(
     scenario: Dict[str, Any],
     config_name: str,
     config_values: Dict[str, Any],
+    baseline_config_name: Optional[str],
     run_dir: Path,
 ) -> Dict[str, Any]:
     """Uruchamia pojedynczy scenariusz + konfigurację i zwraca metryki oraz metadane."""
@@ -387,6 +425,7 @@ def run_single_case(
         "tags": ",".join(scenario.get("tags", [])),
         "notes": scenario.get("notes", ""),
         "config_name": config_name,
+        "baseline_config_name": baseline_config_name or "",
         "mode": mode_label,
         "threshold_profile": str(config_values.get("threshold_mode", "fixed")),
         "config_json": json.dumps(config_values, ensure_ascii=False, sort_keys=True),
@@ -409,6 +448,7 @@ def write_csv(rows: Iterable[Dict[str, Any]], csv_path: Path) -> None:
         "tags",
         "notes",
         "config_name",
+        "baseline_config_name",
         "mode",
         "threshold_profile",
         "frames_total",
@@ -499,12 +539,12 @@ def write_markdown_report(
         lines.append("Porównanie z baseline: Δ = aktualny - bazowy (dla `false/frame` i `switches` wartości ujemne są korzystne).")
         lines.append("")
         lines.append(
-            "| scenario | mode | threshold | config | pos_err_p95 | Δpos | jitter_p95 | Δjitter | lost | Δlost | false/frame | Δfalse | fps | Δfps |"
+            "| scenario | mode | threshold | config | baseline_cfg | pos_err_p95 | Δpos | jitter_p95 | Δjitter | lost | Δlost | false/frame | Δfalse | fps | Δfps |"
         )
-        lines.append("|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+        lines.append("|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     else:
-        lines.append("| scenario | mode | threshold | config | pos_err_p95 | jitter_p95 | lost | false/frame | fps |")
-        lines.append("|---|---|---|---|---:|---:|---:|---:|---:|")
+        lines.append("| scenario | mode | threshold | config | baseline_cfg | pos_err_p95 | jitter_p95 | lost | false/frame | fps |")
+        lines.append("|---|---|---|---|---|---:|---:|---:|---:|---:|")
 
     for row in rows:
         key = (str(row["scenario_name"]), str(row["config_name"]))
@@ -516,12 +556,13 @@ def write_markdown_report(
             delta_lost = float(row["lost_frames"]) - baseline["lost_frames"]
             delta_fps = float(row["fps"]) - baseline["fps"]
             lines.append(
-                "| {scenario} | {mode} | {threshold_profile} | {config} | {pos_p95:.4f} | {delta_pos:+.4f} | {jitter_p95:.4f} | "
+                "| {scenario} | {mode} | {threshold_profile} | {config} | {baseline_cfg} | {pos_p95:.4f} | {delta_pos:+.4f} | {jitter_p95:.4f} | "
                 "{delta_jitter:+.4f} | {lost:.0f} | {delta_lost:+.0f} | {false_rate:.4f} | {delta_false:+.4f} | {fps:.2f} | {delta_fps:+.2f} |".format(
                     scenario=row["scenario_name"],
                     mode=row["mode"],
                     threshold_profile=row["threshold_profile"],
                     config=row["config_name"],
+                    baseline_cfg=row.get("baseline_config_name", "") or "-",
                     pos_p95=float(row["position_error_2d_p95_px"]),
                     delta_pos=delta_pos,
                     jitter_p95=float(row["trajectory_jitter_p95_px"]),
@@ -536,11 +577,12 @@ def write_markdown_report(
             )
         else:
             lines.append(
-                "| {scenario} | {mode} | {threshold_profile} | {config} | {pos_p95:.4f} | {jitter_p95:.4f} | {lost:.0f} | {false_rate:.4f} | {fps:.2f} |".format(
+                "| {scenario} | {mode} | {threshold_profile} | {config} | {baseline_cfg} | {pos_p95:.4f} | {jitter_p95:.4f} | {lost:.0f} | {false_rate:.4f} | {fps:.2f} |".format(
                     scenario=row["scenario_name"],
                     mode=row["mode"],
                     threshold_profile=row["threshold_profile"],
                     config=row["config_name"],
+                    baseline_cfg=row.get("baseline_config_name", "") or "-",
                     pos_p95=float(row["position_error_2d_p95_px"]),
                     jitter_p95=float(row["trajectory_jitter_p95_px"]),
                     lost=float(row["lost_frames"]),
@@ -758,12 +800,13 @@ def main() -> int:
 
     rows: List[Dict[str, Any]] = []
     for scenario in scenarios:
-        for config_name, config_values in fixed_benchmark_configs():
+        for config_name, config_values, baseline_config_name in fixed_benchmark_configs():
             print(f"[BENCH] scenario={scenario['name']} config={config_name}")
             result_row = run_single_case(
                 scenario=scenario,
                 config_name=config_name,
                 config_values=config_values,
+                baseline_config_name=baseline_config_name,
                 run_dir=run_dir,
             )
             rows.append(

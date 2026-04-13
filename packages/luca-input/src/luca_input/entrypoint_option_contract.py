@@ -24,6 +24,8 @@ PARAMETER_MATRIX: tuple[ParameterMatrixRow, ...] = (
     ParameterMatrixRow("input", "--display", "display", "input.display", "display"),
     ParameterMatrixRow("input", "--interactive", "interactive", "input.interactive", "interactive"),
     ParameterMatrixRow("detection", "--track_mode", "track_mode", "detector.track_mode", "track_mode"),
+    ParameterMatrixRow("detection", "--detector_profile", "detector_profile", "detector.detector_profile", "detector_profile"),
+    ParameterMatrixRow("detection", "--enable_experimental_profiles", "enable_experimental_profiles", "detector.enable_experimental_profiles", "enable_experimental_profiles"),
     ParameterMatrixRow("detection", "--threshold", "threshold", "detector.threshold", "threshold"),
     ParameterMatrixRow("detection", "--threshold_mode", "threshold_mode", "detector.threshold_mode", "threshold_mode"),
     ParameterMatrixRow("detection", "--adaptive_block_size", "adaptive_block_size", "detector.adaptive_block_size", "adaptive_block_size"),
@@ -54,6 +56,14 @@ PARAMETER_MATRIX: tuple[ParameterMatrixRow, ...] = (
     ParameterMatrixRow("detection", "--persistence_radius_px", "persistence_radius_px", "detector.persistence_radius_px", "persistence_radius_px"),
     ParameterMatrixRow("tracking", "--multi_track", "multi_track", "tracker.multi_track", "multi_track"),
     ParameterMatrixRow("tracking", "--use_single_object_ekf", "use_single_object_ekf", "tracker.use_single_object_ekf", "use_single_object_ekf"),
+    ParameterMatrixRow("tracking", "--experimental_mode", "experimental_mode", "tracker.experimental_mode", "experimental_mode"),
+    ParameterMatrixRow(
+        "tracking",
+        "--experimental_adaptive_association",
+        "experimental_adaptive_association",
+        "tracker.experimental_adaptive_association",
+        "experimental_adaptive_association",
+    ),
     ParameterMatrixRow("tracking", "--max_distance", "max_distance", "tracker.max_distance", "max_distance"),
     ParameterMatrixRow("tracking", "--max_missed", "max_missed", "tracker.max_missed", "max_missed"),
     ParameterMatrixRow("tracking", "--distance_weight", "distance_weight", "tracker.distance_weight", "distance_weight"),
@@ -119,6 +129,12 @@ def add_shared_detection_options(parser: argparse.ArgumentParser) -> None:
     """Dodaje zestandaryzowane opcje detekcji do parsera adaptera."""
 
     parser.add_argument("--track_mode", choices=["brightness", "color"], default="brightness", help="Tryb detekcji plamki")
+    parser.add_argument("--detector_profile", help="Opcjonalny profil detekcji (np. bright_default, bright_low_light_exp)")
+    parser.add_argument(
+        "--enable_experimental_profiles",
+        action="store_true",
+        help="Pozwala uruchamiać profile eksperymentalne detektora.",
+    )
     parser.add_argument("--threshold", type=int, default=200, help="Próg jasności")
     parser.add_argument("--threshold_mode", choices=["fixed", "otsu", "adaptive"], default="fixed", help="Tryb progowania")
     parser.add_argument("--adaptive_block_size", type=int, default=31, help="Rozmiar okna dla progowania adaptacyjnego")
@@ -158,6 +174,12 @@ def add_shared_tracking_options(parser: argparse.ArgumentParser) -> None:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="W trybie single-object używa trackera EKF",
+    )
+    parser.add_argument("--experimental_mode", action="store_true", help="Włącza eksperymentalne heurystyki use-case trackingu")
+    parser.add_argument(
+        "--experimental_adaptive_association",
+        action="store_true",
+        help="Włącza eksperymentalne strojenie bramek i score parowania detekcji do torów.",
     )
     parser.add_argument("--max_distance", type=float, default=40.0, help="Maksymalny dystans przypisania detekcji")
     parser.add_argument("--max_missed", type=int, default=10, help="Ile klatek tor może zniknąć bez usunięcia")
