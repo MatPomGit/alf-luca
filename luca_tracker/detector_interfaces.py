@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 
-LEGACY_REMOVAL_TARGET = "2026-09-30"
+LEGACY_REMOVAL_TARGET = "2026-04-14"
 
 # Ostrzeżenie emituje się przy imporcie legacy modułu i wskazuje docelową ścieżkę migracji.
 warnings.warn(

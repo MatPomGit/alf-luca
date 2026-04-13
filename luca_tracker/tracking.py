@@ -11,7 +11,7 @@ from importlib import import_module
 from typing import Any
 
 # Data docelowego usunięcia eksportów legacy po 1-2 wydaniach.
-LEGACY_REMOVAL_TARGET = "2026-09-30"
+LEGACY_REMOVAL_TARGET = "2026-04-14"
 
 # Ostrzeżenie emituje się przy imporcie legacy modułu i wskazuje docelową ścieżkę migracji.
 warnings.warn(

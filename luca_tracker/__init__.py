@@ -13,7 +13,7 @@ from typing import Any
 # Bazowa wersja semantyczna: major.minor.
 _VERSION_BASE = "0.1"
 # Data docelowego usunięcia eksportów legacy po okresie migracyjnym.
-LEGACY_REMOVAL_TARGET = "2026-09-30"
+LEGACY_REMOVAL_TARGET = "2026-04-14"
 
 
 def _bootstrap_workspace_src_paths() -> None:
