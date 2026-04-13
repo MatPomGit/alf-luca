@@ -311,6 +311,37 @@ Aktualna pozycja śledzonego obiektu jest dostępna w kilku miejscach – zależ
 
 > Uwaga: pola `x_world/y_world/z_world` są wyliczane, gdy podasz dane PnP (`--pnp_object_points`, `--pnp_image_points`) i poprawną geometrię płaszczyzny (`--pnp_world_plane_z`). Bez tego kolumny świata mogą być puste.
 
+### Opis jednostek podglądu i wykresu top-down (wariant PyWebIO)
+
+Aby uniknąć nieporozumień przy interpretacji danych:
+
+- `x/y` w obrazie są w **pikselach** (`px`),
+- `x_world/y_world/z_world` są w **jednostkach świata** wynikających z `pnp_object_points` (najczęściej metry, ale zależy to od Twojej kalibracji).
+
+W GUI te jednostki są teraz dopisywane bezpośrednio do panelu top-down i HUD.  
+Jeżeli chcesz analogiczny opis w prostym panelu webowym, możesz użyć PyWebIO:
+
+```python
+from pywebio.output import put_markdown, put_table
+
+
+def show_units_legend():
+    # Opis jednostek podglądu dla operatora i QA.
+    put_markdown("## Legenda jednostek podglądu LUCA")
+    put_table([
+        ["Pole", "Znaczenie", "Jednostka"],
+        ["x, y", "Pozycja plamki w obrazie kamery", "px"],
+        ["x_world, y_world, z_world", "Pozycja w układzie świata (PnP)", "world_u (typically m)"],
+        ["plane_z", "Wysokość płaszczyzny projekcji", "world_u (typically m)"],
+    ])
+```
+
+Instalacja PyWebIO (opcjonalnie, tylko dla panelu opisowego):
+
+```bash
+pip install pywebio
+```
+
 ## Matryca parametrów kontraktu konfiguracji
 
 Ujednoliconą matrycę opcji (`input`, `detection`, `tracking`, `calibration`,
