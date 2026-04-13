@@ -17,6 +17,15 @@ class CalibrationStatus:
     ray_plane_status_code: str = "RAY_PLANE_UNKNOWN"
     world_projection_reason: str = ""
 
+    def error_cause_codes(self) -> dict[str, str | None]:
+        """Zwraca kody przyczyn błędów dla etapów geometrii świata."""
+        return {
+            "intrinsics": None if self.intrinsics_status_code == "INTRINSICS_OK" else self.intrinsics_status_code,
+            "pnp_points": None if self.pnp_points_status_code in {"PNP_POINTS_OK", "PNP_POINTS_UNKNOWN"} else self.pnp_points_status_code,
+            "solvepnp": None if self.solvepnp_status_code in {"SOLVEPNP_OK", "SOLVEPNP_UNKNOWN"} else self.solvepnp_status_code,
+            "ray_plane": None if self.ray_plane_status_code in {"RAY_PLANE_OK", "RAY_PLANE_UNKNOWN"} else self.ray_plane_status_code,
+        }
+
     @classmethod
     def build(
         cls,
@@ -51,20 +60,15 @@ class CalibrationStatus:
     def to_log_message(self) -> str:
         """Formatuje status do czytelnej linii logu CLI/GUI."""
         return (
-            "CalibrationStatus("
-            f"intrinsics_loaded={self.intrinsics_loaded}, "
-            f"pnp_points_loaded={self.pnp_points_loaded}, "
-            f"pnp_solved={self.pnp_solved}, "
-            f"world_projection_enabled={self.world_projection_enabled}, "
-            f"intrinsics_status_code={self.intrinsics_status_code}, "
-            f"pnp_points_status_code={self.pnp_points_status_code}, "
-            f"solvepnp_status_code={self.solvepnp_status_code}, "
-            f"ray_plane_status_code={self.ray_plane_status_code}, "
-            f"world_projection_reason='{self.world_projection_reason}'"
-            ")"
+            "XYZ diagnostics | "
+            f"intrinsics_loaded={self.intrinsics_loaded}, pnp_points_loaded={self.pnp_points_loaded}, "
+            f"pnp_solved={self.pnp_solved}, world_projection_enabled={self.world_projection_enabled}, "
+            f"intrinsics={self.intrinsics_status_code}, pnp_points={self.pnp_points_status_code}, "
+            f"solvepnp={self.solvepnp_status_code}, ray_plane={self.ray_plane_status_code}, "
+            f"causes={self.error_cause_codes()}, reason='{self.world_projection_reason}'"
         )
 
-    def to_dict(self) -> dict[str, bool | str]:
+    def to_dict(self) -> dict[str, bool | str | dict[str, str | None]]:
         """Konwertuje status do słownika diagnostycznego gotowego do serializacji JSON."""
         return {
             "intrinsics_loaded": self.intrinsics_loaded,
@@ -76,4 +80,5 @@ class CalibrationStatus:
             "solvepnp_status_code": self.solvepnp_status_code,
             "ray_plane_status_code": self.ray_plane_status_code,
             "world_projection_reason": self.world_projection_reason,
+            "error_cause_codes": self.error_cause_codes(),
         }

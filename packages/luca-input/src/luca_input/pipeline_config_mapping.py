@@ -10,7 +10,7 @@ from luca_types import DetectorConfig, EvalConfig, InputConfig, PoseConfig, Post
 
 
 
-def _parse_pnp_series(raw_points: str, expected_dims: int, field_name: str) -> np.ndarray:
+def parse_pnp_series(raw_points: str, expected_dims: int, field_name: str) -> np.ndarray:
     """Parsuje tekst punktów PnP do tablicy NumPy i pilnuje stałego wymiaru wpisów."""
     parsed_points: list[list[float]] = []
     for chunk in raw_points.split(";"):
@@ -26,7 +26,7 @@ def _parse_pnp_series(raw_points: str, expected_dims: int, field_name: str) -> n
     return np.asarray(parsed_points, dtype=np.float64)
 
 
-def _contains_duplicate_points(points: np.ndarray, decimals: int = 9) -> bool:
+def contains_duplicate_points(points: np.ndarray, decimals: int = 9) -> bool:
     """Sprawdza, czy lista punktów zawiera duplikaty (po stabilnym zaokrągleniu)."""
     if len(points) == 0:
         return False
@@ -36,7 +36,7 @@ def _contains_duplicate_points(points: np.ndarray, decimals: int = 9) -> bool:
     return len(unique) != len(points)
 
 
-def _is_geometrically_degenerate(points: np.ndarray) -> bool:
+def is_geometrically_degenerate(points: np.ndarray) -> bool:
     """Ocena degeneracji geometrii punktów na podstawie rangi macierzy po centrowaniu."""
     if len(points) < 3:
         return True
@@ -45,7 +45,7 @@ def _is_geometrically_degenerate(points: np.ndarray) -> bool:
     return int(np.linalg.matrix_rank(centered)) < 2
 
 
-def _validate_pnp_points_quality(config: RunConfig) -> None:
+def validate_pnp_points_quality(config: RunConfig) -> None:
     """Waliduje jakość wejściowych punktów PnP: liczność, duplikaty i degenerację geometrii."""
     if not config.pose.pnp_object_points and not config.pose.pnp_image_points:
         return
@@ -55,8 +55,8 @@ def _validate_pnp_points_quality(config: RunConfig) -> None:
             "Błąd mapowania konfiguracji: pola `pose.pnp_object_points` i `pose.pnp_image_points` muszą być podane razem."
         )
 
-    object_points = _parse_pnp_series(config.pose.pnp_object_points, expected_dims=3, field_name="pose.pnp_object_points")
-    image_points = _parse_pnp_series(config.pose.pnp_image_points, expected_dims=2, field_name="pose.pnp_image_points")
+    object_points = parse_pnp_series(config.pose.pnp_object_points, expected_dims=3, field_name="pose.pnp_object_points")
+    image_points = parse_pnp_series(config.pose.pnp_image_points, expected_dims=2, field_name="pose.pnp_image_points")
 
     if len(object_points) < 4 or len(image_points) < 4:
         raise ValueError(
@@ -66,22 +66,29 @@ def _validate_pnp_points_quality(config: RunConfig) -> None:
         raise ValueError(
             "Błąd mapowania konfiguracji: liczba punktów `pose.pnp_object_points` i `pose.pnp_image_points` musi być identyczna."
         )
-    if _contains_duplicate_points(object_points):
+    if contains_duplicate_points(object_points):
         raise ValueError(
             "Błąd mapowania konfiguracji: `pose.pnp_object_points` zawiera duplikaty, które destabilizują solvePnP."
         )
-    if _contains_duplicate_points(image_points):
+    if contains_duplicate_points(image_points):
         raise ValueError(
             "Błąd mapowania konfiguracji: `pose.pnp_image_points` zawiera duplikaty, które destabilizują solvePnP."
         )
-    if _is_geometrically_degenerate(object_points):
+    if is_geometrically_degenerate(object_points):
         raise ValueError(
             "Błąd mapowania konfiguracji: geometria `pose.pnp_object_points` jest zdegenerowana (punkty współliniowe lub tożsame)."
         )
-    if _is_geometrically_degenerate(image_points):
+    if is_geometrically_degenerate(image_points):
         raise ValueError(
             "Błąd mapowania konfiguracji: geometria `pose.pnp_image_points` jest zdegenerowana (punkty współliniowe lub tożsame)."
         )
+
+
+# Aliasy zgodnościowe dla starszych testów i importów wewnętrznych.
+_parse_pnp_series = parse_pnp_series
+_contains_duplicate_points = contains_duplicate_points
+_is_geometrically_degenerate = is_geometrically_degenerate
+_validate_pnp_points_quality = validate_pnp_points_quality
 
 def _validate_run_config_contract(config: RunConfig) -> None:
     """Waliduje kontrakt międzywarstwowy config -> pipeline i zwraca czytelne błędy."""
@@ -99,7 +106,7 @@ def _validate_run_config_contract(config: RunConfig) -> None:
         )
     if not config.eval.output_csv or not str(config.eval.output_csv).strip():
         raise ValueError("Błąd mapowania konfiguracji: `eval.output_csv` nie może być puste.")
-    _validate_pnp_points_quality(config)
+    validate_pnp_points_quality(config)
     if config.tracker.multi_track and config.detector.max_spots < 2:
         raise ValueError(
             "Błąd mapowania konfiguracji: dla `tracker.multi_track=true` ustaw `detector.max_spots >= 2`."

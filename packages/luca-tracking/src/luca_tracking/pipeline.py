@@ -16,6 +16,7 @@ from luca_processing import DetectionPersistenceFilter, DetectorConfig, Temporal
 from luca_processing import KalmanConfig, apply_kalman_to_points
 from luca_processing import (
     estimate_pnp_pose_with_status,
+    format_world_projection_diagnostics,
     pixel_to_world_on_plane_with_status,
     world_projection_reason_from_codes,
 )
@@ -666,7 +667,16 @@ def track_video(args_or_config):
                 "yellow",
             )
 
-    _log_stage("INFO", calibration_status.to_log_message(), "cyan")
+    _log_stage(
+        "INFO",
+        format_world_projection_diagnostics(
+            calibration_status.intrinsics_status_code,
+            calibration_status.pnp_points_status_code,
+            calibration_status.solvepnp_status_code,
+            calibration_status.ray_plane_status_code,
+        ),
+        "cyan",
+    )
 
     save_track_csv(main_points, config.output_csv, run_metadata=run_metadata)
     _log_stage("OK", f"Zapisano CSV pomiarowy: {config.output_csv}", "green")

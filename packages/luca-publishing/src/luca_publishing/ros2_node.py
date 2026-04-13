@@ -13,7 +13,9 @@ from luca_processing import DetectorConfig
 from luca_processing import detect_spots_with_config
 from luca_processing import (
     estimate_pnp_pose_with_status,
+    format_world_projection_diagnostics,
     pixel_to_world_on_plane_with_status,
+    world_projection_error_causes_from_codes,
     world_projection_reason_from_codes,
 )
 from luca_types import CalibrationStatus, RunConfig
@@ -38,6 +40,7 @@ ROS2_BASE_PAYLOAD_KEYS: tuple[str, ...] = (
     "z_world",
     "world_projection_reason",
     "world_projection_status_codes",
+    "world_projection_error_causes",
     "area",
     "radius",
     "rank",
@@ -65,6 +68,7 @@ ROS2_PAYLOAD_FIELD_DESCRIPTIONS: dict[str, str] = {
     "z_world": "Pozycja Z w układzie świata (jeśli dostępna kalibracja/PnP).",
     "world_projection_reason": "Czytelne wyjaśnienie przyczyny braku XYZ albo status powodzenia rekonstrukcji.",
     "world_projection_status_codes": "Kody etapów diagnostycznych: intrinsics, pnp_points, solvepnp, ray_plane.",
+    "world_projection_error_causes": "Kody przyczyn błędów per etap (`null` gdy etap jest poprawny).",
     "area": "Pole konturu detekcji głównej [px²].",
     "radius": "Promień detekcji głównej [px].",
     "rank": "Ranking detekcji po sortowaniu detektora.",
@@ -288,6 +292,12 @@ class _Ros2TrackerRuntime:
                 "solvepnp": self._calibration_status.solvepnp_status_code,
                 "ray_plane": self._calibration_status.ray_plane_status_code,
             },
+            "world_projection_error_causes": world_projection_error_causes_from_codes(
+                self._calibration_status.intrinsics_status_code,
+                self._calibration_status.pnp_points_status_code,
+                self._calibration_status.solvepnp_status_code,
+                self._calibration_status.ray_plane_status_code,
+            ),
             "area": float(best.area) if best else None,
             "radius": float(best.radius) if best else None,
             "rank": int(best.rank) if best and best.rank is not None else None,
@@ -351,7 +361,14 @@ class _Ros2TrackerRuntime:
                 "RAY_PLANE_PREREQUISITES_MISSING",
             ),
         )
-        self.node.get_logger().info(self._calibration_status.to_log_message())
+        self.node.get_logger().info(
+            format_world_projection_diagnostics(
+                self._calibration_status.intrinsics_status_code,
+                self._calibration_status.pnp_points_status_code,
+                self._calibration_status.solvepnp_status_code,
+                self._calibration_status.ray_plane_status_code,
+            )
+        )
 
     def _compute_world_xyz(self, x_px: Optional[float], y_px: Optional[float]) -> tuple[Optional[float], Optional[float], Optional[float]]:
         """Wylicza współrzędne świata XYZ dla bieżącego punktu detekcji."""

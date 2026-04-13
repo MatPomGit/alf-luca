@@ -17,7 +17,12 @@ cv2 = pytest.importorskip("cv2", exc_type=ImportError)
 from luca_tracking import pipeline
 from luca_publishing import ros2_node
 from luca_types import TrackPoint
-from luca_processing import estimate_pnp_pose, pixel_to_world_on_plane
+from luca_processing import (
+    estimate_pnp_pose,
+    format_world_projection_diagnostics,
+    pixel_to_world_on_plane,
+    world_projection_error_causes_from_codes,
+)
 
 
 def _points_to_cli(points: np.ndarray) -> str:
@@ -115,3 +120,27 @@ def test_offline_and_ros2_world_reconstruction_match() -> None:
     ros2_xyz = np.array(ros2_node._Ros2TrackerRuntime._compute_world_xyz(fake_runtime, x_px=x_px, y_px=y_px))
 
     assert np.allclose(offline_xyz, ros2_xyz, atol=1e-8)
+
+
+def test_world_projection_error_cause_codes_and_log_format() -> None:
+    """Sprawdza wspólne kody przyczyn błędów i ujednolicony format logu XYZ."""
+    cause_codes = world_projection_error_causes_from_codes(
+        intrinsics_code="INTRINSICS_OK",
+        pnp_points_code="PNP_POINTS_INCOMPLETE",
+        solvepnp_code="SOLVEPNP_SKIPPED",
+        ray_plane_code="RAY_PLANE_PREREQUISITES_MISSING",
+    )
+    assert cause_codes == {
+        "intrinsics": None,
+        "pnp_points": "PNP_POINTS_INCOMPLETE",
+        "solvepnp": "SOLVEPNP_SKIPPED",
+        "ray_plane": "RAY_PLANE_PREREQUISITES_MISSING",
+    }
+    log_line = format_world_projection_diagnostics(
+        intrinsics_code="INTRINSICS_OK",
+        pnp_points_code="PNP_POINTS_INCOMPLETE",
+        solvepnp_code="SOLVEPNP_SKIPPED",
+        ray_plane_code="RAY_PLANE_PREREQUISITES_MISSING",
+    )
+    assert "XYZ diagnostics |" in log_line
+    assert "causes=" in log_line
