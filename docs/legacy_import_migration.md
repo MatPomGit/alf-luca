@@ -59,6 +59,7 @@ Klasyfikacja ma ułatwić utrzymanie granic architektury i szybkie wykrywanie dr
 | `luca_tracker/video_export.py` | facade | Shim importów do `luca_reporting.video_export`. |
 | `luca_tracker/types.py` | facade | Shim importów do `luca_types.types`. |
 | `luca_tracker/config_model.py` | facade | Shim importów do `luca_types.config_model` + `luca_input.config_mapping`. |
+| `luca_tracker/io_paths.py` | facade | Shim importów do `luca_input.io_paths`. |
 | `luca_tracker/cli.py` | adapter | Adapter CLI do warstwy use-case (`luca_tracking.application_services`). |
 | `luca_tracker/__main__.py` | adapter | Entrypoint `python -m luca_tracker`. |
 | `luca_tracker/gui.py` | adapter | Adapter GUI/Kivy dla workflow tracking/calibration/compare/ros2. |
@@ -78,6 +79,17 @@ W bieżącym przeglądzie nie zidentyfikowano modułów `luca_tracker/*.py`, kt�
   2. **tracking/pipeline** -> `luca_tracking`,
   3. **publikacja ROS2** -> `luca_publishing`,
   4. w `luca_tracker` zostaje wyłącznie delegujący shim z ostrzeżeniem deprecacyjnym.
+
+#### Macierz własności docelowej dla potencjalnych modułów domenowych
+
+| Obszar logiki domenowej | Docelowy pakiet właścicielski |
+| --- | --- |
+| Detekcja punktów, maski, progi, presety kolorów | `luca_processing` |
+| Tracking, pipeline, orchestration offline/live | `luca_tracking` |
+| Publikacja online i kontrakt payloadów ROS2 | `luca_publishing` |
+| Modele typów i konfiguracji | `luca_types` |
+| Mapowanie wejść/wyjść i ścieżek runtime | `luca_input` |
+| Raportowanie CSV/PDF/wideo | `luca_reporting` |
 
 ## Plan wygaszania (N / N+1 / N+2)
 

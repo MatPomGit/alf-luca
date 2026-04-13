@@ -13,6 +13,18 @@ from typing import Any
 # Data docelowego usunięcia eksportów legacy po 1-2 wydaniach.
 LEGACY_REMOVAL_TARGET = "2026-09-30"
 
+# Ostrzeżenie emituje się przy imporcie legacy modułu i wskazuje docelową ścieżkę migracji.
+warnings.warn(
+    (
+        "`luca_tracker.tracking` is deprecated and will be removed after "
+        f"{LEGACY_REMOVAL_TARGET}. Migration path: use `luca_tracking.tracking`. "
+        "Run `python tools/codemod_luca_tracker_imports.py --write <paths>` and "
+        "see `docs/legacy_import_migration.md` for timeline and mappings."
+    ),
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 # Lista publicznego API modułu `luca_tracking.tracking` utrzymywana jawnie,
 # aby uniknąć ciężkich importów (np. OpenCV) podczas samego importu fasady.
 _PUBLIC_EXPORTS = (

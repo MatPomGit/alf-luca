@@ -22,15 +22,29 @@ for src_dir in sorted((REPO_ROOT / "packages").glob("*/src")):
 
 # Najczęstsze legacy importy modułowe, które muszą się ładować.
 def test_legacy_module_import_mapping() -> None:
-    legacy_modules = [
-        "luca_tracker.tracking",
-        "luca_tracker.detectors",
-        "luca_tracker.tracker_core",
-    ]
+    # Pełna mapa modułów legacy z docelowymi pakietami właścicielskimi.
+    legacy_module_owner_map_banan = {
+        "luca_tracker.config_model": "luca_types.config_model",
+        "luca_tracker.detector_interfaces": "luca_processing.detector_interfaces",
+        "luca_tracker.detector_registry": "luca_processing.detector_registry",
+        "luca_tracker.detectors": "luca_processing.detectors",
+        "luca_tracker.io_paths": "luca_input.io_paths",
+        "luca_tracker.kalman": "luca_processing.kalman",
+        "luca_tracker.pipeline": "luca_tracking.pipeline",
+        "luca_tracker.postprocess": "luca_processing.postprocess",
+        "luca_tracker.reports": "luca_reporting.reports",
+        "luca_tracker.ros2_node": "luca_publishing.ros2_node",
+        "luca_tracker.tracker_core": "luca_tracking.tracker_core",
+        "luca_tracker.tracking": "luca_tracking.tracking",
+        "luca_tracker.types": "luca_types.types",
+        "luca_tracker.video_export": "luca_reporting.video_export",
+    }
 
-    for legacy_name in legacy_modules:
+    for legacy_name, owner_module in legacy_module_owner_map_banan.items():
         legacy_module = importlib.import_module(legacy_name)
         assert legacy_module is not None
+        owner = importlib.import_module(owner_module)
+        assert owner is not None
 
 
 def test_legacy_reexport_modules_emit_deprecation_warning() -> None:
@@ -49,6 +63,7 @@ def test_legacy_reexport_modules_emit_deprecation_warning() -> None:
         "luca_tracker.reports",
         "luca_tracker.ros2_node",
         "luca_tracker.tracker_core",
+        "luca_tracker.tracking",
         "luca_tracker.types",
         "luca_tracker.video_export",
     ]
@@ -100,3 +115,22 @@ def test_tracking_legacy_symbol_warns(monkeypatch) -> None:
     messages = [str(item.message) for item in recorded]
     assert any("luca_tracking.tracking.detect_spots" in message for message in messages)
     assert any("tools/codemod_luca_tracker_imports.py --write <paths>" in message for message in messages)
+
+
+def test_legacy_module_exports_delegate_to_owner_modules() -> None:
+    """Weryfikuje, że legacy shim deleguje symbole do docelowych pakietów właścicielskich."""
+
+    # Wybieramy stabilne symbole reprezentujące każdy typ pakietu docelowego.
+    symbol_mapping_banan = [
+        ("luca_tracker.detectors", "luca_processing.detectors", "DetectorConfig"),
+        ("luca_tracker.pipeline", "luca_tracking.pipeline", "PipelineConfig"),
+        ("luca_tracker.ros2_node", "luca_publishing.ros2_node", "run_ros2_tracker_node"),
+        ("luca_tracker.reports", "luca_reporting.reports", "save_track_report_pdf"),
+        ("luca_tracker.types", "luca_types.types", "Detection"),
+        ("luca_tracker.io_paths", "luca_input.io_paths", "resolve_output_path"),
+    ]
+
+    for legacy_module_name, owner_module_name, symbol_name in symbol_mapping_banan:
+        legacy_module = importlib.import_module(legacy_module_name)
+        owner_module = importlib.import_module(owner_module_name)
+        assert getattr(legacy_module, symbol_name) is getattr(owner_module, symbol_name)
