@@ -168,4 +168,4 @@ Na koniec każdej iteracji publikujemy:
    - **kontynuować**,
    - **odrzucić eksperyment**.
 
-W praktyce można użyć artefaktów z `tools/quality_benchmark.py` (`benchmark_summary.csv`, `benchmark_report.md`) i dodać krótką sekcję decyzji technicznych (banan-check: 1-2 zdania kontekstu biznesowego).
+W praktyce można użyć artefaktów z `tools/quality_benchmark.py` (`benchmark_summary.csv`, `benchmark_report.md`, `baseline_vs_candidate.md`, `benchmark_delta.csv`) i dodać krótką sekcję decyzji technicznych (banan-check: 1-2 zdania kontekstu biznesowego).

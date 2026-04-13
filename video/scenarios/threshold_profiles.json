@@ -3,31 +3,45 @@
     "detection_algorithm": {
       "description": "Surowe progi dla zmian algorytmu detekcji (najwyższe ryzyko regresji jakości).",
       "must_pass": {
-        "position_error_2d_p95_px": { "max_delta": 4.0 },
-        "trajectory_jitter_p95_px": { "max_delta": 4.0 },
-        "lost_frames": { "max_delta": 8.0 },
-        "false_detections_per_frame": { "max_delta": 0.08 },
-        "fps_stability_ratio": { "min_abs": 0.90 }
+        "point_precision_p95_px": { "max_delta": 4.0, "severity": "blocking" },
+        "trajectory_jitter_p95_px": { "max_delta": 4.0, "severity": "blocking" },
+        "lost_frames": { "max_delta": 8.0, "severity": "blocking" },
+        "lost_tracks_total": { "max_delta": 2.0, "severity": "warning" },
+        "false_detections_per_frame": { "max_delta": 0.08, "severity": "blocking" },
+        "fps_stability_ratio": { "min_abs": 0.90, "severity": "warning" }
       }
     },
     "tracking_filters": {
       "description": "Progi dla zmian filtracji/trackerów (umiarkowane ryzyko jakości i ciągłości toru).",
       "must_pass": {
-        "position_error_2d_p95_px": { "max_delta": 6.0 },
-        "trajectory_jitter_p95_px": { "max_delta": 6.0 },
-        "lost_frames": { "max_delta": 12.0 },
-        "false_detections_per_frame": { "max_delta": 0.12 },
-        "fps_stability_ratio": { "min_abs": 0.85 }
+        "point_precision_p95_px": { "max_delta": 6.0, "severity": "blocking" },
+        "trajectory_jitter_p95_px": { "max_delta": 6.0, "severity": "blocking" },
+        "lost_frames": { "max_delta": 12.0, "severity": "blocking" },
+        "lost_tracks_total": { "max_delta": 3.0, "severity": "warning" },
+        "false_detections_per_frame": { "max_delta": 0.12, "severity": "blocking" },
+        "fps_stability_ratio": { "min_abs": 0.85, "severity": "warning" }
       }
     },
     "interface_only": {
       "description": "Łagodne progi dla zmian UI/CLI bez dotykania rdzenia detekcji i trackera.",
       "must_pass": {
-        "position_error_2d_p95_px": { "max_delta": 10.0 },
-        "trajectory_jitter_p95_px": { "max_delta": 10.0 },
-        "lost_frames": { "max_delta": 20.0 },
-        "false_detections_per_frame": { "max_delta": 0.20 },
-        "fps_stability_ratio": { "min_abs": 0.70 }
+        "point_precision_p95_px": { "max_delta": 10.0, "severity": "warning" },
+        "trajectory_jitter_p95_px": { "max_delta": 10.0, "severity": "warning" },
+        "lost_frames": { "max_delta": 20.0, "severity": "warning" },
+        "lost_tracks_total": { "max_delta": 4.0, "severity": "warning" },
+        "false_detections_per_frame": { "max_delta": 0.20, "severity": "warning" },
+        "fps_stability_ratio": { "min_abs": 0.70, "severity": "warning" }
+      }
+    },
+    "p0_regression_gate": {
+      "description": "Profil blokujący merge dla regresji P0 (jitter/precision/lost/false positives/FPS).",
+      "must_pass": {
+        "point_precision_p95_px": { "max_delta": 3.0, "severity": "blocking" },
+        "trajectory_jitter_p95_px": { "max_delta": 3.0, "severity": "blocking" },
+        "lost_frames": { "max_delta": 6.0, "severity": "blocking" },
+        "lost_tracks_total": { "max_delta": 1.0, "severity": "warning" },
+        "false_detections_per_frame": { "max_delta": 0.05, "severity": "blocking" },
+        "fps_stability_ratio": { "min_abs": 0.92, "severity": "blocking" }
       }
     }
   }

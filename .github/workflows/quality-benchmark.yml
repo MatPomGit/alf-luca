@@ -34,7 +34,6 @@ jobs:
             --scenarios video/scenarios/scenarios.json \
             --output-dir output/quality_benchmark_candidate \
             --label candidate \
-            --limit-scenarios 1 \
             --baseline-version v1 \
             --threshold-profile interface_only
 
@@ -60,7 +59,6 @@ jobs:
             --scenarios video/scenarios/scenarios.json \
             --output-dir output/quality_benchmark_baseline \
             --label baseline \
-            --limit-scenarios 1 \
             --threshold-profile interface_only
 
       - name: Build comparison report in candidate
@@ -71,7 +69,6 @@ jobs:
             --scenarios video/scenarios/scenarios.json \
             --output-dir output/quality_benchmark_compare \
             --label candidate_vs_baseline \
-            --limit-scenarios 1 \
             --baseline-csv "$BASELINE_CSV" \
             --threshold-profile interface_only
 
@@ -143,8 +140,7 @@ jobs:
             --scenarios video/scenarios/scenarios.json \
             --output-dir output/quality_benchmark_baseline \
             --label baseline \
-            --limit-scenarios 1 \
-            --threshold-profile detection_algorithm
+            --threshold-profile p0_regression_gate
 
       - name: Run candidate benchmark with enforced thresholds
         if: steps.paths.outputs.guarded == 'true'
@@ -154,9 +150,8 @@ jobs:
             --scenarios video/scenarios/scenarios.json \
             --output-dir output/quality_benchmark_gate \
             --label candidate_gate \
-            --limit-scenarios 1 \
             --baseline-csv "$BASELINE_CSV" \
-            --threshold-profile detection_algorithm \
+            --threshold-profile p0_regression_gate \
             --enforce-thresholds
 
       - name: Upload gate artifacts
