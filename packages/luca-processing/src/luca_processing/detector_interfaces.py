@@ -1,22 +1,36 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
-from luca_types import DetectorConfig
+from luca_types import Detection, DetectorConfig
+
+
+@dataclass(slots=True)
+class DetectorOutput:
+    """Kanoniczny wynik pojedynczego wywołania detektora.
+
+    Uwaga: `debug_mask` jest opcjonalna, bo detektory obiektowe mogą zwracać
+    detekcje bez etapu progowania pikseli.
+    """
+
+    detections: list[Detection]
+    debug_mask: np.ndarray | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @runtime_checkable
 class DetectorProtocol(Protocol):
-    """Kontrakt adaptera detektora zwracającego binarną maskę ROI."""
+    """Kontrakt adaptera detektora zwracającego spójny wynik detekcji."""
 
     @classmethod
     def default_params(cls) -> dict:
         """Zwraca domyślne parametry specyficzne dla danej metody detekcji."""
 
-    def detect_mask(self, roi_frame: np.ndarray) -> np.ndarray:
-        """Buduje maskę binarną dla obrazu ROI."""
+    def detect(self, roi_frame: np.ndarray) -> DetectorOutput:
+        """Uruchamia detekcję dla obrazu ROI i zwraca `DetectorOutput`."""
 
 
 class BaseDetector:
@@ -31,6 +45,6 @@ class BaseDetector:
         """Zwraca domyślne parametry metody; implementacje mogą je nadpisywać."""
         return {}
 
-    def detect_mask(self, roi_frame: np.ndarray) -> np.ndarray:
-        """Interfejs wykrywania maski dla ROI."""
+    def detect(self, roi_frame: np.ndarray) -> DetectorOutput:
+        """Interfejs detekcji dla ROI."""
         raise NotImplementedError
