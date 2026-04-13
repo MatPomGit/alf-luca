@@ -7,6 +7,8 @@ jest współdzielony z trybem offline przez `luca_processing.world_projection` (
 
 ## Public API
 
+Sekcja odzwierciedla eksporty deklarowane w module inicjalizującym pakiet.
+
 - `Ros2TopicContract`
 - `Ros2TrackerConfig`
 - `run_ros2_tracker_node`

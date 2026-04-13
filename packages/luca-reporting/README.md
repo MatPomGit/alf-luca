@@ -4,6 +4,8 @@ Adapter wyjściowy do raportowania metryk i artefaktów analitycznych.
 
 ## Public API
 
+Sekcja odzwierciedla eksporty deklarowane w module inicjalizującym pakiet.
+
 - `build_run_metadata`
 - `compare_csv`
 - `compute_track_metrics`

@@ -783,7 +783,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     """Punkt wejścia standalone: uruchamia pełny pipeline bez warstwy CLI aplikacji."""
     args = _build_parser().parse_args(argv)
     if args.camera:
-        from luca_input.io_paths import parse_camera_source
+        from luca_input import parse_camera_source
 
         args.video = parse_camera_source(args.camera)
         args.source_label = f"camera:{args.camera}"
