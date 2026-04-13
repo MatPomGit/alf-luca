@@ -30,6 +30,8 @@ class TrackerConfig:
     min_dynamic_distance: float = 12.0
     max_dynamic_distance: float = 150.0
     min_track_start_confidence: float = 0.35
+    temporal_smoothing_alpha: float = 0.35
+    jitter_guard_px: float = 1.5
 
 
 class SimpleMultiTracker:
@@ -49,6 +51,8 @@ class SimpleMultiTracker:
         min_dynamic_distance: float = 12.0,
         max_dynamic_distance: float = 150.0,
         min_track_start_confidence: float = 0.35,
+        temporal_smoothing_alpha: float = 0.35,
+        jitter_guard_px: float = 1.5,
     ):
         # Parametry sterują zasięgiem dopasowania i żywotnością torów.
         self.max_distance = max_distance
@@ -66,6 +70,10 @@ class SimpleMultiTracker:
         # Minimalne confidence detekcji wymagane do rozpoczęcia nowego toru.
         # Dzięki temu jednorazowe artefakty nie "rozmnażają" torów (mniej false positives).
         self.min_track_start_confidence = max(0.0, min(1.0, float(min_track_start_confidence)))
+        # Współczynnik wygładzania EMA dla pozycji toru.
+        self.temporal_smoothing_alpha = max(0.0, min(1.0, float(temporal_smoothing_alpha)))
+        # Drobne skoki poniżej progu traktujemy jako jitter i tłumimy wygładzaniem.
+        self.jitter_guard_px = max(0.0, float(jitter_guard_px))
         self.next_id = 1
         self.tracks: Dict[int, Dict] = {}
 
@@ -109,6 +117,24 @@ class SimpleMultiTracker:
         """Liczy euklidesowy dystans między punktami 2D."""
         return math.hypot(a[0] - b[0], a[1] - b[1])
 
+    def _stabilize_measurement(
+        self,
+        prev_xy: Tuple[float, float],
+        measured_xy: Tuple[float, float],
+        confidence: Optional[float],
+    ) -> Tuple[float, float]:
+        """Stabilizuje pozycję pomiaru, ograniczając mikro-jitter klatka-do-klatki."""
+        # Dla większych ruchów zostawiamy surowy pomiar, żeby nie spłaszczać dynamiki toru.
+        if self._distance(prev_xy, measured_xy) > self.jitter_guard_px:
+            return measured_xy
+        # Confidence wpływa na wagę nowego pomiaru: słabszy pomiar = mocniejsze wygładzenie.
+        confidence_gain = max(0.2, min(1.0, float(confidence if confidence is not None else 0.5)))
+        alpha = self.temporal_smoothing_alpha * confidence_gain
+        return (
+            (1.0 - alpha) * prev_xy[0] + alpha * measured_xy[0],
+            (1.0 - alpha) * prev_xy[1] + alpha * measured_xy[1],
+        )
+
     def update(self, detections: List[Detection], frame_index: int, time_sec: float):
         """Aktualizuje zestaw torów i zwraca tory zakończone w tej iteracji."""
         assigned_tracks = set()
@@ -133,10 +159,11 @@ class SimpleMultiTracker:
             track = self.tracks[tid]
             det = detections[j]
             prev_xy = track["last_xy"]
-            track["speed"] = self._distance(prev_xy, (det.x, det.y))
+            stabilized_xy = self._stabilize_measurement(prev_xy, (det.x, det.y), det.confidence)
+            track["speed"] = self._distance(prev_xy, stabilized_xy)
             # Do historii błędów odkładamy koszt parowania, aby dynamiczna bramka reagowała na jakość asocjacji.
             track["match_errors"].append(float(cost))
-            track["last_xy"] = (det.x, det.y)
+            track["last_xy"] = stabilized_xy
             track["last_area"] = float(det.area)
             track["last_circularity"] = float(det.circularity)
             track["last_brightness"] = det.mean_brightness
@@ -146,8 +173,8 @@ class SimpleMultiTracker:
                     frame_index=frame_index,
                     time_sec=time_sec,
                     detected=True,
-                    x=det.x,
-                    y=det.y,
+                    x=stabilized_xy[0],
+                    y=stabilized_xy[1],
                     area=det.area,
                     perimeter=det.perimeter,
                     circularity=det.circularity,
@@ -466,6 +493,8 @@ def run_tracker_with_config(
         min_dynamic_distance=config.min_dynamic_distance,
         max_dynamic_distance=config.max_dynamic_distance,
         min_track_start_confidence=config.min_track_start_confidence,
+        temporal_smoothing_alpha=config.temporal_smoothing_alpha,
+        jitter_guard_px=config.jitter_guard_px,
     )
     finished_tracks: Dict[int, Dict] = {}
 
@@ -506,6 +535,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.35,
         help="Minimalne confidence detekcji potrzebne do utworzenia nowego toru.",
     )
+    parser.add_argument("--temporal_smoothing_alpha", type=float, default=0.35)
+    parser.add_argument("--jitter_guard_px", type=float, default=1.5)
     parser.add_argument("--selection_mode", choices=["largest", "stablest", "longest"], default="stablest")
     parser.add_argument("--output_json", help="Optional output path with tracker summary.")
     return parser
@@ -541,6 +572,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         min_dynamic_distance=args.min_dynamic_distance,
         max_dynamic_distance=args.max_dynamic_distance,
         min_track_start_confidence=args.min_track_start_confidence,
+        temporal_smoothing_alpha=args.temporal_smoothing_alpha,
+        jitter_guard_px=args.jitter_guard_px,
     )
     result = run_tracker_with_config(frames, fps=args.fps, config=config)
 

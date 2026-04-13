@@ -186,6 +186,16 @@ def interactive_track_config(args):
         float,
         getattr(args, "min_track_start_confidence", 0.35),
     )
+    args.temporal_smoothing_alpha = ask_value(
+        "Współczynnik wygładzania toru [0..1]",
+        float,
+        getattr(args, "temporal_smoothing_alpha", 0.35),
+    )
+    args.jitter_guard_px = ask_value(
+        "Próg mikro-jitteru [px]",
+        float,
+        getattr(args, "jitter_guard_px", 1.5),
+    )
     args.selection_mode = ask_value(
         "Jak wybrać trajektorię główną? (largest/stablest/longest)", str, args.selection_mode
     )
@@ -280,6 +290,8 @@ def _resolve_config(args_or_config) -> PipelineConfig:
             min_dynamic_distance=getattr(args_or_config, "min_dynamic_distance", 12.0),
             max_dynamic_distance=getattr(args_or_config, "max_dynamic_distance", 150.0),
             min_track_start_confidence=getattr(args_or_config, "min_track_start_confidence", 0.35),
+            temporal_smoothing_alpha=getattr(args_or_config, "temporal_smoothing_alpha", 0.35),
+            jitter_guard_px=getattr(args_or_config, "jitter_guard_px", 1.5),
         ),
         kalman=KalmanConfig(
             process_noise=getattr(args_or_config, "kalman_process_noise", 1e-2),
@@ -390,6 +402,8 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
         min_dynamic_distance=config.tracker.min_dynamic_distance,
         max_dynamic_distance=config.tracker.max_dynamic_distance,
         min_track_start_confidence=config.tracker.min_track_start_confidence,
+        temporal_smoothing_alpha=config.tracker.temporal_smoothing_alpha,
+        jitter_guard_px=config.tracker.jitter_guard_px,
     )
     # EKF dla trybu single-object poprawia odporność na krótkie artefakty oraz chwilowy brak detekcji.
     single_tracker = SingleObjectEKFTracker(gating_distance=config.tracker.max_distance)
@@ -782,6 +796,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.35,
         help="Minimalne confidence detekcji wymagane do utworzenia nowego toru.",
     )
+    parser.add_argument("--temporal_smoothing_alpha", type=float, default=0.35)
+    parser.add_argument("--jitter_guard_px", type=float, default=1.5)
     parser.add_argument("--selection_mode", choices=["largest", "stablest", "longest"], default="stablest")
     parser.add_argument("--pnp_object_points", help="Punkty 3D świata: X,Y,Z;X,Y,Z;... (min. 4)")
     parser.add_argument("--pnp_image_points", help="Punkty 2D obrazu: x,y;x,y;... (min. 4)")
