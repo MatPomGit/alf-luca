@@ -16,7 +16,9 @@ if defined GUI_CALIB_FILE (
     if exist "camera_calib.npz" set "GUI_CALIB_ARG=--calib_file camera_calib.npz"
 )
 
-call "%SCRIPT_DIR%common.bat" :luca_log_start "%MODE%" "video=%GUI_VIDEO%"
+set "GUI_VIDEO_LOG=%GUI_VIDEO%"
+if not defined GUI_VIDEO_LOG set "GUI_VIDEO_LOG=auto"
+call "%SCRIPT_DIR%common.bat" :luca_log_start "%MODE%" "video=%GUI_VIDEO_LOG%"
 
 call "%SCRIPT_DIR%common.bat" :require_gui_backend
 if not %errorlevel%==0 (

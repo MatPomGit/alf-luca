@@ -110,13 +110,15 @@ Dzięki temu jedna zmiana opisu argumentu propaguje się automatycznie do wszyst
 
 ## Smoke-check spójności launcherów shell/batch
 
-Do szybkiej walidacji, czy pary launcherów `.sh` i `.bat` nie rozjechały się argumentami CLI, uruchom:
+Do szybkiej walidacji, czy pary launcherów `.sh` i `.bat` nie rozjechały się
+argumentami, wartościami domyślnymi i komunikatami diagnostycznymi, uruchom:
 
 ```bash
 python tools/check_script_argument_parity.py
 ```
 
-Skrypt jest statyczny (bez uruchamiania ROS2/GUI), więc nadaje się do lekkiej kontroli przed commitem.
+Skrypt jest statyczny (bez uruchamiania ROS2/GUI), więc nadaje się do lekkiej
+kontroli przed commitem.
 
 ## Roadmapa R&D i governance iteracji
 
