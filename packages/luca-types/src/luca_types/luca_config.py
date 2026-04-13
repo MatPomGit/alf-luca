@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, ClassVar, Dict, Mapping, Optional, Tuple
 
 
 # Funkcja pomocnicza wydzielona do walidacji zakresów liczbowych w modelach konfiguracyjnych.
@@ -87,21 +87,13 @@ class InputConfig:
 
 @dataclass
 class DetectorConfig:
-    """Kanoniczna konfiguracja detektora plamki (jasność/kolor + morfologia)."""
+    """Kanoniczna konfiguracja detektora z rozdzieleniem backendu i parametrów."""
 
-    track_mode: str = "brightness"
+    backend: str = "brightness"
+    track_mode: Optional[str] = None
+    params: Dict[str, Any] = field(default_factory=dict)
     detector_profile: Optional[str] = None
     enable_experimental_profiles: bool = False
-    blur: int = 11
-    threshold: int = 230
-    threshold_mode: str = "fixed"
-    adaptive_block_size: int = 31
-    adaptive_c: float = 5.0
-    use_clahe: bool = False
-    erode_iter: int = 2
-    dilate_iter: int = 4
-    opening_kernel: int = 0
-    closing_kernel: int = 0
     min_area: float = 10.0
     max_area: float = 0.0
     min_circularity: float = 0.25
@@ -121,20 +113,54 @@ class DetectorConfig:
     min_persistence_frames: int = 1
     persistence_radius_px: float = 12.0
 
+    _BACKEND_PARAM_DEFAULTS: ClassVar[Dict[str, Dict[str, Any]]] = {
+        "brightness": {
+            "blur": 11,
+            "threshold": 230,
+            "threshold_mode": "fixed",
+            "adaptive_block_size": 31,
+            "adaptive_c": 5.0,
+            "use_clahe": False,
+            "erode_iter": 2,
+            "dilate_iter": 4,
+            "opening_kernel": 0,
+            "closing_kernel": 0,
+        },
+        "color": {
+            "blur": 11,
+            "color_name": "red",
+            "hsv_lower": None,
+            "hsv_upper": None,
+            "erode_iter": 2,
+            "dilate_iter": 4,
+            "opening_kernel": 0,
+            "closing_kernel": 0,
+        },
+        "apriltag": {},
+        "mediapipe": {},
+        "yolo": {},
+    }
+
+    # Udostępniamy parametry backendu jako pseudo-pola dla kodu zgodnościowego.
+    def __getattr__(self, item: str) -> Any:
+        if item in self.params:
+            return self.params[item]
+        raise AttributeError(item)
+
     def __post_init__(self) -> None:
         """Waliduje pola krytyczne dla detekcji, by szybciej wykrywać błędy konfiguracji."""
-        _validate_non_negative("blur", self.blur)
+        if self.track_mode:
+            self.backend = self.track_mode
+        self.track_mode = self.backend
+        if not self.params:
+            self.params = dict(self._BACKEND_PARAM_DEFAULTS.get(self.backend, {}))
+        else:
+            merged_defaults = dict(self._BACKEND_PARAM_DEFAULTS.get(self.backend, {}))
+            merged_defaults.update(self.params)
+            self.params = merged_defaults
+        self._validate_backend_specific_params()
         if self.detector_profile is not None and not str(self.detector_profile).strip():
             raise ValueError("Pole `detector_profile` nie może być pustym napisem.")
-        _validate_range("threshold", self.threshold, 0, 255)
-        if self.threshold_mode not in {"fixed", "otsu", "adaptive"}:
-            raise ValueError("Pole `threshold_mode` musi mieć jedną z wartości: fixed/otsu/adaptive.")
-        if self.adaptive_block_size < 3 or self.adaptive_block_size % 2 == 0:
-            raise ValueError("Pole `adaptive_block_size` musi być nieparzyste i >= 3.")
-        _validate_non_negative("erode_iter", self.erode_iter)
-        _validate_non_negative("dilate_iter", self.dilate_iter)
-        _validate_non_negative("opening_kernel", self.opening_kernel)
-        _validate_non_negative("closing_kernel", self.closing_kernel)
         _validate_non_negative("min_area", self.min_area)
         _validate_non_negative("max_area", self.max_area)
         if self.max_area and self.max_area < self.min_area:
@@ -159,10 +185,39 @@ class DetectorConfig:
             raise ValueError("Pole `persistence_radius_px` nie może być ujemne.")
         if self.roi:
             _parse_roi_text(self.roi)
-        if self.hsv_lower:
-            _parse_hsv_text("hsv_lower", self.hsv_lower)
-        if self.hsv_upper:
-            _parse_hsv_text("hsv_upper", self.hsv_upper)
+
+    def _validate_backend_specific_params(self) -> None:
+        """Waliduje parametry backendu i odrzuca pola niepasujące do wybranego trybu."""
+        allowed_fields = set(self._BACKEND_PARAM_DEFAULTS.get(self.backend, {}).keys())
+        if self.backend not in self._BACKEND_PARAM_DEFAULTS:
+            supported = ", ".join(sorted(self._BACKEND_PARAM_DEFAULTS.keys()))
+            raise ValueError(f"Nieznany backend detektora `{self.backend}`. Dostępne: {supported}.")
+        extra_fields = sorted(set(self.params.keys()) - allowed_fields)
+        if extra_fields:
+            raise ValueError(
+                f"Backend `{self.backend}` nie obsługuje pól: {', '.join(extra_fields)}."
+            )
+        if self.backend == "brightness":
+            _validate_non_negative("params.blur", int(self.params["blur"]))
+            _validate_range("params.threshold", int(self.params["threshold"]), 0, 255)
+            if self.params["threshold_mode"] not in {"fixed", "otsu", "adaptive"}:
+                raise ValueError("Pole `params.threshold_mode` musi mieć jedną z wartości: fixed/otsu/adaptive.")
+            if int(self.params["adaptive_block_size"]) < 3 or int(self.params["adaptive_block_size"]) % 2 == 0:
+                raise ValueError("Pole `params.adaptive_block_size` musi być nieparzyste i >= 3.")
+            _validate_non_negative("params.erode_iter", int(self.params["erode_iter"]))
+            _validate_non_negative("params.dilate_iter", int(self.params["dilate_iter"]))
+            _validate_non_negative("params.opening_kernel", int(self.params["opening_kernel"]))
+            _validate_non_negative("params.closing_kernel", int(self.params["closing_kernel"]))
+        if self.backend == "color":
+            _validate_non_negative("params.blur", int(self.params["blur"]))
+            _validate_non_negative("params.erode_iter", int(self.params["erode_iter"]))
+            _validate_non_negative("params.dilate_iter", int(self.params["dilate_iter"]))
+            _validate_non_negative("params.opening_kernel", int(self.params["opening_kernel"]))
+            _validate_non_negative("params.closing_kernel", int(self.params["closing_kernel"]))
+            if self.params.get("hsv_lower"):
+                _parse_hsv_text("params.hsv_lower", str(self.params["hsv_lower"]))
+            if self.params.get("hsv_upper"):
+                _parse_hsv_text("params.hsv_upper", str(self.params["hsv_upper"]))
 
 
 @dataclass
@@ -246,9 +301,10 @@ class RunConfig:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunConfig":
         """Buduje model `RunConfig` ze słownika JSON/YAML."""
+        detector_data = _normalize_detector_payload(dict(data.get("detector", {})))
         return cls(
             input=InputConfig(**data["input"]),
-            detector=DetectorConfig(**data.get("detector", {})),
+            detector=DetectorConfig(**detector_data),
             tracker=TrackerConfig(**data.get("tracker", {})),
             postprocess=PostprocessConfig(**data.get("postprocess", {})),
             pose=PoseConfig(**data.get("pose", {})),
@@ -262,6 +318,35 @@ def _read_value(source: Any, field_name: str, default: Any = None) -> Any:
     if isinstance(source, Mapping):
         return source.get(field_name, default)
     return getattr(source, field_name, default)
+
+
+def _extract_detector_params(source: Any, backend: str) -> Dict[str, Any]:
+    """Buduje `detector.params` wykorzystując mapowanie legacy płaskich pól."""
+    candidate_fields = DetectorConfig._BACKEND_PARAM_DEFAULTS.get(backend, {})
+    params: Dict[str, Any] = {}
+    raw_params = _read_value(source, "params", {})
+    if isinstance(raw_params, Mapping):
+        params.update(dict(raw_params))
+    for field_name, default_value in candidate_fields.items():
+        if field_name not in params:
+            params[field_name] = _read_value(source, field_name, default_value)
+    return params
+
+
+def _normalize_detector_payload(detector_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalizuje payload detektora z legacy YAML/JSON do kontraktu backend+params."""
+    normalized = dict(detector_data)
+    if "backend" not in normalized and "track_mode" in normalized:
+        normalized["backend"] = normalized["track_mode"]
+    backend = normalized.get("backend", "brightness")
+    normalized["params"] = _extract_detector_params(normalized, backend)
+    all_param_names: set[str] = set()
+    for param_defaults in DetectorConfig._BACKEND_PARAM_DEFAULTS.values():
+        all_param_names.update(param_defaults.keys())
+    for param_name in all_param_names:
+        normalized.pop(param_name, None)
+    allowed_field_names = {field_meta.name for field_meta in fields(DetectorConfig)}
+    return {key: value for key, value in normalized.items() if key in allowed_field_names}
 
 
 def run_config_from_entrypoint(source: Any, *, entrypoint: str) -> RunConfig:
@@ -285,6 +370,8 @@ def run_config_from_entrypoint(source: Any, *, entrypoint: str) -> RunConfig:
             camera_value = str(video_device).strip()
         video_value = None
 
+    detector_backend = str(_read_value(source, "backend", _read_value(source, "track_mode", "brightness")))
+
     return RunConfig(
         input=InputConfig(
             video=video_value,
@@ -294,19 +381,10 @@ def run_config_from_entrypoint(source: Any, *, entrypoint: str) -> RunConfig:
             interactive=bool(_read_value(source, "interactive", False)),
         ),
         detector=DetectorConfig(
-            track_mode=_read_value(source, "track_mode", "brightness"),
+            backend=detector_backend,
+            params=_extract_detector_params(source, detector_backend),
             detector_profile=_read_value(source, "detector_profile"),
             enable_experimental_profiles=bool(_read_value(source, "enable_experimental_profiles", False)),
-            blur=int(_read_value(source, "blur", 11)),
-            threshold=int(_read_value(source, "threshold", 200)),
-            threshold_mode=_read_value(source, "threshold_mode", "fixed"),
-            adaptive_block_size=int(_read_value(source, "adaptive_block_size", 31)),
-            adaptive_c=float(_read_value(source, "adaptive_c", 5.0)),
-            use_clahe=bool(_read_value(source, "use_clahe", False)),
-            erode_iter=int(_read_value(source, "erode_iter", 2)),
-            dilate_iter=int(_read_value(source, "dilate_iter", 4)),
-            opening_kernel=int(_read_value(source, "opening_kernel", 0)),
-            closing_kernel=int(_read_value(source, "closing_kernel", 0)),
             min_area=float(_read_value(source, "min_area", 10.0)),
             max_area=float(_read_value(source, "max_area", 0.0)),
             min_circularity=float(_read_value(source, "min_circularity", 0.25)),
@@ -316,9 +394,6 @@ def run_config_from_entrypoint(source: Any, *, entrypoint: str) -> RunConfig:
             min_detection_score=float(_read_value(source, "min_detection_score", 0.0)),
             min_solidity=_read_value(source, "min_solidity", 0.8),
             max_spots=int(_read_value(source, "max_spots", 1)),
-            color_name=_read_value(source, "color_name", "red"),
-            hsv_lower=_read_value(source, "hsv_lower"),
-            hsv_upper=_read_value(source, "hsv_upper"),
             roi=_read_value(source, "roi"),
             temporal_stabilization=bool(_read_value(source, "temporal_stabilization", False)),
             temporal_window=int(_read_value(source, "temporal_window", 3)),

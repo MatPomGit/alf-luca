@@ -125,6 +125,34 @@ def run_config_to_pipeline_config(config: RunConfig) -> Namespace:
     source_label = config.input.video if config.input.video else f"camera:{config.input.camera}"
     is_live_source = bool(config.input.camera)
 
+    detector_defaults: dict[str, object] = {}
+    for backend_defaults in DetectorConfig._BACKEND_PARAM_DEFAULTS.values():
+        detector_defaults.update(backend_defaults)
+    detector_defaults.update(config.detector.params)
+
+    detector_namespace = {
+        # Zachowujemy legacy nazwę `track_mode`, aby istniejący pipeline działał bez zmian.
+        "track_mode": config.detector.backend,
+        **detector_defaults,
+        "detector_profile": config.detector.detector_profile,
+        "enable_experimental_profiles": config.detector.enable_experimental_profiles,
+        "min_area": config.detector.min_area,
+        "max_area": config.detector.max_area,
+        "min_circularity": config.detector.min_circularity,
+        "max_aspect_ratio": config.detector.max_aspect_ratio,
+        "min_peak_intensity": config.detector.min_peak_intensity,
+        "min_detection_confidence": config.detector.min_detection_confidence,
+        "min_detection_score": config.detector.min_detection_score,
+        "min_solidity": config.detector.min_solidity,
+        "max_spots": config.detector.max_spots,
+        "roi": config.detector.roi,
+        "temporal_stabilization": config.detector.temporal_stabilization,
+        "temporal_window": config.detector.temporal_window,
+        "temporal_mode": config.detector.temporal_mode,
+        "min_persistence_frames": config.detector.min_persistence_frames,
+        "persistence_radius_px": config.detector.persistence_radius_px,
+    }
+
     # Zwracamy płaską przestrzeń nazw odpowiadającą argumentom CLI akceptowanym przez `track_video`.
     return Namespace(
         video=source_value,
@@ -147,37 +175,6 @@ def run_config_to_pipeline_config(config: RunConfig) -> Namespace:
         pnp_object_points=config.pose.pnp_object_points,
         pnp_image_points=config.pose.pnp_image_points,
         pnp_world_plane_z=config.pose.pnp_world_plane_z,
-        track_mode=config.detector.track_mode,
-        detector_profile=config.detector.detector_profile,
-        enable_experimental_profiles=config.detector.enable_experimental_profiles,
-        blur=config.detector.blur,
-        threshold=config.detector.threshold,
-        threshold_mode=config.detector.threshold_mode,
-        adaptive_block_size=config.detector.adaptive_block_size,
-        adaptive_c=config.detector.adaptive_c,
-        use_clahe=config.detector.use_clahe,
-        erode_iter=config.detector.erode_iter,
-        dilate_iter=config.detector.dilate_iter,
-        opening_kernel=config.detector.opening_kernel,
-        closing_kernel=config.detector.closing_kernel,
-        min_area=config.detector.min_area,
-        max_area=config.detector.max_area,
-        min_circularity=config.detector.min_circularity,
-        max_aspect_ratio=config.detector.max_aspect_ratio,
-        min_peak_intensity=config.detector.min_peak_intensity,
-        min_detection_confidence=config.detector.min_detection_confidence,
-        min_detection_score=config.detector.min_detection_score,
-        min_solidity=config.detector.min_solidity,
-        max_spots=config.detector.max_spots,
-        color_name=config.detector.color_name,
-        hsv_lower=config.detector.hsv_lower,
-        hsv_upper=config.detector.hsv_upper,
-        roi=config.detector.roi,
-        temporal_stabilization=config.detector.temporal_stabilization,
-        temporal_window=config.detector.temporal_window,
-        temporal_mode=config.detector.temporal_mode,
-        min_persistence_frames=config.detector.min_persistence_frames,
-        persistence_radius_px=config.detector.persistence_radius_px,
         max_distance=config.tracker.max_distance,
         experimental_mode=config.tracker.experimental_mode,
         experimental_adaptive_association=config.tracker.experimental_adaptive_association,
@@ -194,12 +191,20 @@ def run_config_to_pipeline_config(config: RunConfig) -> Namespace:
         min_track_start_confidence=config.tracker.min_track_start_confidence,
         kalman_process_noise=config.postprocess.kalman_process_noise,
         kalman_measurement_noise=config.postprocess.kalman_measurement_noise,
+        **detector_namespace,
     )
 
 
 # Funkcja adaptera mapująca runtime pipeline'u z powrotem na model kanoniczny.
 def pipeline_config_to_run_config(config) -> RunConfig:
     """Mapuje `PipelineConfig` na zunifikowany model eksportowy `RunConfig`."""
+    detector_backend = getattr(config.detector, "track_mode", "brightness")
+    detector_raw = asdict(config.detector)
+    detector_params = {
+        key: value
+        for key, value in detector_raw.items()
+        if key in set(DetectorConfig._BACKEND_PARAM_DEFAULTS.get(detector_backend, {}).keys())
+    }
     return RunConfig(
         input=InputConfig(
             video=None if getattr(config, "is_live_source", False) else str(config.video),
@@ -208,7 +213,27 @@ def pipeline_config_to_run_config(config) -> RunConfig:
             display=config.display,
             interactive=config.interactive,
         ),
-        detector=DetectorConfig(**asdict(config.detector)),
+        detector=DetectorConfig(
+            backend=detector_backend,
+            params=detector_params,
+            detector_profile=getattr(config.detector, "detector_profile", None),
+            enable_experimental_profiles=getattr(config.detector, "enable_experimental_profiles", False),
+            min_area=getattr(config.detector, "min_area", 10.0),
+            max_area=getattr(config.detector, "max_area", 0.0),
+            min_circularity=getattr(config.detector, "min_circularity", 0.25),
+            max_aspect_ratio=getattr(config.detector, "max_aspect_ratio", 3.0),
+            min_peak_intensity=getattr(config.detector, "min_peak_intensity", 160.0),
+            min_detection_confidence=getattr(config.detector, "min_detection_confidence", 0.0),
+            min_detection_score=getattr(config.detector, "min_detection_score", 0.0),
+            min_solidity=getattr(config.detector, "min_solidity", 0.8),
+            max_spots=getattr(config.detector, "max_spots", 1),
+            roi=getattr(config.detector, "roi", None),
+            temporal_stabilization=getattr(config.detector, "temporal_stabilization", False),
+            temporal_window=getattr(config.detector, "temporal_window", 3),
+            temporal_mode=getattr(config.detector, "temporal_mode", "majority"),
+            min_persistence_frames=getattr(config.detector, "min_persistence_frames", 1),
+            persistence_radius_px=getattr(config.detector, "persistence_radius_px", 12.0),
+        ),
         tracker=TrackerConfig(
             multi_track=config.multi_track,
             use_single_object_ekf=getattr(config, "use_single_object_ekf", True),
