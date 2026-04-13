@@ -7,6 +7,8 @@ Rekonstrukcja `XYZ` używana przez pipeline offline/live korzysta ze współdzie
 
 ## Public API
 
+Sekcja odzwierciedla eksporty deklarowane w module inicjalizującym pakiet.
+
 - `run_calibrate`
 - `run_compare`
 - `run_ros2`

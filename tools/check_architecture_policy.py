@@ -15,6 +15,7 @@ import tomli
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGES_DIR = REPO_ROOT / "packages"
 POLICY_PATH = REPO_ROOT / "docs" / "architecture_import_policy.toml"
+PUBLIC_API_SECTION_HEADER = "## Public API"
 
 
 @dataclass(frozen=True)
@@ -26,7 +27,12 @@ class PackageInfo:
     src_dir: Path
 
 
-PUBLIC_API_SECTION_HEADER = "## Public API"
+@dataclass(frozen=True)
+class ImportOccurrence:
+    """Pojedyncze wystąpienie importu absolutnego znalezione w kodzie."""
+
+    imported: str
+    line: int
 
 
 def _iter_package_infos() -> list[PackageInfo]:
@@ -60,16 +66,26 @@ def _iter_python_files(src_dir: Path) -> Iterable[Path]:
     return sorted(src_dir.glob("**/*.py"))
 
 
-def _extract_imports(py_file: Path) -> list[str]:
-    """Ekstrahuje pełne ścieżki importów absolutnych z pliku Python."""
+def _iter_repo_python_files() -> Iterable[Path]:
+    """Zwraca pliki Python w repo poza artefaktami tymczasowymi i vendoringiem."""
+
+    excluded_dirs = {".git", ".venv", "venv", "build", "dist", "__pycache__"}
+    for py_file in sorted(REPO_ROOT.glob("**/*.py")):
+        if any(part in excluded_dirs for part in py_file.parts):
+            continue
+        yield py_file
+
+
+def _extract_imports(py_file: Path) -> list[ImportOccurrence]:
+    """Ekstrahuje pełne ścieżki importów absolutnych z pliku Python wraz z linią."""
 
     tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
-    imports: list[str] = []
+    imports: list[ImportOccurrence] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            imports.extend(alias.name for alias in node.names)
+            imports.extend(ImportOccurrence(imported=alias.name, line=node.lineno) for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            imports.append(node.module)
+            imports.append(ImportOccurrence(imported=node.module, line=node.lineno))
     return imports
 
 
@@ -80,6 +96,12 @@ def _violates_internal_only(import_name: str, package_root: str) -> bool:
     if not parts or parts[0] != package_root:
         return False
     return any(part.startswith("_") for part in parts[1:])
+
+
+def _is_public_api_module_import(import_name: str, package_root: str) -> bool:
+    """Sprawdza, czy import przechodzi przez publiczny moduł pakietu (bez podmodułów)."""
+
+    return import_name == package_root
 
 
 def _extract_init_public_api(package: PackageInfo) -> list[str]:
@@ -175,44 +197,98 @@ def _check_public_api_docs(packages: Iterable[PackageInfo]) -> list[str]:
     return violations
 
 
-def main() -> int:
-    """Uruchamia sprawdzenie architektury i zwraca kod zakończenia dla CI."""
-
-    packages = _iter_package_infos()
-    by_import = {pkg.import_name: pkg for pkg in packages}
-    allowed = _load_allowed_imports()
+def _check_cross_package_imports(packages: list[PackageInfo], allowed: dict[str, set[str]]) -> list[str]:
+    """Waliduje reguły importów między pakietami wraz z wymuszeniem importu przez publiczne API."""
 
     violations: list[str] = []
+    by_import = {pkg.import_name: pkg for pkg in packages}
 
     known_projects = {pkg.project_name for pkg in packages}
     missing_policy_entries = sorted(known_projects - set(allowed))
     if missing_policy_entries:
-        violations.append(
-            "Brakuje wpisów w polityce dla pakietów: " + ", ".join(missing_policy_entries)
-        )
+        violations.append("Brakuje wpisów w polityce dla pakietów: " + ", ".join(missing_policy_entries))
 
     for package in packages:
         package_allowed = allowed.get(package.project_name, set())
         for py_file in _iter_python_files(package.src_dir):
-            for imported in _extract_imports(py_file):
+            rel = py_file.relative_to(REPO_ROOT)
+            for occurrence in _extract_imports(py_file):
+                imported = occurrence.imported
                 imported_root = imported.split(".", 1)[0]
                 imported_pkg = by_import.get(imported_root)
                 if not imported_pkg or imported_pkg.project_name == package.project_name:
                     continue
 
                 if imported_pkg.project_name not in package_allowed:
-                    rel = py_file.relative_to(REPO_ROOT)
                     violations.append(
-                        f"{rel}: niedozwolony import `{imported}` (pakiet `{package.project_name}` -> `{imported_pkg.project_name}`)"
+                        f"{rel}:{occurrence.line}: niedozwolony import `{imported}` "
+                        f"(pakiet `{package.project_name}` -> `{imported_pkg.project_name}`)"
                     )
 
                 if _violates_internal_only(imported, imported_root):
-                    rel = py_file.relative_to(REPO_ROOT)
                     violations.append(
-                        f"{rel}: import internal-only `{imported}` jest zabroniony między pakietami"
+                        f"{rel}:{occurrence.line}: import internal-only `{imported}` jest zabroniony między pakietami"
                     )
 
+                if not _is_public_api_module_import(imported, imported_root):
+                    violations.append(
+                        f"{rel}:{occurrence.line}: import `{imported}` narusza zasadę importu przez publiczne API; "
+                        f"użyj `from {imported_root} import ...`"
+                    )
+
+    return violations
+
+
+def _package_owner_for_file(py_file: Path, packages: list[PackageInfo]) -> str | None:
+    """Zwraca nazwę importową pakietu właściciela pliku lub `None` gdy plik jest poza `packages/*/src`."""
+
+    for package in packages:
+        if py_file.is_relative_to(package.src_dir):
+            return package.import_name
+    return None
+
+
+def _check_internal_module_imports(packages: list[PackageInfo]) -> list[str]:
+    """Blokuje importy do modułów `_internal` spoza pakietu właściciela."""
+
+    known_roots = {pkg.import_name for pkg in packages}
+    violations: list[str] = []
+
+    for py_file in _iter_repo_python_files():
+        rel = py_file.relative_to(REPO_ROOT)
+        owner = _package_owner_for_file(py_file, packages)
+
+        for occurrence in _extract_imports(py_file):
+            parts = occurrence.imported.split(".")
+            if len(parts) < 2:
+                continue
+            root = parts[0]
+            if root not in known_roots:
+                continue
+
+            # Interesują nas wyłącznie segmenty dokładnie `_internal`.
+            if "_internal" not in parts[1:]:
+                continue
+
+            if owner != root:
+                violations.append(
+                    f"{rel}:{occurrence.line}: import `{occurrence.imported}` do modułu `_internal` "
+                    "jest dozwolony tylko wewnątrz pakietu właściciela"
+                )
+
+    return violations
+
+
+def main() -> int:
+    """Uruchamia sprawdzenie architektury i zwraca kod zakończenia dla CI."""
+
+    packages = _iter_package_infos()
+    allowed = _load_allowed_imports()
+
+    violations: list[str] = []
+    violations.extend(_check_cross_package_imports(packages, allowed))
     violations.extend(_check_public_api_docs(packages))
+    violations.extend(_check_internal_module_imports(packages))
 
     if violations:
         print("Wykryto naruszenia polityki architektury:")
@@ -220,7 +296,7 @@ def main() -> int:
             print(f" - {violation}")
         return 1
 
-    print("OK: importy między pakietami i sekcje Public API są zgodne z polityką.")
+    print("OK: importy między pakietami, moduły `_internal` i sekcje Public API są zgodne z polityką.")
     return 0
 
 

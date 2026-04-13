@@ -4,6 +4,8 @@ Warstwa bazowa odpowiedzialna za mapowanie konfiguracji i normalizację ścieże
 
 ## Public API
 
+Sekcja odzwierciedla eksporty deklarowane w module inicjalizującym pakiet.
+
 - `RuntimePathPolicy`
 - `RuntimePathResolver`
 - `build_measurement_stem`
@@ -16,3 +18,9 @@ Warstwa bazowa odpowiedzialna za mapowanie konfiguracji i normalizację ścieże
 - `with_default`
 - `pipeline_config_to_run_config`
 - `run_config_to_pipeline_config`
+- `PARAMETER_MATRIX`
+- `add_shared_calibration_options`
+- `add_shared_detection_options`
+- `add_shared_postprocess_options`
+- `add_shared_reporting_options`
+- `add_shared_tracking_options`

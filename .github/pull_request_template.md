@@ -2,6 +2,13 @@
 
 <!-- Krótkie podsumowanie celu i zakresu PR. -->
 
+## Architecture impact
+
+- [ ] Zmiana nie wpływa na granice pakietów i kierunki zależności.
+- [ ] Zmiana wpływa na architekturę (opisano poniżej, co i dlaczego).
+
+<!-- Jeśli zaznaczono drugi checkbox, opisz krótko wpływ na architekturę. -->
+
 ## API compatibility checklist
 
 - [ ] Publiczne eksporty (`__all__`) zostały świadomie zweryfikowane dla zmienianych pakietów.
