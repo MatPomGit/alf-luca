@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Hook podbija patch-version o 1 dla komponentów LUCA przed każdym commitem.
+python tools/bump_patch_versions.py

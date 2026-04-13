@@ -120,6 +120,25 @@ python tools/check_script_argument_parity.py
 Skrypt jest statyczny (bez uruchamiania ROS2/GUI), więc nadaje się do lekkiej
 kontroli przed commitem.
 
+## Automatyczne podbijanie wersji przy commicie
+
+Repo wspiera automatyczne podbicie wersji patch (`+1`) przy każdym commicie
+za pomocą hooka `pre-commit`.
+
+Jednorazowa konfiguracja lokalna:
+
+```bash
+git config core.hooksPath scripts/git-hooks
+```
+
+Po aktywacji hook:
+
+- uruchamia `python tools/bump_patch_versions.py`,
+- podbija część patch SemVer we wszystkich `packages/luca-*/pyproject.toml`,
+- synchronizuje `packages/luca-*/VERSION`,
+- podbija wersję fasady `luca_tracker/pyproject.toml`,
+- automatycznie dodaje zmienione pliki wersji do stage.
+
 ## Roadmapa R&D i governance iteracji
 
 Wspólną roadmapę prowadzimy w trzech strumieniach, żeby ograniczyć mieszanie priorytetów:
@@ -215,6 +234,7 @@ publiczne API.
 
 Przed publikacją release wykonujemy checklistę:
 
+- [ ] walidacja metadanych wersji (`python tools/check_release_readiness.py`),
 - [ ] testy kontraktowe (`tests/test_configuration_contract.py` oraz pokrewne testy kontraktu),
 - [ ] benchmark porównawczy względem poprzedniego baseline (`tools/quality_benchmark.py`),
 - [ ] zgodność dokumentacji (README + `docs/*` + przykłady uruchomień),
