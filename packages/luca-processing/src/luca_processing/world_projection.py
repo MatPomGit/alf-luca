@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from collections import deque
 from typing import Optional
 
 import cv2
@@ -43,6 +44,88 @@ class WorldProjectionResult:
     def success(self) -> bool:
         """Sygnalizuje, czy przecięcie promienia z płaszczyzną dało poprawny punkt XYZ."""
         return self.world_point is not None and self.ray_plane_status.code == "RAY_PLANE_OK"
+
+
+@dataclass(frozen=True)
+class WorldCoordinateFilterConfig:
+    """Konfiguracja filtra stabilizującego trajektorię XYZ."""
+
+    alpha: float = 0.45
+    max_step: float = 250.0
+    min_dynamic_step: float = 25.0
+    mad_scale: float = 3.0
+    history_size: int = 10
+    missing_tolerance: int = 2
+
+
+class WorldCoordinateFilter:
+    """Filtr online wygładzający XYZ i odrzucający pojedyncze skoki odstające."""
+
+    def __init__(self, config: Optional[WorldCoordinateFilterConfig] = None) -> None:
+        self.config = config or WorldCoordinateFilterConfig()
+        self._recent_steps: deque[float] = deque(maxlen=max(3, int(self.config.history_size)))
+        self._last_raw: Optional[tuple[float, float, float]] = None
+        self._last_filtered: Optional[tuple[float, float, float]] = None
+        self._missing_count: int = 0
+
+    @property
+    def last_filtered(self) -> Optional[tuple[float, float, float]]:
+        """Zwraca ostatni zwrócony punkt po filtracji."""
+        return self._last_filtered
+
+    def reset(self) -> None:
+        """Czyści stan filtra (np. po zmianie sesji lub źródła danych)."""
+        self._recent_steps.clear()
+        self._last_raw = None
+        self._last_filtered = None
+        self._missing_count = 0
+
+    def _adaptive_jump_limit(self) -> float:
+        """Wyznacza adaptacyjny limit skoku na bazie mediany i MAD historii ruchu."""
+        if not self._recent_steps:
+            return max(self.config.min_dynamic_step, self.config.max_step * 0.35)
+        steps = np.asarray(self._recent_steps, dtype=np.float64)
+        median = float(np.median(steps))
+        mad = float(np.median(np.abs(steps - median)))
+        dynamic_limit = median + self.config.mad_scale * (mad + 1e-9)
+        dynamic_limit = max(dynamic_limit, self.config.min_dynamic_step)
+        return min(dynamic_limit, self.config.max_step)
+
+    def _apply_ema(self, current: tuple[float, float, float]) -> tuple[float, float, float]:
+        """Wygładza aktualny punkt przez EMA, aby zmniejszyć mikro-jitter toru XYZ."""
+        if self._last_filtered is None:
+            return current
+        alpha = min(max(float(self.config.alpha), 0.0), 1.0)
+        return (
+            self._last_filtered[0] + alpha * (current[0] - self._last_filtered[0]),
+            self._last_filtered[1] + alpha * (current[1] - self._last_filtered[1]),
+            self._last_filtered[2] + alpha * (current[2] - self._last_filtered[2]),
+        )
+
+    def update(self, point: Optional[tuple[float, float, float]]) -> Optional[tuple[float, float, float]]:
+        """Przetwarza kolejny punkt świata i zwraca punkt po filtracji."""
+        if point is None:
+            self._missing_count += 1
+            # Krótkie luki utrzymujemy przez chwilę, aby nie rozrywać toru przy pojedynczej utracie detekcji.
+            if self._last_filtered is not None and self._missing_count <= self.config.missing_tolerance:
+                return self._last_filtered
+            return None
+
+        self._missing_count = 0
+        corrected = point
+        if self._last_raw is not None:
+            jump = math.dist(point, self._last_raw)
+            jump_limit = self._adaptive_jump_limit()
+            # Punkt odstający zastępujemy ostatnim stabilnym estymatem, zamiast dopuszczać skok geometrii.
+            if jump > jump_limit:
+                corrected = self._last_filtered if self._last_filtered is not None else self._last_raw
+            else:
+                self._recent_steps.append(jump)
+
+        filtered = self._apply_ema(corrected)
+        self._last_raw = corrected
+        self._last_filtered = filtered
+        return filtered
 
 
 def parse_point_series(raw_points: Optional[str], expected_dims: int, label: str) -> Optional[np.ndarray]:

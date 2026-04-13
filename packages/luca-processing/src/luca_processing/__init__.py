@@ -22,6 +22,8 @@ from luca_processing.postprocess import KalmanConfig, apply_kalman_to_points, sm
 from luca_processing.world_projection import (
     PnPPoseEstimateResult,
     ProjectionStageStatus,
+    WorldCoordinateFilter,
+    WorldCoordinateFilterConfig,
     WorldProjectionResult,
     estimate_pnp_pose,
     estimate_pnp_pose_with_status,
@@ -61,6 +63,8 @@ __all__ = [
     "parse_point_series",
     "ProjectionStageStatus",
     "PnPPoseEstimateResult",
+    "WorldCoordinateFilterConfig",
+    "WorldCoordinateFilter",
     "WorldProjectionResult",
     "estimate_pnp_pose",
     "estimate_pnp_pose_with_status",

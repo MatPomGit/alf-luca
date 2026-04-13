@@ -33,10 +33,14 @@ Sekcja odzwierciedla eksporty deklarowane w module inicjalizującym pakiet.
 - `ProjectionStageStatus`
 - `PnPPoseEstimateResult`
 - `WorldProjectionResult`
+- `WorldCoordinateFilterConfig`
+- `WorldCoordinateFilter`
 - `estimate_pnp_pose`
 - `estimate_pnp_pose_with_status`
 - `pixel_to_world_on_plane`
 - `pixel_to_world_on_plane_with_status`
+- `format_world_projection_diagnostics`
+- `world_projection_error_causes_from_codes`
 - `world_projection_reason_from_codes`
 
 ## Profile detekcji (opcjonalne)
