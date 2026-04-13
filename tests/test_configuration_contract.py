@@ -56,6 +56,14 @@ def _build_shared_option_set() -> list[str]:
         "12",
         "--max_area",
         "1200",
+        "--min_circularity",
+        "0.2",
+        "--max_aspect_ratio",
+        "4.0",
+        "--min_peak_intensity",
+        "120",
+        "--min_solidity",
+        "0.7",
         "--erode_iter",
         "1",
         "--dilate_iter",
@@ -87,6 +95,32 @@ def _build_shared_option_set() -> list[str]:
         "10,255,255",
         "--max_spots",
         "4",
+        "--max_distance",
+        "45",
+        "--max_missed",
+        "12",
+        "--distance_weight",
+        "0.8",
+        "--area_weight",
+        "0.3",
+        "--circularity_weight",
+        "0.4",
+        "--brightness_weight",
+        "0.2",
+        "--min_match_score",
+        "0.45",
+        "--speed_gate_gain",
+        "2.0",
+        "--error_gate_gain",
+        "1.2",
+        "--min_dynamic_distance",
+        "10",
+        "--max_dynamic_distance",
+        "180",
+        "--min_track_start_confidence",
+        "0.4",
+        "--selection_mode",
+        "longest",
         "--pnp_object_points",
         "0,0,0;1,0,0;0,1,0;1,1,0",
         "--pnp_image_points",
@@ -153,6 +187,22 @@ def test_parameter_matrix_contract_rows_cover_pipeline_mapping() -> None:
     # Wiersze runtime-only (publikacja ROS2) nie mają odpowiednika w RunConfig/PipelineConfig.
     rows_with_mapping = [row for row in PARAMETER_MATRIX if row.run_config_path.startswith("(") is False]
     assert all(row.pipeline_field for row in rows_with_mapping)
+
+
+def test_parameter_matrix_pipeline_fields_exist_in_namespace() -> None:
+    """Sprawdza, że każde pole pipeline z matrycy istnieje po mapowaniu `RunConfig`."""
+    cli_parser_module = _load_module_from_path(
+        "contract_cli_parser_for_pipeline_fields",
+        "packages/luca-interface-cli/src/luca_interface_cli/parser.py",
+    )
+    args = cli_parser_module.build_parser().parse_args(["track", "--camera", "0", *(_build_shared_option_set())])
+    config = run_config_from_entrypoint(args, entrypoint="track")
+    namespace = run_config_to_pipeline_config(config)
+
+    for row in PARAMETER_MATRIX:
+        if not row.pipeline_field:
+            continue
+        assert hasattr(namespace, row.pipeline_field), f"Brak pola pipeline `{row.pipeline_field}` dla opcji `{row.cli_option}`"
 
 
 def test_sample_yaml_configs_roundtrip_to_pipeline_namespace() -> None:

@@ -7,6 +7,8 @@ from luca_input import (
     add_shared_detection_options,
     add_shared_postprocess_options,
     add_shared_reporting_options,
+    add_shared_ros2_runtime_options,
+    add_shared_runtime_source_options,
     add_shared_tracking_options,
 )
 
@@ -27,9 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_track = subparsers.add_parser("track", help="Śledzenie plamki")
     p_track.add_argument("--config", help="Pełna konfiguracja uruchomienia z pliku JSON/YAML (.json/.yaml/.yml)")
+    # Najpierw dodajemy zunifikowane opcje źródła, aby opisy `--help` były spójne między adapterami.
     track_source = p_track.add_mutually_exclusive_group()
-    track_source.add_argument("--video", help="Plik wejściowy wideo (np. MP4/MKV/AVI/MOV/WEBM)")
-    track_source.add_argument("--camera", help="Kamera na żywo: indeks OpenCV (np. 0) albo ścieżka urządzenia")
+    add_shared_runtime_source_options(track_source)
     p_track.add_argument("--display", action="store_true", help="Podgląd śledzenia")
 
     # Wspólne opcje są centralizowane, aby `--help` miał identyczne nazwy i opisy między adapterami.
@@ -46,15 +48,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_compare.add_argument("--report_pdf", help="Opcjonalny raport PDF")
 
     p_ros2 = subparsers.add_parser("ros2", help="ROS2 node: śledzenie z kamery fizycznej i publikacja danych")
-    p_ros2.add_argument("--video_device", default="/dev/video0", help="Źródło kamery")
-    p_ros2.add_argument("--camera_index", type=int, help="Indeks kamery OpenCV")
-    p_ros2.add_argument("--node_name", default="detector_node", help="Nazwa ROS2 node")
-    p_ros2.add_argument("--topic", default="/luca_tracker/tracking", help="Topic ROS2 dla danych")
-    p_ros2.add_argument("--spot_id", type=int, default=0, help="ID detekcji głównej")
-    p_ros2.add_argument("--fps", type=float, default=30.0, help="Docelowa częstotliwość odczytu/publikacji")
-    p_ros2.add_argument("--frame_width", type=int, default=0, help="Szerokość klatki (0 = domyślna)")
-    p_ros2.add_argument("--frame_height", type=int, default=0, help="Wysokość klatki (0 = domyślna)")
-    p_ros2.add_argument("--display", action="store_true", help="Podgląd śledzenia")
+    add_shared_ros2_runtime_options(p_ros2)
     add_shared_detection_options(p_ros2)
+    add_shared_tracking_options(p_ros2)
     add_shared_calibration_options(p_ros2)
     return parser

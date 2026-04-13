@@ -318,6 +318,23 @@ Ta sama matryca jest pokryta testem kontraktowym
 `tests/test_configuration_contract.py`, który porównuje wynikowe `RunConfig`
 pomiędzy adapterami `track/gui/ros2` oraz sprawdza mapowanie do pipeline.
 
+Poglądowa tabela mapowań do `RunConfig`:
+
+| Opcja CLI | Pole adaptera | Pole w `RunConfig` |
+| --- | --- | --- |
+| `--video` | `video` | `input.video` |
+| `--camera` / `--camera_index` | `camera` / `camera_index` | `input.camera` |
+| `--display` | `display` | `input.display` |
+| `--track_mode` | `track_mode` | `detector.track_mode` |
+| `--min_detection_confidence` | `min_detection_confidence` | `detector.min_detection_confidence` |
+| `--max_distance` | `max_distance` | `tracker.max_distance` |
+| `--min_match_score` | `min_match_score` | `tracker.min_match_score` |
+| `--calib_file` | `calib_file` | `input.calib_file` |
+| `--pnp_object_points` | `pnp_object_points` | `pose.pnp_object_points` |
+| `--output_csv` | `output_csv` | `eval.output_csv` |
+| `--use_kalman` | `use_kalman` | `postprocess.use_kalman` |
+| `--topic` | `topic` | runtime-only (ROS2, poza `RunConfig`) |
+
 ## Przykłady uruchamiania aplikacji w różnych trybach
 
 ### 1) Tryb CLI – plik wideo (jasność)
@@ -383,6 +400,8 @@ Jeżeli tracking stanie się zbyt „ostrożny” (za dużo braków detekcji), n
 python -m luca_tracker ros2 \
   --camera_index 0 \
   --topic /luca_tracker/tracking \
+  --max_distance 45 \
+  --min_match_score 0.45 \
   --fps 30 \
   --display
 ```
