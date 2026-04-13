@@ -11,7 +11,7 @@ from typing import Deque, Dict, List, Optional, Tuple, Type
 import cv2
 import numpy as np
 
-from luca_processing.detector_interfaces import BaseDetector, DetectorConfig
+from luca_processing.detector_interfaces import BaseDetector, DetectorConfig, DetectorOutput
 from luca_processing.detection_profiles import resolve_detection_profile
 from luca_types import Detection
 
@@ -87,8 +87,8 @@ class BrightnessDetector(BaseDetector):
             "closing_kernel": 0,
         }
 
-    def detect_mask(self, roi_frame: np.ndarray) -> np.ndarray:
-        """Buduje maskę binarną dla ROI na podstawie jasności pikseli."""
+    def detect(self, roi_frame: np.ndarray) -> DetectorOutput:
+        """Wykrywa obiekty w ROI i zwraca detekcje wraz z maską debugową."""
         blur = ensure_odd(self.config.blur)
         threshold_mode = str(getattr(self.config, "threshold_mode", "fixed")).strip().lower()
         if threshold_mode not in {"fixed", "otsu", "adaptive"}:
@@ -116,13 +116,15 @@ class BrightnessDetector(BaseDetector):
                 adaptive_block_size,
                 adaptive_c,
             )
-        return _apply_morphology(
+        mask = _apply_morphology(
             mask,
             erode_iter=self.config.erode_iter,
             dilate_iter=self.config.dilate_iter,
             opening_kernel=self.config.opening_kernel,
             closing_kernel=self.config.closing_kernel,
         )
+        detections = mask_to_detections(mask)
+        return DetectorOutput(detections=detections, debug_mask=mask)
 
 
 class ColorDetector(BaseDetector):
@@ -142,8 +144,8 @@ class ColorDetector(BaseDetector):
             "closing_kernel": 0,
         }
 
-    def detect_mask(self, roi_frame: np.ndarray) -> np.ndarray:
-        """Buduje maskę binarną dla ROI na podstawie koloru w przestrzeni HSV."""
+    def detect(self, roi_frame: np.ndarray) -> DetectorOutput:
+        """Wykrywa obiekty w ROI i zwraca detekcje wraz z maską debugową."""
         blur = ensure_odd(self.config.blur)
         hsv = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2HSV)
         if self.config.color_name == "custom":
@@ -162,13 +164,15 @@ class ColorDetector(BaseDetector):
         if blur > 1:
             mask = cv2.GaussianBlur(mask, (blur, blur), 0)
             _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-        return _apply_morphology(
+        mask = _apply_morphology(
             mask,
             erode_iter=self.config.erode_iter,
             dilate_iter=self.config.dilate_iter,
             opening_kernel=self.config.opening_kernel,
             closing_kernel=self.config.closing_kernel,
         )
+        detections = mask_to_detections(mask)
+        return DetectorOutput(detections=detections, debug_mask=mask)
 
 
 def _build_kernel(kernel_size: int) -> Optional[np.ndarray]:
@@ -384,6 +388,21 @@ def contour_to_detection(
     )
 
 
+def mask_to_detections(mask: np.ndarray, offset_x: int = 0, offset_y: int = 0) -> List[Detection]:
+    """Konwertuje maskę binarną do listy detekcji przez ekstrakcję konturów.
+
+    Funkcja jest reużywalną utilką dla detektorów maskowych oraz adapterów
+    kompatybilności, które chcą utrzymać wspólną ścieżkę `maska -> Detection`.
+    """
+    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    detections: List[Detection] = []
+    for contour in contours:
+        det = contour_to_detection(contour, offset_x=offset_x, offset_y=offset_y)
+        if det is not None:
+            detections.append(det)
+    return detections
+
+
 def _clip01(value: float) -> float:
     """Ogranicza wartość do zakresu [0, 1], aby uprościć łączenie cech jakościowych."""
     return float(max(0.0, min(1.0, value)))
@@ -502,7 +521,10 @@ def build_mask(
         hsv_lower=hsv_lower,
         hsv_upper=hsv_upper,
     )
-    return detector_cls(detector_config).detect_mask(frame)
+    output = detector_cls(detector_config).detect(frame)
+    if output.debug_mask is None:
+        return np.zeros(frame.shape[:2], dtype=np.uint8)
+    return np.where(output.debug_mask > 0, 255, 0).astype(np.uint8)
 
 
 def detect_spots(
@@ -554,9 +576,14 @@ def detect_spots(
         hsv_lower=hsv_lower,
         hsv_upper=hsv_upper,
     )
-    mask_roi = detector_cls(detector_config).detect_mask(roi_frame)
-    # Pilnujemy binarności maski przed filtracją czasową, żeby uniknąć narastania półtonów.
-    mask_roi = np.where(mask_roi > 0, 255, 0).astype(np.uint8)
+    detector_output = detector_cls(detector_config).detect(roi_frame)
+    mask_roi = detector_output.debug_mask
+    if mask_roi is None:
+        # Dla detektorów obiektowych maska debugowa jest opcjonalna.
+        mask_roi = np.zeros(roi_frame.shape[:2], dtype=np.uint8)
+    else:
+        # Pilnujemy binarności maski przed filtracją czasową, żeby uniknąć narastania półtonów.
+        mask_roi = np.where(mask_roi > 0, 255, 0).astype(np.uint8)
     if temporal_filter is not None:
         # Filtr temporalny działa wyłącznie na wycinku ROI, żeby nie "przenosić" szumu spoza obszaru zainteresowania.
         mask_roi = temporal_filter.apply(mask_roi)
@@ -569,7 +596,13 @@ def detect_spots(
     mask[y0 : y0 + h, x0 + w :] = 0
     gray_roi = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
 
-    contours, _ = cv2.findContours(mask_roi.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Jeśli detektor zwrócił już detekcje obiektowe, korzystamy z nich bez wymuszania
+    # ścieżki przez maskę i kontury.
+    base_detections = detector_output.detections or []
+    if base_detections:
+        contours: List[np.ndarray] = []
+    else:
+        contours, _ = cv2.findContours(mask_roi.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     candidates: List[Tuple[Detection, np.ndarray, float]] = []
     scored_detections: List[Tuple[float, Detection]] = []
     effective_max_aspect_ratio = max(1.0, float(max_aspect_ratio))
@@ -604,16 +637,34 @@ def detect_spots(
             if solidity < float(min_solidity):
                 continue
         candidates.append((det, contour, peak_intensity))
+    for det in base_detections:
+        if det.area < min_area:
+            continue
+        if max_area > 0 and det.area > max_area:
+            continue
+        if det.circularity < float(min_circularity):
+            continue
+        if det.bbox_w <= 0 or det.bbox_h <= 0:
+            continue
+        aspect_ratio = max(det.bbox_w / det.bbox_h, det.bbox_h / det.bbox_w)
+        if aspect_ratio > effective_max_aspect_ratio:
+            continue
+        # Dla detektorów obiektowych brak konturu/peaka traktujemy neutralnie.
+        candidates.append((det, np.array([]), 255.0))
 
     area_reference = float(np.median([det.area for det, _, _ in candidates])) if candidates else 0.0
     detections: List[Detection] = []
     for det, contour, peak_intensity in candidates:
-        det.confidence = _compute_detection_confidence(
-            contour=contour,
-            detection=det,
-            roi_frame=roi_frame,
-            area_reference=area_reference,
-        )
+        if contour.size > 0:
+            det.confidence = _compute_detection_confidence(
+                contour=contour,
+                detection=det,
+                roi_frame=roi_frame,
+                area_reference=area_reference,
+            )
+        else:
+            # Dla detektorów obiektowych respektujemy confidence dostarczone przez model.
+            det.confidence = float(np.clip(det.confidence, 0.0, 1.0))
         # Próg confidence działa jak filtr anty-false-positive, gdy w kadrze nie ma prawdziwej plamki.
         if det.confidence < float(min_detection_confidence):
             continue
