@@ -100,15 +100,35 @@ class SimpleMultiTracker:
         """Składa końcowy koszt dopasowania track-detection z wielu cech opisowych."""
         # Składowa dystansu jest normalizowana przez dynamiczną bramkę toru.
         dist_norm = dist / max(gate, 1e-6)
-        area_diff = self._safe_rel_diff(track.get("last_area"), det.area)
-        circ_diff = self._safe_rel_diff(track.get("last_circularity"), det.circularity)
-        brightness_diff = self._safe_rel_diff(track.get("last_brightness"), det.mean_brightness)
-        return (
-            self.distance_weight * dist_norm
-            + self.area_weight * area_diff
-            + self.circularity_weight * circ_diff
-            + self.brightness_weight * brightness_diff
-        )
+        score = self.distance_weight * dist_norm
+
+        # Cechy blobowe są opcjonalne: jeśli ich brakuje, nie psujemy asocjacji.
+        missing_optional_weight = 0.0
+        if track.get("last_area") is not None and det.area is not None:
+            score += self.area_weight * self._safe_rel_diff(track.get("last_area"), det.area)
+        else:
+            missing_optional_weight += self.area_weight
+        if track.get("last_circularity") is not None and det.circularity is not None:
+            score += self.circularity_weight * self._safe_rel_diff(track.get("last_circularity"), det.circularity)
+        else:
+            missing_optional_weight += self.circularity_weight
+        if track.get("last_brightness") is not None and det.mean_brightness is not None:
+            score += self.brightness_weight * self._safe_rel_diff(track.get("last_brightness"), det.mean_brightness)
+        else:
+            missing_optional_weight += self.brightness_weight
+
+        # Fallback: brak cech blobowych kompensujemy karą zależną od confidence.
+        confidence = float(det.confidence if det.confidence is not None else 0.5)
+        confidence_penalty = 1.0 - max(0.0, min(1.0, confidence))
+        score += missing_optional_weight * confidence_penalty
+        return score
+
+    @staticmethod
+    def _to_optional_float(value: Optional[float]) -> Optional[float]:
+        """Normalizuje wartości liczbowe do float lub None (bez rzucania wyjątków)."""
+        if value is None:
+            return None
+        return float(value)
 
     @staticmethod
     def _cost_to_acceptance(cost: float) -> float:
@@ -167,8 +187,8 @@ class SimpleMultiTracker:
             # Do historii błędów odkładamy koszt parowania, aby dynamiczna bramka reagowała na jakość asocjacji.
             track["match_errors"].append(float(cost))
             track["last_xy"] = stabilized_xy
-            track["last_area"] = float(det.area)
-            track["last_circularity"] = float(det.circularity)
+            track["last_area"] = self._to_optional_float(det.area)
+            track["last_circularity"] = self._to_optional_float(det.circularity)
             track["last_brightness"] = det.mean_brightness
             track["missed"] = 0
             track["points"].append(
@@ -223,8 +243,8 @@ class SimpleMultiTracker:
             self.next_id += 1
             self.tracks[tid] = {
                 "last_xy": (det.x, det.y),
-                "last_area": float(det.area),
-                "last_circularity": float(det.circularity),
+                "last_area": self._to_optional_float(det.area),
+                "last_circularity": self._to_optional_float(det.circularity),
                 "last_brightness": det.mean_brightness,
                 "speed": 0.0,
                 "match_errors": deque(maxlen=12),

@@ -586,8 +586,29 @@ def process_video_frames(args_or_config, camera_matrix=None, dist_coeffs=None) -
             cv2.rectangle(vis, (x0, y0), (x0 + w, y0 + h), (255, 255, 0), 1)
             for i, det in enumerate(detections, start=1):
                 cx, cy = int(round(det.x)), int(round(det.y))
-                cv2.circle(vis, (cx, cy), max(3, int(round(det.radius))), (0, 0, 255), 2)
-                cv2.putText(vis, f"{i} A={det.area:.0f}", (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
+                # Rendering debug dostosowujemy do typu detektora (blob / bbox / fallback punktowy).
+                if det.radius is not None:
+                    cv2.circle(vis, (cx, cy), max(3, int(round(det.radius))), (0, 0, 255), 2)
+                elif det.bbox is not None:
+                    bx, by, bw, bh = det.bbox
+                    cv2.rectangle(vis, (bx, by), (bx + bw, by + bh), (0, 0, 255), 2)
+                elif None not in (det.bbox_x, det.bbox_y, det.bbox_w, det.bbox_h):
+                    cv2.rectangle(
+                        vis,
+                        (int(det.bbox_x), int(det.bbox_y)),
+                        (int(det.bbox_x + det.bbox_w), int(det.bbox_y + det.bbox_h)),
+                        (0, 0, 255),
+                        2,
+                    )
+                else:
+                    cv2.drawMarker(vis, (cx, cy), (0, 0, 255), markerType=cv2.MARKER_CROSS, markerSize=10, thickness=2)
+
+                debug_label = f"{i}"
+                if det.area is not None:
+                    debug_label += f" A={det.area:.0f}"
+                if det.label:
+                    debug_label += f" {det.label}"
+                cv2.putText(vis, debug_label, (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
             cv2.putText(vis, f"Frame: {frame_index}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
             cv2.putText(vis, f"Detections: {len(detections)}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
             cv2.imshow("Tracking", vis)
