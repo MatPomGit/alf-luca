@@ -371,6 +371,38 @@ python -m luca_tracker track \
   --display
 ```
 
+### 3a) Auto-tuning z nagrania i presety do live-trackingu
+
+Najpierw wyznacz preset na podstawie wskazanego nagrania referencyjnego:
+
+```bash
+python -m luca_tracker track \
+  --camera 0 \
+  --auto_tune_from_video video/sledzenie_plamki.mp4 \
+  --auto_tune_preset_name lab_live \
+  --tracking_presets_file config/live_tracking_presets.json \
+  --display
+```
+
+Potem możesz używać gotowego presetu podczas śledzenia kamerą na żywo:
+
+```bash
+python -m luca_tracker track \
+  --camera 0 \
+  --live_tracking_preset lab_live \
+  --tracking_presets_file config/live_tracking_presets.json \
+  --display
+```
+
+Lista dostępnych presetów:
+
+```bash
+python -m luca_tracker track \
+  --camera 0 \
+  --list_live_tracking_presets \
+  --tracking_presets_file config/live_tracking_presets.json
+```
+
 ### 4) Tryb GUI (strojenie parametrów)
 
 ```bash
