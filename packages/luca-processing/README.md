@@ -9,8 +9,10 @@ Sekcja odzwierciedla eksporty deklarowane w module inicjalizującym pakiet.
 - `BaseDetector`
 - `DetectorConfig`
 - `available_detector_names`
+- `available_detection_profiles`
 - `get_default_params`
 - `get_detector_class`
+- `resolve_detection_profile`
 - `BrightnessDetector`
 - `COLOR_PRESETS`
 - `ColorDetector`
@@ -36,3 +38,17 @@ Sekcja odzwierciedla eksporty deklarowane w module inicjalizującym pakiet.
 - `pixel_to_world_on_plane`
 - `pixel_to_world_on_plane_with_status`
 - `world_projection_reason_from_codes`
+
+## Profile detekcji (opcjonalne)
+
+Pakiet udostępnia profile `detector_profile`, które nadpisują tylko wybrane parametry detekcji:
+
+- `bright_default` — stabilny profil bazowy dla `track_mode=brightness`,
+- `bright_low_light_exp` — profil eksperymentalny dla nierównego oświetlenia,
+- `color_robust_exp` — profil eksperymentalny dla `track_mode=color` i podwyższonego szumu.
+
+### Ograniczenia profili
+
+- Profil musi być zgodny z `track_mode` (np. profil kolorowy nie zadziała dla `brightness`).
+- Profile eksperymentalne wymagają flagi `enable_experimental_profiles=true`.
+- Profil nie zastępuje całej konfiguracji; wartości nieobecne w profilu pozostają z wejścia użytkownika.

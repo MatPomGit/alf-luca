@@ -20,3 +20,16 @@ Sekcja odzwierciedla eksporty deklarowane w module inicjalizującym pakiet.
 - `SingleObjectEKFTracker`
 - `choose_main_track`
 - `run_tracker_with_config`
+
+## Przełączniki eksperymentalne use-case
+
+Warstwa use-case wspiera dwa przełączniki eksperymentalne:
+
+- `experimental_mode` — aktywuje bezpieczne strojenie heurystyk toru (bardziej konserwatywny start, większa ochrona przed jitterem),
+- `experimental_adaptive_association` — dodatkowo zaostrza reguły parowania detekcji do torów.
+
+### Ograniczenia
+
+- Przełączniki wpływają na runtime pipeline i nie zmieniają kontraktu danych wyjściowych.
+- Tryb eksperymentalny może poprawić stabilność w trudnych scenach, ale bywa bardziej restrykcyjny (ryzyko wzrostu `lost_frames`).
+- Każda zmiana tych flag powinna przejść benchmark porównawczy względem baseline.

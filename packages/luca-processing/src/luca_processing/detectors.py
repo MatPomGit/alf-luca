@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 
 from luca_processing.detector_interfaces import BaseDetector, DetectorConfig
+from luca_processing.detection_profiles import resolve_detection_profile
 from luca_types import Detection
 
 
@@ -646,33 +647,40 @@ def detect_spots_with_config(
     persistence_filter: Optional[DetectionPersistenceFilter] = None,
 ):
     """Uruchamia detekcję na podstawie obiektu konfiguracyjnego."""
+    profile = resolve_detection_profile(
+        getattr(config, "detector_profile", None),
+        track_mode=config.track_mode,
+        allow_experimental=bool(getattr(config, "enable_experimental_profiles", False)),
+    )
+    # Profil jest opcjonalny: nadpisuje tylko wybrane parametry, a brakujące bierzemy z konfiguracji wejściowej.
+    effective = config if profile is None else DetectorConfig(**({**asdict(config), **profile.overrides}))
     detections, mask, roi_box = detect_spots(
         frame=frame,
-        track_mode=config.track_mode,
-        blur=config.blur,
-        threshold=config.threshold,
-        threshold_mode=config.threshold_mode,
-        adaptive_block_size=config.adaptive_block_size,
-        adaptive_c=config.adaptive_c,
-        use_clahe=config.use_clahe,
-        erode_iter=config.erode_iter,
-        dilate_iter=config.dilate_iter,
-        opening_kernel=config.opening_kernel,
-        closing_kernel=config.closing_kernel,
-        min_area=config.min_area,
-        max_area=config.max_area,
-        max_spots=config.max_spots,
-        min_circularity=config.min_circularity,
-        max_aspect_ratio=config.max_aspect_ratio,
-        min_peak_intensity=config.min_peak_intensity,
-        min_detection_confidence=config.min_detection_confidence,
-        min_detection_score=config.min_detection_score,
-        min_solidity=config.min_solidity,
-        color_name=config.color_name,
-        hsv_lower=config.hsv_lower,
-        hsv_upper=config.hsv_upper,
-        roi=config.roi,
-        temporal_filter=temporal_filter if config.temporal_stabilization else None,
+        track_mode=effective.track_mode,
+        blur=effective.blur,
+        threshold=effective.threshold,
+        threshold_mode=effective.threshold_mode,
+        adaptive_block_size=effective.adaptive_block_size,
+        adaptive_c=effective.adaptive_c,
+        use_clahe=effective.use_clahe,
+        erode_iter=effective.erode_iter,
+        dilate_iter=effective.dilate_iter,
+        opening_kernel=effective.opening_kernel,
+        closing_kernel=effective.closing_kernel,
+        min_area=effective.min_area,
+        max_area=effective.max_area,
+        max_spots=effective.max_spots,
+        min_circularity=effective.min_circularity,
+        max_aspect_ratio=effective.max_aspect_ratio,
+        min_peak_intensity=effective.min_peak_intensity,
+        min_detection_confidence=effective.min_detection_confidence,
+        min_detection_score=effective.min_detection_score,
+        min_solidity=effective.min_solidity,
+        color_name=effective.color_name,
+        hsv_lower=effective.hsv_lower,
+        hsv_upper=effective.hsv_upper,
+        roi=effective.roi,
+        temporal_filter=temporal_filter if effective.temporal_stabilization else None,
     )
     if persistence_filter is not None:
         detections = persistence_filter.apply(detections=detections, frame_shape=frame.shape, roi_box=roi_box)

@@ -43,6 +43,16 @@
         "false_detections_per_frame": { "max_delta": 0.05, "severity": "blocking" },
         "fps_stability_ratio": { "min_abs": 0.92, "severity": "blocking" }
       }
+    },
+    "experimental_promotion_gate": {
+      "description": "Profil do decyzji promocyjnej: eksperyment -> stabilny po serii porównań do baseline.",
+      "must_pass": {
+        "point_precision_p95_px": { "max_delta": 2.0, "severity": "blocking" },
+        "trajectory_jitter_p95_px": { "max_delta": 0.0, "severity": "blocking" },
+        "lost_frames": { "max_delta": 3.0, "severity": "blocking" },
+        "false_detections_per_frame": { "max_delta": 0.0, "severity": "blocking" },
+        "fps_stability_ratio": { "min_abs": 0.92, "severity": "blocking" }
+      }
     }
   }
 }
