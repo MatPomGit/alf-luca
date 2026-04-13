@@ -1087,3 +1087,28 @@ Walidacja dotyczy par:
 - `run_cli.sh` vs `run_cli.bat`,
 - `run_gui.sh` vs `run_gui.bat`,
 - `run_ros2_camera_xyz.sh` vs `run_ros2_camera_xyz.bat`.
+
+### Smoke-check metadanych release pakietów
+
+Przed przygotowaniem wydania możesz uruchomić szybki check spójności metadanych:
+
+```bash
+python tools/check_release_readiness.py
+```
+
+Skrypt waliduje dla każdego pakietu `packages/luca-*`:
+
+- zgodność wersji `pyproject.toml` i `VERSION`,
+- obecność sekcji aktualnej wersji w `CHANGELOG.md`,
+- obecność sekcji `## [Unreleased]` w changelogu.
+
+### Auto-bump wersji przy commicie (+1 patch)
+
+Jeśli chcesz, aby wersje podbijały się automatycznie przy każdym commicie, aktywuj hooki:
+
+```bash
+git config core.hooksPath scripts/git-hooks
+```
+
+Hook `pre-commit` uruchamia `python tools/bump_patch_versions.py`, który zwiększa
+patch SemVer o `+1` w pakietach `packages/luca-*` i synchronizuje pliki `VERSION`.

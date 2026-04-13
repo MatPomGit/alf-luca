@@ -1,6 +1,10 @@
 # Changelog luca-interface-gui
 
 Ten plik dokumentuje zmiany zgodnie z **SemVer** dla modułu `luca-interface-gui`.
+## [Unreleased]
+### Changed
+- Brak zmian.
+
 
 ## [0.1.0] - 2026-04-10
 ### Added
