@@ -316,3 +316,45 @@ def world_projection_reason_from_codes(
     if ray_plane_code == "RAY_PLANE_PREREQUISITES_MISSING":
         return "Brak danych do etapu ray-plane (PnP/intrinsics niegotowe)."
     return "Brak danych diagnostycznych dla etapu rekonstrukcji XYZ."
+
+
+def world_projection_error_causes_from_codes(
+    intrinsics_code: str,
+    pnp_points_code: str,
+    solvepnp_code: str,
+    ray_plane_code: str,
+) -> dict[str, Optional[str]]:
+    """Buduje słownik kodów przyczyn błędów etapów intrinsics/PnP/solvePnP/ray-plane."""
+    return {
+        "intrinsics": None if intrinsics_code == "INTRINSICS_OK" else intrinsics_code,
+        "pnp_points": None if pnp_points_code in {"PNP_POINTS_OK", "PNP_POINTS_UNKNOWN"} else pnp_points_code,
+        "solvepnp": None if solvepnp_code in {"SOLVEPNP_OK", "SOLVEPNP_UNKNOWN"} else solvepnp_code,
+        "ray_plane": None if ray_plane_code in {"RAY_PLANE_OK", "RAY_PLANE_UNKNOWN"} else ray_plane_code,
+    }
+
+
+def format_world_projection_diagnostics(
+    intrinsics_code: str,
+    pnp_points_code: str,
+    solvepnp_code: str,
+    ray_plane_code: str,
+) -> str:
+    """Zwraca spójny komunikat logu diagnostycznego używany w `track` i `ros2`."""
+    reason = world_projection_reason_from_codes(
+        intrinsics_code=intrinsics_code,
+        pnp_points_code=pnp_points_code,
+        solvepnp_code=solvepnp_code,
+        ray_plane_code=ray_plane_code,
+    )
+    causes = world_projection_error_causes_from_codes(
+        intrinsics_code=intrinsics_code,
+        pnp_points_code=pnp_points_code,
+        solvepnp_code=solvepnp_code,
+        ray_plane_code=ray_plane_code,
+    )
+    return (
+        "XYZ diagnostics | "
+        f"intrinsics={intrinsics_code}, pnp_points={pnp_points_code}, "
+        f"solvepnp={solvepnp_code}, ray_plane={ray_plane_code}, "
+        f"causes={causes}, reason={reason}"
+    )

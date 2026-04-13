@@ -130,3 +130,5 @@ def test_ros2_v2_payload_contains_calibration_diagnostics() -> None:
     )
     assert payload["schema"] == "luca_tracker.ros2.tracking.v2"
     assert payload["diagnostics"]["calibration_status"]["world_projection_enabled"] is True
+    assert "world_projection_error_causes" in payload
+    assert payload["world_projection_error_causes"]["intrinsics"] is None

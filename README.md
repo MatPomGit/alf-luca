@@ -182,7 +182,7 @@ Jeśli w CSV/GUI/ROS2 widzisz puste `x_world/y_world/z_world`, przejdź checklis
    - ustaw `--message_schema luca_tracker.ros2.tracking.v2`,
    - runtime doda pole `diagnostics.calibration_status` bez łamania kontraktu v1.
 
-### Tabela diagnostyczna: objaw -> prawdopodobna przyczyna -> krok naprawczy
+### Objaw -> przyczyna -> naprawa (diagnostyka XYZ)
 
 | Objaw | Prawdopodobna przyczyna | Krok naprawczy |
 |---|---|---|
@@ -192,6 +192,10 @@ Jeśli w CSV/GUI/ROS2 widzisz puste `x_world/y_world/z_world`, przejdź checklis
 | `x_world/y_world/z_world` są puste, a `pnp_points_status_code=PNP_POINTS_COUNT_MISMATCH` | Inna liczba punktów 3D i 2D. | Wyrównaj listy tak, aby każdemu punktowi 3D odpowiadał dokładnie jeden punkt 2D. |
 | `x_world/y_world/z_world` są puste, a `solvepnp_status_code=SOLVEPNP_FAILED` | Geometria referencji jest niestabilna (duplikaty, degeneracja, zła kolejność punktów). | Zmień punkty referencyjne: min. 4 unikalne pary, dobre pokrycie planszy, spójna kolejność. |
 | `x_world/y_world/z_world` są puste tylko dla części klatek, `ray_plane_status_code=RAY_PLANE_PARALLEL` | Dla tej klatki promień kamery jest równoległy do płaszczyzny świata. | Skoryguj `pnp_world_plane_z`, pozycję kamery lub punkt detekcji; sprawdź stabilność PnP na materiale wejściowym. |
+
+W payloadzie ROS2 dostępne są równolegle:
+- `world_projection_status_codes` (status każdego etapu),
+- `world_projection_error_causes` (kod przyczyny błędu per etap lub `null`, gdy etap jest poprawny).
 
 ## Jak czytać XYZ i co można z tym zrobić dalej
 
@@ -486,6 +490,19 @@ Przykładowy payload:
   "x_world": 1.02,
   "y_world": -0.15,
   "z_world": 0.0,
+  "world_projection_reason": "Rekonstrukcja XYZ działa poprawnie.",
+  "world_projection_status_codes": {
+    "intrinsics": "INTRINSICS_OK",
+    "pnp_points": "PNP_POINTS_OK",
+    "solvepnp": "SOLVEPNP_OK",
+    "ray_plane": "RAY_PLANE_OK"
+  },
+  "world_projection_error_causes": {
+    "intrinsics": null,
+    "pnp_points": null,
+    "solvepnp": null,
+    "ray_plane": null
+  },
   "area": 211.3,
   "radius": 8.2,
   "rank": 0,
@@ -514,6 +531,9 @@ Przykładowy payload:
 | `detections_count` | `int` | Liczba wszystkich detekcji w klatce. |
 | `x`, `y` | `float \| null` | Pozycja obiektu w pikselach (null, gdy brak detekcji). |
 | `x_world`, `y_world`, `z_world` | `float \| null` | Współrzędne świata (gdy aktywne PnP+kalibracja). |
+| `world_projection_reason` | `string` | Czytelny opis bieżącego statusu rekonstrukcji XYZ. |
+| `world_projection_status_codes` | `object` | Kody statusu etapów: `intrinsics`, `pnp_points`, `solvepnp`, `ray_plane`. |
+| `world_projection_error_causes` | `object` | Kody przyczyn błędów per etap (`null` gdy etap jest poprawny). |
 | `area`, `radius`, `rank` | `float/int \| null` | Parametry geometryczne i ranking wybranej detekcji. |
 | `run_metadata` | `object \| null` | Metadane runu z pliku `--run_metadata_json` (np. `*.run.json`). |
 

@@ -27,6 +27,8 @@ from luca_processing.world_projection import (
     parse_point_series,
     pixel_to_world_on_plane,
     pixel_to_world_on_plane_with_status,
+    format_world_projection_diagnostics,
+    world_projection_error_causes_from_codes,
     world_projection_reason_from_codes,
 )
 
@@ -61,5 +63,7 @@ __all__ = [
     "estimate_pnp_pose_with_status",
     "pixel_to_world_on_plane",
     "pixel_to_world_on_plane_with_status",
+    "format_world_projection_diagnostics",
+    "world_projection_error_causes_from_codes",
     "world_projection_reason_from_codes",
 ]
