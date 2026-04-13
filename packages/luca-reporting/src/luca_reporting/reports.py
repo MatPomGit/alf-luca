@@ -43,6 +43,9 @@ PROFILE_METRICS = {
         "path_length",
         "mean_step",
         "max_step",
+        "p95_step",
+        "stability_index",
+        "quality_score",
     ),
     "extended": (
         "frames_total",
@@ -56,6 +59,11 @@ PROFILE_METRICS = {
         "mean_step",
         "max_step",
         "jitter_rms",
+        "p95_step",
+        "step_cv",
+        "prediction_ratio",
+        "stability_index",
+        "quality_score",
         "mean_area",
         "max_area",
         "mean_radius",
@@ -81,6 +89,11 @@ PROFILE_METRICS = {
         "max_step",
         "jitter_rms",
         "trajectory_smoothness",
+        "p95_step",
+        "step_cv",
+        "prediction_ratio",
+        "stability_index",
+        "quality_score",
         "mean_area",
         "max_area",
         "mean_radius",
@@ -341,6 +354,55 @@ def _compute_trajectory_smoothness(ordered_detected: Sequence[TrackPoint]) -> fl
     return float(np.sqrt(np.mean(magnitudes**2))) if magnitudes.size else 0.0
 
 
+def _compute_step_features(ordered_detected: Sequence[TrackPoint]) -> Dict[str, float]:
+    """Liczy dodatkowe cechy kroku trajektorii przydatne do oceny stabilności."""
+    if len(ordered_detected) < 2:
+        return {"p95_step": 0.0, "step_cv": 0.0}
+    steps = np.array(
+        [
+            math.hypot((b.x or 0.0) - (a.x or 0.0), (b.y or 0.0) - (a.y or 0.0))
+            for a, b in zip(ordered_detected[:-1], ordered_detected[1:])
+        ],
+        dtype=np.float64,
+    )
+    if steps.size == 0:
+        return {"p95_step": 0.0, "step_cv": 0.0}
+    mean_step = float(np.mean(steps))
+    step_cv = float(np.std(steps) / mean_step) if mean_step > 1e-9 else 0.0
+    return {
+        "p95_step": float(np.percentile(steps, 95)),
+        "step_cv": step_cv,
+    }
+
+
+def _compute_stability_index(
+    jitter_rms: float,
+    trajectory_smoothness: float,
+    detection_ratio: float,
+    low_confidence_ratio: float,
+) -> float:
+    """Składa znormalizowany wskaźnik stabilności [0..1], gdzie 1 oznacza stabilniejszy tor."""
+    # Składniki wagowe dobrano tak, aby premiować ciągłość toru i mniejsze drgania pozycji.
+    jitter_component = 1.0 / (1.0 + max(0.0, jitter_rms))
+    smoothness_component = 1.0 / (1.0 + max(0.0, trajectory_smoothness))
+    continuity_component = max(0.0, min(1.0, detection_ratio))
+    confidence_component = max(0.0, min(1.0, 1.0 - low_confidence_ratio))
+    return float(
+        0.35 * jitter_component
+        + 0.25 * smoothness_component
+        + 0.25 * continuity_component
+        + 0.15 * confidence_component
+    )
+
+
+def _compute_quality_score(stability_index: float, median_confidence: float, detection_ratio: float) -> float:
+    """Liczy sumaryczny wynik jakości [0..100], wygodny do monitoringu i porównań przebiegów."""
+    # Lekka uwaga diagnostyczna: stabilny tor "banan" powinien utrzymać wysoki score mimo drobnego szumu.
+    normalized_confidence = max(0.0, min(1.0, median_confidence))
+    normalized_detection = max(0.0, min(1.0, detection_ratio))
+    return float(100.0 * (0.5 * stability_index + 0.3 * normalized_confidence + 0.2 * normalized_detection))
+
+
 def _compute_reference_errors(
     ordered_points: Sequence[TrackPoint],
     reference_points: Optional[Sequence[TrackPoint]],
@@ -403,6 +465,21 @@ def metrics_from_points_with_profile(
         index_gaps = 0
 
     misses = len([p for p in ordered if not (p.detected and p.x is not None and p.y is not None)]) + index_gaps
+    jitter_rms = _compute_jitter_rms(detected)
+    trajectory_smoothness = _compute_trajectory_smoothness(detected)
+    step_features = _compute_step_features(detected)
+    prediction_ratio = float(sum(1 for p in ordered if int(p.kalman_predicted or 0) == 1) / len(ordered)) if ordered else 0.0
+    stability_index = _compute_stability_index(
+        jitter_rms=jitter_rms,
+        trajectory_smoothness=trajectory_smoothness,
+        detection_ratio=metrics["detection_ratio"],
+        low_confidence_ratio=metrics["low_confidence_ratio"],
+    )
+    quality_score = _compute_quality_score(
+        stability_index=stability_index,
+        median_confidence=metrics["median_confidence"],
+        detection_ratio=metrics["detection_ratio"],
+    )
 
     all_metrics = {
         "metric_profile": profile,
@@ -416,8 +493,13 @@ def metrics_from_points_with_profile(
         "path_length": metrics["path_length"],
         "mean_step": metrics["mean_step"],
         "max_step": metrics["max_step"],
-        "jitter_rms": _compute_jitter_rms(detected),
-        "trajectory_smoothness": _compute_trajectory_smoothness(detected),
+        "jitter_rms": jitter_rms,
+        "trajectory_smoothness": trajectory_smoothness,
+        "p95_step": step_features["p95_step"],
+        "step_cv": step_features["step_cv"],
+        "prediction_ratio": prediction_ratio,
+        "stability_index": stability_index,
+        "quality_score": quality_score,
         "mean_area": float(sum(areas) / len(areas)) if areas else 0.0,
         "max_area": float(max(areas)) if areas else 0.0,
         "mean_radius": float(sum(radii) / len(radii)) if radii else 0.0,
