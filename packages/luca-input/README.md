@@ -23,4 +23,6 @@ Sekcja odzwierciedla eksporty deklarowane w module inicjalizującym pakiet.
 - `add_shared_detection_options`
 - `add_shared_postprocess_options`
 - `add_shared_reporting_options`
+- `add_shared_ros2_runtime_options`
+- `add_shared_runtime_source_options`
 - `add_shared_tracking_options`
