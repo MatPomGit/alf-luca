@@ -7,6 +7,7 @@ Warstwa domenowa realizująca detekcję i post-processing trajektorii.
 Sekcja odzwierciedla eksporty deklarowane w module inicjalizującym pakiet.
 
 - `BaseDetector`
+- `DetectorBackendError`
 - `DetectorConfig`
 - `available_detector_names`
 - `available_detection_profiles`
