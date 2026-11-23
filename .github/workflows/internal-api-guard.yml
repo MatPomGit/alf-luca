@@ -13,10 +13,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -26,5 +26,3 @@ jobs:
       - name: Validate imports through package public API
         run: python tools/check_architecture_policy.py
 
-      - name: Block `_internal` imports outside owner package
-        run: python tools/check_architecture_policy.py
